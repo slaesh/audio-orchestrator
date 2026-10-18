@@ -1,0 +1,9 @@
+FROM alpine:edge
+
+# Install snapclient and alsa-plugins-pulse
+RUN echo "http://dl-cdn.alpinelinux.org/alpine/edge/testing" >> /etc/apk/repositories && \
+    apk update && \
+    apk add --no-cache snapcast-client alsa-plugins-pulse alsa-utils
+
+ENTRYPOINT ["snapclient"]
+CMD ["--host", "127.0.0.1", "--hostID", "laptop_test_client"]

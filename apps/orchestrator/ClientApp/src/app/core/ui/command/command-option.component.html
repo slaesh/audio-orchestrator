@@ -1,0 +1,21 @@
+@if (isOptionVisible()) {
+  <div
+    [class]="classes()"
+    [attr.role]="'option'"
+    [attr.aria-selected]="isSelected()"
+    [attr.data-selected]="isSelected()"
+    [attr.data-disabled]="zDisabled()"
+    [attr.tabindex]="0"
+    (click)="onClick()"
+    (keydown.{enter,space}.prevent)="onClick()"
+    (mouseenter)="onMouseEnter()"
+  >
+    @if (zIcon()) {
+      <ng-icon [name]="zIcon()!" class="mr-2 flex size-4! shrink-0 items-center justify-center" />
+    }
+    <span class="flex-1">{{ zLabel() }}</span>
+    @if (zShortcut()) {
+      <span [class]="shortcutClasses()">{{ zShortcut() }}</span>
+    }
+  </div>
+}

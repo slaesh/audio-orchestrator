@@ -1,0 +1,41 @@
+{
+  "name": "audio-orchestrator-client",
+  "version": "0.1.0",
+  "scripts": {
+    "ng": "ng",
+    "start": "ng serve",
+    "build": "ng build",
+    "watch": "ng build --watch --configuration development",
+    "test": "ng test"
+  },
+  "private": true,
+  "dependencies": {
+    "@angular/cdk": "^21.2.14",
+    "@angular/common": "^21.2.25",
+    "@angular/compiler": "^21.2.25",
+    "@angular/core": "^21.2.25",
+    "@angular/forms": "^21.2.25",
+    "@angular/platform-browser": "^21.2.25",
+    "@angular/router": "^21.2.25",
+    "@microsoft/signalr": "^10.0.0",
+    "@ng-icons/core": "^31.4.0",
+    "@ng-icons/lucide": "^31.4.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "ngx-sonner": "^3.1.0",
+    "rxjs": "~7.8.0",
+    "tailwind-merge": "^3.5.0",
+    "tslib": "^2.3.0",
+    "zone.js": "~0.15.0"
+  },
+  "devDependencies": {
+    "@angular-devkit/build-angular": "^21.2.27",
+    "@angular/cli": "^21.2.27",
+    "@angular/compiler-cli": "^21.2.25",
+    "@tailwindcss/postcss": "^4.2.4",
+    "postcss": "^8.5.10",
+    "postcss-load-config": "^6.0.1",
+    "tailwindcss": "^4.2.4",
+    "typescript": "~5.9.3"
+  }
+}

@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="barGrad" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#06b6d4" />
+      <stop offset="60%" stop-color="#10b981" />
+      <stop offset="100%" stop-color="#6ee7b7" />
+    </linearGradient>
+    <linearGradient id="borderGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#27272a" />
+      <stop offset="50%" stop-color="#10b981" stop-opacity="0.4" />
+      <stop offset="100%" stop-color="#18181b" />
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#10b981" stop-opacity="0.3" />
+      <stop offset="100%" stop-color="#10b981" stop-opacity="0" />
+    </radialGradient>
+  </defs>
+
+  <!-- Dark Background Badge -->
+  <rect width="64" height="64" rx="16" fill="#09090b" />
+  <rect x="0.5" y="0.5" width="63" height="63" rx="15.5" fill="none" stroke="url(#borderGrad)" stroke-width="1" />
+  <circle cx="32" cy="32" r="28" fill="url(#glow)" />
+
+  <!-- Synchronized Audio Spectrum Bars -->
+  <rect x="10" y="26" width="6" height="12" rx="3" fill="url(#barGrad)" />
+  <rect x="19" y="18" width="6" height="28" rx="3" fill="url(#barGrad)" />
+  <rect x="29" y="10" width="6" height="44" rx="3" fill="url(#barGrad)" />
+  <rect x="39" y="18" width="6" height="28" rx="3" fill="url(#barGrad)" />
+  <rect x="48" y="26" width="6" height="12" rx="3" fill="url(#barGrad)" />
+</svg>

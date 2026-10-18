@@ -1,0 +1,22 @@
+<div class="flex items-center border-b px-3" cmdk-input-wrapper="">
+  <ng-icon name="lucideSearch" class="mr-2 size-4! shrink-0 opacity-50" />
+  <input
+    #searchInput
+    [class]="classes()"
+    [placeholder]="placeholder()"
+    [value]="searchTerm()"
+    [disabled]="disabled()"
+    (input.debounce.150)="onInput($event)"
+    (keydown)="onKeyDown($event)"
+    (blur)="onTouched()"
+    aria-controls="command-list"
+    aria-describedby="command-instructions"
+    aria-haspopup="listbox"
+    aria-label="Search commands"
+    autocomplete="off"
+    autocorrect="off"
+    spellcheck="false"
+    role="combobox"
+    [attr.aria-expanded]="true"
+  />
+</div>

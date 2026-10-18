@@ -1,0 +1,9 @@
+<div [class]="classes()">
+  <div id="command-instructions" class="sr-only">
+    Use arrow keys to navigate, Enter to select, Escape to clear selection.
+  </div>
+  <div id="command-status" class="sr-only" aria-live="polite" aria-atomic="true">
+    {{ statusMessage() }}
+  </div>
+  <ng-content />
+</div>

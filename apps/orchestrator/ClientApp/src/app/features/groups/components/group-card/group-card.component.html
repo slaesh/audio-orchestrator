@@ -1,0 +1,108 @@
+<z-card
+  class="glass-panel group overflow-hidden transition-all duration-300 hover:shadow-xl"
+  cdkDropList
+  [id]="'list-' + group().id"
+  [cdkDropListData]="group().id"
+  [cdkDropListConnectedTo]="data.allListIds()"
+  [cdkDropListSortingDisabled]="true"
+  (cdkDropListDropped)="handleDrop($event)"
+>
+  <div class="p-5 space-y-5">
+    <!-- Header -->
+    <div class="flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div
+          class="size-10 rounded-lg bg-primary/10 flex items-center justify-center text-primary shadow-inner"
+        >
+          <ng-icon name="lucideMusic" size="1.25rem" />
+        </div>
+        <div>
+          <h3 class="font-bold text-lg tracking-tight">
+            {{ group().name }}
+          </h3>
+          <p class="text-xs text-muted-foreground">
+            {{ group().rooms.length === 1 ? '1 room' : group().rooms.length + ' rooms' }}
+          </p>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100 transition-opacity">
+        <z-button
+          zType="ghost"
+          zSize="icon-sm"
+          title="Rename Group"
+          aria-label="Rename Group"
+          (click)="onRename.emit(group().id)"
+        >
+          <ng-icon name="lucideSettings" />
+        </z-button>
+        <z-button
+          zType="ghost"
+          zSize="icon-sm"
+          title="Delete Group"
+          aria-label="Delete Group"
+          class="text-destructive hover:bg-destructive/10"
+          (click)="handleDelete()"
+        >
+          <ng-icon name="lucideTrash2" />
+        </z-button>
+      </div>
+    </div>
+
+    <!-- Master Volume -->
+    <div class="bg-primary/5 rounded-xl p-4 border border-primary/10 space-y-3">
+        <div class="flex items-center justify-between">
+            <label class="text-[0.65rem] uppercase font-black tracking-widest text-primary/70">Volume</label>
+            <span class="text-xs font-mono font-bold text-primary">{{ group().masterVolume }}%</span>
+        </div>
+        <div class="flex items-center gap-3">
+            <z-button
+              zType="ghost"
+              zSize="icon-sm"
+              class="bg-background/50"
+              (click)="toggleGroupMute()"
+            >
+              @if (group().isMuted) {
+                <ng-icon name="lucideVolumeX" class="text-destructive" />
+              } @else {
+                <ng-icon name="lucideVolume2" class="text-primary" />
+              }
+            </z-button>
+            <z-slider
+              class="flex-1"
+              [zMin]="0"
+              [zMax]="100"
+              [zValue]="group().masterVolume"
+              (zSlideIndexChange)="handleGroupVolumeChange($event)"
+            />
+        </div>
+    </div>
+
+    <!-- Source Selector -->
+    <app-stream-selector
+      [groupId]="group().id"
+      [currentStreamId]="group().streamId"
+      (onSelect)="handleStreamChange($event)"
+    />
+
+    <!-- Clients/Rooms List -->
+    @if (group().rooms.length > 0) {
+      <div class="space-y-2 mt-2">
+        <label class="text-[0.7rem] uppercase font-bold tracking-wider text-muted-foreground/70 ml-1">Rooms</label>
+        @for (room of group().rooms; track room.id) {
+          <app-room-item
+            [room]="room"
+            (onUnassign)="onUnassignRoom.emit($event)"
+            (onRename)="onRoomRename($event)"
+            (onVolumeChange)="handleRoomVolumeChange(room.id, $event)"
+            (onMixChange)="handleRoomMixChange(room.id, $event)"
+          />
+        }
+      </div>
+    } @else {
+      <div class="py-6 border border-dashed border-border/50 rounded-xl flex items-center justify-center text-center">
+        <span class="text-xs text-muted-foreground/60">Drop rooms here to assign</span>
+      </div>
+    }
+  </div>
+</z-card>

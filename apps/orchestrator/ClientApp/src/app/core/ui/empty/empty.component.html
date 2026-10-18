@@ -1,0 +1,41 @@
+@let image = zImage();
+@let icon = zIcon();
+@let title = zTitle();
+@let description = zDescription();
+@let actions = zActions();
+
+<div [class]="headerClasses()">
+  @if (image) {
+    <div [class]="imageClasses()">
+      <ng-container *zStringTemplateOutlet="image">
+        <img [ngSrc]="image" width="64" height="64" alt="Empty" class="mx-auto" />
+      </ng-container>
+    </div>
+  } @else if (icon) {
+    <div [class]="iconClasses()" data-testid="icon">
+      <ng-icon [name]="icon" class="size-5!" />
+    </div>
+  }
+
+  @if (title) {
+    <div [class]="titleClasses()">
+      <ng-container *zStringTemplateOutlet="title">{{ title }}</ng-container>
+    </div>
+  }
+
+  @if (description) {
+    <div [class]="descriptionClasses()">
+      <ng-container *zStringTemplateOutlet="description">{{ description }}</ng-container>
+    </div>
+  }
+</div>
+
+@if (actions.length) {
+  <div [class]="actionsClasses()">
+    @for (action of actions; track $index) {
+      <ng-container *zStringTemplateOutlet="action" />
+    }
+  </div>
+}
+
+<ng-content />

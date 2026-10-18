@@ -1,0 +1,102 @@
+name: Deploy Documentation (GitHub Pages)
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "apps/orchestrator/AudioOrchestrator.json"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.event.repository.private == false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Generate OpenAPI Spec
+        run: |
+          dotnet tool restore
+          dotnet build apps/orchestrator/AudioOrchestrator.csproj
+          mkdir -p _site
+          cp apps/orchestrator/AudioOrchestrator.json _site/openapi.json
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v6
+        with:
+          enablement: true
+
+      - name: Prepare static documentation site
+        run: |
+          # Generate index.html (Scalar OpenAPI 3.1 UI)
+          cat << 'EOF' > _site/index.html
+          <!doctype html>
+          <html lang="en">
+            <head>
+              <meta charset="utf-8" />
+              <meta name="viewport" content="width=device-width, initial-scale=1" />
+              <title>Audio Orchestrator | REST API Documentation</title>
+              <link rel="icon" href="https://fav.farm/🔊" />
+              <style>
+                body { margin: 0; padding: 0; font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif; }
+                .top-bar {
+                  background: #18181b;
+                  color: #fafafa;
+                  padding: 10px 20px;
+                  display: flex;
+                  justify-content: space-between;
+                  align-items: center;
+                  font-size: 14px;
+                  border-bottom: 1px solid #27272a;
+                }
+                .top-bar a {
+                  color: #38bdf8;
+                  text-decoration: none;
+                  margin-left: 15px;
+                  font-weight: 500;
+                }
+                .top-bar a:hover { text-decoration: underline; }
+                .brand { font-weight: 700; color: #10b981; }
+              </style>
+            </head>
+            <body>
+              <div class="top-bar">
+                <div><span class="brand">Audio Orchestrator</span> • REST API Reference (OpenAPI 3.1)</div>
+                <div>
+                  <a href="openapi.json" target="_blank">raw openapi.json</a>
+                  <a href="https://github.com/slaesh/audio-orchestrator" target="_blank">GitHub Repo</a>
+                </div>
+              </div>
+              <script id="api-reference" data-url="./openapi.json"></script>
+              <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference"></script>
+            </body>
+          </html>
+          EOF
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

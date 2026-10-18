@@ -1,0 +1,84 @@
+<div
+  class="group/room room-item p-3 rounded-lg bg-card/40 border border-border/50 hover:border-primary/30 transition-colors"
+  cdkDrag
+  [cdkDragData]="room().id"
+>
+  <div class="flex items-center justify-between mb-2">
+    <div class="flex items-center gap-2">
+      <div
+        class="size-2 rounded-full"
+        [class.bg-success]="room().connected"
+        [class.bg-muted]="!room().connected"
+      ></div>
+      <span class="text-sm font-medium tracking-tight truncate max-w-[140px]" [title]="room().name">
+        {{ room().friendlyName || room().name }}
+      </span>
+      <button 
+        class="opacity-60 sm:opacity-0 sm:group-hover/room:opacity-40 hover:!opacity-100 sm:focus-within:opacity-100 transition-opacity p-0.5 rounded hover:bg-muted"
+        (click)="onRename.emit(room().id)"
+        title="Rename Room"
+        aria-label="Rename Room"
+      >
+        <ng-icon name="lucideSettings" size="0.75rem" />
+      </button>
+    </div>
+    @if (allowDelete()) {
+      <z-button
+        zType="ghost"
+        zSize="icon-xs"
+        (click)="onDelete.emit(room().id)"
+        title="Remove Device"
+        aria-label="Remove Device"
+      >
+        <ng-icon
+          name="lucideTrash2"
+          class="text-muted-foreground group-hover/room:text-destructive hover:!text-destructive transition-colors"
+        />
+      </z-button>
+    } @else {
+      <z-button
+        zType="ghost"
+        zSize="icon-xs"
+        (click)="onUnassign.emit(room().id)"
+        title="Unassign Room"
+      >
+        <ng-icon
+          name="lucideLayers"
+          class="text-muted-foreground group-hover/room:text-primary transition-colors"
+        />
+      </z-button>
+    }
+  </div>
+
+  <div class="flex items-center gap-3">
+    <div class="flex flex-col items-center">
+      <span class="text-[8px] uppercase font-bold text-muted-foreground/50 mb-1">
+        {{ showMix() ? 'Mix' : 'Vol' }}
+      </span>
+      <z-button
+        zType="ghost"
+        zSize="icon-xs"
+        (click)="toggleMute()"
+      >
+        @if (room().volumeMuted) {
+          <ng-icon name="lucideVolumeX" class="text-destructive" />
+        } @else {
+          <ng-icon name="lucideVolume2" class="text-muted-foreground" />
+        }
+      </z-button>
+    </div>
+    <z-slider
+      class="flex-1"
+      [zMin]="0"
+      [zMax]="100"
+      [zValue]="showMix() ? room().mixVolume : room().volumePercent"
+      (zSlideIndexChange)="showMix() ? handleMixChange($event) : handleVolumeChange($event)"
+    />
+    <span class="text-[10px] font-mono text-muted-foreground w-6 text-right">
+      {{ showMix() ? room().mixVolume : room().volumePercent }}%
+    </span>
+  </div>
+
+  <!-- Drag Placeholder -->
+  <div *cdkDragPlaceholder class="h-10 bg-primary/5 border-2 border-dashed border-primary/30 rounded-xl"></div>
+</div>

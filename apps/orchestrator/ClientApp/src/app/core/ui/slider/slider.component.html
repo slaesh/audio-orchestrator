@@ -1,0 +1,21 @@
+<span
+  data-slot="slider"
+  [attr.data-orientation]="zOrientation()"
+  class="flex data-[orientation=horizontal]:w-full data-[orientation=horizontal]:items-center data-[orientation=vertical]:h-full data-[orientation=vertical]:justify-center"
+>
+  <z-slider-track [orientation]="zOrientation()">
+    <z-slider-range [orientation]="zOrientation()" [percent]="percentValue()" />
+  </z-slider-track>
+
+  <z-slider-thumb
+    tabindex="0"
+    [orientation]="zOrientation()"
+    [percent]="percentValue()"
+    [offset]="thumbOffset()"
+    [value]="lastEmittedValue()"
+    [min]="zMin()"
+    [max]="zMax()"
+    [disabled]="disabled()"
+    (keydown.{home,end,arrowleft,arrowright,arrowdown,arrowup}.prevent)="handleKeydown($event)"
+  />
+</span>

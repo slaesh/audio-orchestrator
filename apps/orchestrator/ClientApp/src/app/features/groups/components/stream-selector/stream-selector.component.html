@@ -1,0 +1,11 @@
+<div class="space-y-1.5">
+  <label class="text-[0.7rem] uppercase font-bold tracking-wider text-muted-foreground/70 ml-1">Audio Source</label>
+  <z-combobox
+    [groups]="sourceGroups()"
+    [ngModel]="currentStreamId()"
+    (ngModelChange)="handleStreamChange($event)"
+    zWidth="full"
+    placeholder="Select audio source..."
+    searchPlaceholder="Search and select..."
+  />
+</div>

@@ -1,0 +1,97 @@
+using Microsoft.EntityFrameworkCore;
+using Microsoft.OpenApi;
+var builder = WebApplication.CreateBuilder(args);
+
+var dbPath = builder.Configuration.GetValue<string>("DbPath") ?? "data/orchestrator.db";
+var dir = System.IO.Path.GetDirectoryName(dbPath);
+if (!string.IsNullOrEmpty(dir) && !System.IO.Directory.Exists(dir))
+{
+    try { System.IO.Directory.CreateDirectory(dir); } catch { /* Ignore for design-time */ }
+}
+
+builder.Services.AddDbContext<AudioOrchestrator.Data.OrchestratorDbContext>(options =>
+    options.UseSqlite($"Data Source={dbPath}")
+           .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning)));
+
+// Add services to the container.
+builder.Services.AddControllers();
+builder.Services.AddOpenApi(options => {
+    options.AddSchemaTransformer((schema, context, cancellationToken) => {
+        // Fix for .NET 9 OpenAPI generator sometimes producing [integer, string] for ints with patterns
+        if (schema.AnyOf != null || schema.OneOf != null) return Task.CompletedTask;
+        
+        if (schema.Type != null && schema.Type.Value.HasFlag(JsonSchemaType.Integer))
+        {
+            // Force it to be just an integer, removing any string-patterns that might confuse the generator
+            schema.Type = JsonSchemaType.Integer;
+            schema.Pattern = null;
+        }
+        return Task.CompletedTask;
+    });
+});
+
+var dockerUri = System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows)
+    ? new Uri("npipe://./pipe/docker_engine")
+    : new Uri("unix:///var/run/docker.sock");
+builder.Services.AddSingleton<Docker.DotNet.IDockerClient>(_ => new Docker.DotNet.DockerClientConfiguration(dockerUri).CreateClient());
+
+builder.Services.AddSingleton<AudioOrchestrator.Services.IFifoService, AudioOrchestrator.Services.FifoService>();
+builder.Services.AddSingleton<AudioOrchestrator.Services.IContainerLifecycleService, AudioOrchestrator.Services.DockerLifecycleService>();
+builder.Services.AddHttpClient<AudioOrchestrator.Services.ILibrespotApiClient, AudioOrchestrator.Services.LibrespotApiClient>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(5);
+});
+builder.Services.AddSingleton<AudioOrchestrator.Services.IReconciliationService, AudioOrchestrator.Services.ReconciliationService>();
+builder.Services.AddSingleton<AudioOrchestrator.Services.SnapcastConnectionService>();
+builder.Services.AddSingleton<AudioOrchestrator.Services.ISnapcastService, AudioOrchestrator.Services.SnapcastService>();
+builder.Services.AddScoped<AudioOrchestrator.Services.VolumeOrchestratorService>();
+builder.Services.AddScoped<AudioOrchestrator.Services.FullStateBuilder>();
+
+builder.Services.AddSingleton<AudioOrchestrator.Services.RadioMetadataService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<AudioOrchestrator.Services.RadioMetadataService>());
+
+builder.Services.AddSignalR();
+builder.Services.AddHttpClient();
+builder.Services.AddHostedService<AudioOrchestrator.Services.SnapcastTcpListenerService>();
+builder.Services.AddHostedService<AudioOrchestrator.Services.StartupReconciliationService>();
+builder.Services.AddHostedService<AudioOrchestrator.Services.ContainerHealthWatchdog>();
+
+var app = builder.Build();
+
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<AudioOrchestrator.Data.OrchestratorDbContext>();
+    db.Database.Migrate();
+
+    if (!db.RadioPlugins.Any())
+    {
+        var seededImage = builder.Configuration["DOCKER_RADIO_AUDALAXY_IMAGE"] 
+            ?? AudioOrchestrator.Contracts.OrchestratorConstants.DefaultAudalaxyPluginImage;
+
+        var audalaxyPlugin = new AudioOrchestrator.Data.Entities.RadioPluginEntity
+        {
+            Id = "audalaxy",
+            Name = "Sunshine Live",
+            DockerImage = seededImage,
+            Enabled = true
+        };
+        audalaxyPlugin.SetUrlPatterns(new[]
+        {
+            "sunshine-live\\.de",
+            "sunshinelive",
+            "sunsl\\.streamabc\\.net"
+        });
+        db.RadioPlugins.Add(audalaxyPlugin);
+        db.SaveChanges();
+    }
+}
+
+app.MapOpenApi();
+
+app.UseStaticFiles();
+
+app.MapControllers();
+app.MapHub<AudioOrchestrator.Hubs.AudioHub>("/hubs/audio");
+app.MapFallbackToFile("index.html");
+
+app.Run();

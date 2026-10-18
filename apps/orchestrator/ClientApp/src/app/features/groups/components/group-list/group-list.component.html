@@ -1,0 +1,37 @@
+<div class="space-y-4">
+  <div class="flex items-center justify-between">
+    <h2 class="text-xl font-bold tracking-tight flex items-center gap-2">
+      <ng-icon name="lucideLayers" class="text-primary" />
+      Groups
+    </h2>
+    <z-button zType="outline" zSize="sm" (click)="onCreateGroup()" class="h-8 px-2 sm:px-3">
+      <ng-icon name="lucidePlus" class="sm:mr-2" />
+      <span class="hidden sm:inline">New Group</span>
+    </z-button>
+  </div>
+
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+    @for (group of data.groups(); track group.id) {
+        <app-group-card 
+          [group]="group" 
+          (onDelete)="data.deleteGroup($event)"
+          (onRename)="onEditGroup($event)"
+          (onSourceChange)="data.setGroupStream($event.groupId, $event.streamId)"
+          (onRoomMove)="data.moveRoomToGroup($event.roomId, $event.groupId)"
+          (onUnassignRoom)="data.unassignRoom($event)"
+        />
+    } @empty {
+      @if (!data.loading()) {
+        <div class="col-span-full py-12 flex flex-col items-center justify-center glass-panel border-dashed border-2 text-muted-foreground/40">
+          <ng-icon name="lucideLayers" size="2rem" class="mb-2 opacity-20" />
+          <p class="text-sm font-medium">No groups created yet</p>
+        </div>
+      }
+    }
+    
+    @if (data.loading()) {
+      <div class="h-64 rounded-2xl bg-card/40 animate-pulse border border-border/50"></div>
+      <div class="h-64 rounded-2xl bg-card/40 animate-pulse border border-border/50"></div>
+    }
+  </div>
+</div>

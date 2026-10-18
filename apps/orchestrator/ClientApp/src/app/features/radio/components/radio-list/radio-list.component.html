@@ -1,0 +1,107 @@
+<div class="space-y-4">
+  <div class="flex items-center justify-between">
+    <h2 class="text-xl font-bold tracking-tight flex items-center gap-2">
+      <ng-icon name="lucideRadio" class="text-primary" />
+      Radio Sources
+    </h2>
+    <div class="flex items-center gap-2">
+      <z-button zType="outline" zSize="sm" (click)="onManagePlugins()" class="h-8 px-2 sm:px-3 text-xs" title="Manage Stream Plugins">
+        <ng-icon name="lucideBoxes" class="sm:mr-1.5" />
+        <span class="hidden sm:inline">Plugins</span>
+      </z-button>
+      <z-button zType="outline" zSize="sm" (click)="onCreateRadio()" class="h-8 px-2 sm:px-3">
+        <ng-icon name="lucidePlus" class="sm:mr-1.5" />
+        <span class="hidden sm:inline">Add Station</span>
+      </z-button>
+    </div>
+  </div>
+
+  <div class="space-y-3">
+    @for (stream of data.streams(); track stream.id) {
+      <div class="glass-panel p-4 group relative overflow-hidden transition-all duration-300 hover:bg-card/60">
+        <!-- Background Decoration -->
+        <div class="absolute -right-2 -bottom-2 opacity-5 scale-150 rotate-12 transition-transform group-hover:scale-175">
+           <ng-icon name="lucideRadio" size="4rem" />
+        </div>
+
+        <div class="flex items-start justify-between relative z-10">
+          <div class="flex items-center gap-3">
+            <div class="size-10 rounded-xl bg-primary/5 flex items-center justify-center text-primary/60 group-hover:bg-primary/10 group-hover:text-primary transition-colors">
+              <ng-icon name="lucideGlobe" size="1.25rem" />
+            </div>
+            <div class="flex flex-col">
+              <span class="font-bold tracking-tight">{{ stream.name }}</span>
+              <span class="text-[10px] font-mono uppercase">
+                @if (stream.errorMessage) {
+                  <span class="text-destructive flex items-center gap-1">
+                    <ng-icon name="lucideCircleAlert" size="0.7rem" />
+                    broken
+                  </span>
+                } @else {
+                  <span class="text-muted-foreground/60">{{ stream.status }}</span>
+                }
+              </span>
+            </div>
+          </div>
+          
+          <div class="flex items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100 transition-opacity">
+            <z-button zType="ghost" zSize="icon-xs" (click)="onRestartRadio(stream.id, stream.name)" title="Restart Stream">
+              <ng-icon name="lucideRefreshCcw" />
+            </z-button>
+            <z-button zType="ghost" zSize="icon-xs" (click)="onEditRadio(stream)" title="Edit Station">
+              <ng-icon name="lucideSettings" />
+            </z-button>
+            <z-button zType="ghost" zSize="icon-xs" class="text-destructive" (click)="onDeleteRadio(stream.id, stream.name)" title="Delete Station">
+              <ng-icon name="lucideTrash2" />
+            </z-button>
+          </div>
+        </div>
+
+        <div class="mt-4 flex items-center justify-between relative z-10">
+          <div class="flex items-center gap-1.5 flex-wrap">
+            @if (getMatchedPlugin(stream.url); as plugin) {
+              <z-badge zType="outline" class="bg-primary/10 border-primary/30 text-primary text-[10px] py-0 px-2 font-mono flex items-center gap-1" [title]="'Powered by ' + plugin.name + ' (' + plugin.dockerImage + ')'">
+                <ng-icon name="lucideZap" size="0.65rem" />
+                {{ plugin.name }}
+              </z-badge>
+            }
+          </div>
+          
+          @if (stream.status === 'playing') {
+            <div class="flex gap-0.5">
+              <div class="w-1 h-3 bg-primary animate-[bounce_1s_infinite_0ms] rounded-full"></div>
+              <div class="w-1 h-3 bg-primary animate-[bounce_1s_infinite_200ms] rounded-full"></div>
+              <div class="w-1 h-3 bg-primary animate-[bounce_1s_infinite_400ms] rounded-full"></div>
+            </div>
+          }
+        </div>
+
+        <!-- Now Playing Metadata -->
+        @if (stream.currentTitle) {
+          <div class="mt-4 pt-4 border-t border-white/5 relative z-10 animate-in fade-in slide-in-from-top-1 duration-500">
+            <div class="flex items-center gap-3">
+              @if (stream.currentCoverUrl) {
+                <div class="size-10 rounded-lg overflow-hidden flex-shrink-0 bg-white/5 shadow-inner">
+                  <img [src]="stream.currentCoverUrl" class="size-full object-cover" alt="Cover">
+                </div>
+              } @else {
+                <div class="size-10 rounded-lg overflow-hidden flex-shrink-0 bg-white/5 shadow-inner flex items-center justify-center text-muted-foreground/30">
+                  <ng-icon name="lucideMusic" size="1.25rem" />
+                </div>
+              }
+              <div class="flex-1 min-w-0">
+                <h3 class="text-xs font-bold truncate leading-tight">{{ stream.currentTitle }}</h3>
+                <p class="text-[10px] text-muted-foreground truncate leading-tight">{{ stream.currentArtist }}</p>
+              </div>
+            </div>
+          </div>
+        }
+      </div>
+    } @empty {
+      <div class="py-12 flex flex-col items-center justify-center text-center glass-panel border-dashed border-2 text-muted-foreground/40">
+         <ng-icon name="lucideRadio" size="2rem" class="mb-2 opacity-20" />
+         <p class="text-sm font-medium">No radio stations added</p>
+      </div>
+    }
+  </div>
+</div>

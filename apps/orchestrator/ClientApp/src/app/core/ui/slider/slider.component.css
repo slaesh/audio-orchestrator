@@ -1,0 +1,14 @@
+@reference "../../../../styles.css";
+
+/* Slider Styles */
+[data-slot="slider-track"] {
+    @apply relative flex grow overflow-hidden rounded-full transition-colors;
+}
+
+[data-slot="slider-range"] {
+    @apply absolute flex items-center justify-center transition-all;
+}
+
+[data-slot="slider-thumb"] {
+    @apply absolute flex items-center justify-center rounded-full border-2 border-primary bg-background shadow-lg transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50;
+}

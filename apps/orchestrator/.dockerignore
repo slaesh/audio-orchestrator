@@ -1,0 +1,17 @@
+bin/
+obj/
+data/
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+
+ClientApp/node_modules/
+ClientApp/dist/
+ClientApp/.angular/
+ClientApp/.nx/
+
+.git/
+.vscode/
+.idea/
+*.log

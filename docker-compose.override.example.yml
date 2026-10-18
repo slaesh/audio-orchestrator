@@ -1,0 +1,20 @@
+services:
+  orchestrator:
+    # Hot-reload for .NET 10 is tricky in Docker without specific setup,
+    # but we can at least ensure we use the development environment.
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+    volumes:
+      # Map the database for easy access from host tools
+      - ./storage/orchestrator:/app/data
+      # Map the source if using dotnet watch (advanced)
+      # - .:/src
+    
+  snapserver:
+    # Snapserver debug logging
+    command: ["--logging.debug"]
+
+  snapclient-local:
+    # Local client for testing
+    environment:
+      - SNAPCLIENT_OPTS=--latency 20

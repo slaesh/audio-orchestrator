@@ -1,0 +1,163 @@
+<div class="space-y-4">
+  <div class="flex items-center justify-between">
+    <h2 class="text-xl font-bold tracking-tight flex items-center gap-2">
+      <ng-icon name="lucideMusic" class="text-primary" />
+      Spotify Connect
+    </h2>
+    <z-button zType="outline" zSize="sm" (click)="addSource()" class="h-8 px-2 sm:px-3">
+      <ng-icon name="lucidePlus" class="sm:mr-2" />
+      <span class="hidden sm:inline">Add Source</span>
+    </z-button>
+  </div>
+
+  <div class="space-y-3">
+    @for (source of sources(); track source.id) {
+      <div class="glass-panel p-4 group relative overflow-hidden transition-all duration-300 hover:bg-card/60">
+        <!-- Background Decoration -->
+        <div class="absolute -right-2 -bottom-2 opacity-5 scale-150 rotate-12 transition-transform group-hover:scale-175">
+           <ng-icon name="lucideMusic" size="4rem" />
+        </div>
+
+        <div class="flex items-start justify-between relative z-10">
+          <div class="flex items-center gap-3">
+            <div class="size-10 rounded-xl bg-primary/5 flex items-center justify-center text-primary/60 group-hover:bg-primary/10 group-hover:text-primary transition-colors">
+              <ng-icon name="lucideSpeaker" size="1.25rem" />
+            </div>
+            <div class="flex flex-col">
+              <span class="font-bold tracking-tight">{{ source.name }}</span>
+              <span class="text-[10px] font-mono uppercase">
+                @if (source.errorMessage) {
+                  <span class="text-destructive flex items-center gap-1">
+                    <ng-icon name="lucideCircleAlert" size="0.7rem" />
+                    broken
+                  </span>
+                } @else if (source.isActive) {
+                  <span class="text-primary font-semibold">playing</span>
+                } @else if (source.isConnected) {
+                  <span class="text-muted-foreground/80">paused</span>
+                } @else {
+                  <span class="text-muted-foreground/60">{{ source.currentTitle ? 'standby' : 'ready' }}</span>
+                }
+              </span>
+            </div>
+          </div>
+          
+          <div class="flex items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100 transition-opacity">
+            <z-button zType="ghost" zSize="icon-xs" (click)="restartSource(source.id, source.name)" title="Restart Source">
+              <ng-icon name="lucideRefreshCw" />
+            </z-button>
+            <z-button zType="ghost" zSize="icon-xs" (click)="editSource(source)" title="Edit Source">
+              <ng-icon name="lucideSettings" />
+            </z-button>
+            <z-button zType="ghost" zSize="icon-xs" class="text-destructive" (click)="deleteSource(source.id, source.name)" title="Delete Source">
+              <ng-icon name="lucideTrash2" />
+            </z-button>
+          </div>
+        </div>
+
+        <div class="mt-4 flex items-center justify-between relative z-10">
+          <div class="flex items-center gap-2">
+            <z-badge zType="secondary" class="text-[9px] py-0 px-1.5 opacity-60 font-mono" title="Initial Volume Limit">
+              Max: {{ source.maxVolume }}%
+            </z-badge>
+            @if (source.currentTitle) {
+              <button (click)="toggleExpand(source.id)" class="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-primary/10 text-primary hover:bg-primary/20 transition-colors text-[10px] font-medium">
+                <ng-icon [name]="isExpanded(source.id) ? 'lucideChevronUp' : 'lucideChevronDown'" />
+                {{ isExpanded(source.id) ? 'Hide' : 'Details' }}
+              </button>
+            }
+          </div>
+          
+          @if (source.isActive) {
+            <div class="flex gap-0.5">
+              <div class="w-1 h-3 bg-primary animate-[bounce_1s_infinite_0ms] rounded-full"></div>
+              <div class="w-1 h-3 bg-primary animate-[bounce_1s_infinite_200ms] rounded-full"></div>
+              <div class="w-1 h-3 bg-primary animate-[bounce_1s_infinite_400ms] rounded-full"></div>
+            </div>
+          }
+        </div>
+
+        <!-- Collapsible Track Info -->
+        @if (source.currentTitle && isExpanded(source.id)) {
+          <div class="mt-4 pt-4 border-t border-white/5 relative z-10 animate-in fade-in slide-in-from-top-2 duration-300">
+            <div class="flex gap-4">
+              @if (source.currentCoverUrl) {
+                <div class="size-16 rounded-lg overflow-hidden flex-shrink-0 bg-white/5">
+                  <img [src]="source.currentCoverUrl" class="size-full object-cover" alt="Cover">
+                </div>
+              }
+              <div class="flex-1 min-w-0 flex flex-col justify-center">
+                @if (source.contextName) {
+                  <p class="text-[10px] uppercase tracking-wider text-primary/70 font-bold mb-0.5 truncate">{{ source.contextName }}</p>
+                }
+                <h3 class="text-sm font-bold truncate">{{ source.currentTitle }}</h3>
+                <p class="text-xs text-muted-foreground truncate">{{ source.currentArtist }}</p>
+                <p class="text-[10px] text-muted-foreground/60 truncate mt-0.5 italic">{{ source.currentAlbum }}</p>
+              </div>
+            </div>
+
+            <!-- Progress Bar -->
+            <div class="mt-4">
+              <app-spotify-progress-bar [source]="source" [showTime]="true" />
+            </div>
+
+            <!-- Playback Controls -->
+            <div class="mt-6 flex items-center justify-center gap-4 animate-in fade-in zoom-in-95 duration-500">
+              <button (click)="data.previousSpotify(source.id)" class="size-9 rounded-xl flex items-center justify-center hover:bg-white/5 text-muted-foreground hover:text-primary transition-all duration-200">
+                <ng-icon name="lucideSkipBack" size="1.2rem" />
+              </button>
+              
+              <button (click)="source.isActive ? data.pauseSpotify(source.id) : data.resumeSpotify(source.id)" 
+                      class="size-12 rounded-2xl bg-primary text-primary-foreground flex items-center justify-center shadow-lg shadow-primary/20 hover:scale-110 active:scale-95 transition-all duration-200">
+                <ng-icon [name]="source.isActive ? 'lucidePause' : 'lucidePlay'" size="1.5rem" />
+              </button>
+
+              <button (click)="data.nextSpotify(source.id)" class="size-9 rounded-xl flex items-center justify-center hover:bg-white/5 text-muted-foreground hover:text-primary transition-all duration-200">
+                <ng-icon name="lucideSkipForward" size="1.2rem" />
+              </button>
+            </div>
+          </div>
+        }
+
+        <!-- Recent Playlists / Contexts -->
+        @if (source.recentContexts && source.recentContexts.length > 0 && (!source.currentTitle || isExpanded(source.id))) {
+          <div class="mt-4 pt-3 border-t border-white/5 relative z-10">
+            <div class="flex items-center justify-between gap-1.5 mb-2">
+              <div class="flex items-center gap-1.5">
+                <ng-icon name="lucideListMusic" class="text-primary/70" size="0.8rem" />
+                <span class="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">Recent Playlists</span>
+              </div>
+              <span class="text-[9px] text-muted-foreground/40 font-mono">{{ source.recentContexts.length }} available</span>
+            </div>
+            <div class="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto pr-1">
+              @for (ctx of source.recentContexts; track ctx.uri) {
+                <button
+                  type="button"
+                  (click)="playContext(source, ctx.uri)"
+                  class="text-xs px-2.5 py-1 rounded-lg border transition-all duration-200 flex items-center gap-1.5 max-w-[220px] truncate cursor-pointer"
+                  [ngClass]="source.isActive && source.contextUri === ctx.uri 
+                    ? 'bg-primary/20 border-primary/40 text-primary font-medium shadow-sm shadow-primary/10' 
+                    : 'bg-white/5 border-white/10 hover:border-white/20 text-muted-foreground hover:text-foreground'"
+                  [title]="'Play ' + ctx.name"
+                >
+                  <ng-icon 
+                    [name]="source.isActive && source.contextUri === ctx.uri ? 'lucideDisc3' : 'lucidePlay'" 
+                    [class.animate-spin]="source.isActive && source.contextUri === ctx.uri"
+                    size="0.75rem" 
+                    class="opacity-70 flex-shrink-0"
+                  />
+                  <span class="truncate">{{ ctx.name }}</span>
+                </button>
+              }
+            </div>
+          </div>
+        }
+      </div>
+    } @empty {
+      <div class="py-12 flex flex-col items-center justify-center text-center glass-panel border-dashed border-2 text-muted-foreground/40">
+         <ng-icon name="lucideMusic" size="2rem" class="mb-2 opacity-20" />
+         <p class="text-sm font-medium">No Spotify sources configured</p>
+      </div>
+    }
+  </div>
+</div>

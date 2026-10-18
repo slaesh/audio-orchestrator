@@ -1,0 +1,98 @@
+<button
+  type="button"
+  z-button
+  zPopover
+  role="combobox"
+  [zContent]="popoverContent"
+  [zType]="buttonVariant()"
+  [class]="buttonClasses()"
+  [zDisabled]="disabledState()"
+  [attr.aria-expanded]="open()"
+  [attr.aria-haspopup]="'listbox'"
+  [attr.aria-controls]="'combobox-listbox'"
+  [attr.aria-label]="ariaLabel() || 'Select option'"
+  [attr.aria-describedby]="ariaDescribedBy()"
+  [attr.aria-autocomplete]="searchable() ? 'list' : 'none'"
+  [attr.aria-activedescendant]="null"
+  (zVisibleChange)="setOpen($event)"
+  #popoverTrigger
+>
+  <span class="flex-1 truncate text-left">
+    {{ displayValue() ?? placeholder() }}
+  </span>
+  <ng-icon name="lucideChevronsUpDown" class="ml-2 shrink-0 opacity-50" />
+</button>
+
+<ng-template #popoverContent>
+  <z-popover [class]="popoverClasses()">
+    <z-command class="min-h-auto" (zCommandSelected)="handleSelect($event)" #commandRef>
+      @if (searchable()) {
+        <z-command-input [placeholder]="searchPlaceholder()" #commandInputRef />
+      }
+
+      <z-command-list id="combobox-listbox" role="listbox">
+        @if (emptyText()) {
+          <z-command-empty>
+            <z-empty [zDescription]="emptyText()" />
+          </z-command-empty>
+        }
+
+        @for (group of groups(); track group.label ?? $index) {
+          @if (group.label) {
+            <z-command-option-group [zLabel]="group.label" #commandGroup>
+              @for (option of group.options; track option.value) {
+                <ng-container
+                  [ngTemplateOutlet]="commandOption"
+                  [ngTemplateOutletContext]="{
+                    $implicit: option,
+                    commandInstance: commandRef,
+                    groupInstance: commandGroup,
+                  }"
+                />
+              }
+            </z-command-option-group>
+          } @else {
+            @for (option of group.options; track option.value) {
+              <ng-container
+                [ngTemplateOutlet]="commandOption"
+                [ngTemplateOutletContext]="{
+                  $implicit: option,
+                  commandInstance: commandRef,
+                }"
+              />
+            }
+          }
+        } @empty {
+          @if (options().length > 0) {
+            @for (option of options(); track option.value) {
+              <ng-container
+                [ngTemplateOutlet]="commandOption"
+                [ngTemplateOutletContext]="{
+                  $implicit: option,
+                  commandInstance: commandRef,
+                }"
+              />
+            }
+          }
+        }
+      </z-command-list>
+    </z-command>
+  </z-popover>
+</ng-template>
+
+<ng-template #commandOption let-option let-cmd="commandInstance" let-grp="groupInstance">
+  <z-command-option
+    [zValue]="option.value"
+    [zLabel]="option.label"
+    [zDisabled]="option.disabled ?? false"
+    [zIcon]="option.icon"
+    [parentCommand]="cmd"
+    [commandGroup]="grp"
+    [attr.aria-selected]="option.value === currentValue()"
+  >
+    {{ option.label }}
+    @if (option.value === currentValue()) {
+      <ng-icon name="lucideCheck" class="ml-auto" />
+    }
+  </z-command-option>
+</ng-template>

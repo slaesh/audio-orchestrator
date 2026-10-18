@@ -1,0 +1,6 @@
+@AudioOrchestrator_HostAddress = http://localhost:5281
+
+GET {{AudioOrchestrator_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

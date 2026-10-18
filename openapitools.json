@@ -1,0 +1,46 @@
+{
+  "$schema": "./node_modules/@openapitools/openapi-generator-cli/config.schema.json",
+  "spaces": 2,
+  "generator-cli": {
+    "version": "7.21.0",
+    "generators": {
+      "angular": {
+        "generatorName": "typescript-angular",
+        "output": "apps/orchestrator/ClientApp/src/app/generated",
+        "inputSpec": "apps/orchestrator/AudioOrchestrator.json",
+        "additionalProperties": {
+          "stringEnums": true,
+          "fileNaming": "camelCase",
+          "modelPropertyNaming": "camelCase",
+          "supportsES6": true
+        },
+        "typeMappings": {
+          "FullStateDto": "FullStateDto",
+          "GroupDto": "GroupDto",
+          "RoomDto": "RoomDto",
+          "SpotifyMetadataDto": "SpotifyMetadataDto",
+          "SpotifySourceDto": "SpotifySourceDto",
+          "StreamDto": "StreamDto",
+          "SpotifyEventDto": "SpotifyEventDto",
+          "RadioPluginDto": "RadioPluginDto",
+          "RadioPluginCreateRequest": "RadioPluginCreateRequest",
+          "RadioPluginUpdateRequest": "RadioPluginUpdateRequest",
+          "RadioEventPayload": "RadioEventPayload"
+        },
+        "importMappings": {
+          "FullStateDto": "@contracts",
+          "GroupDto": "@contracts",
+          "RoomDto": "@contracts",
+          "SpotifyMetadataDto": "@contracts",
+          "SpotifySourceDto": "@contracts",
+          "StreamDto": "@contracts",
+          "SpotifyEventDto": "@contracts",
+          "RadioPluginDto": "@contracts",
+          "RadioPluginCreateRequest": "@contracts",
+          "RadioPluginUpdateRequest": "@contracts",
+          "RadioEventPayload": "@contracts"
+        }
+      }
+    }
+  }
+}

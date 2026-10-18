@@ -1,0 +1,15 @@
+:host {
+  display: block;
+  width: 100%;
+}
+
+.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Custom shadow for premium feel */
+.glass-panel {
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+}

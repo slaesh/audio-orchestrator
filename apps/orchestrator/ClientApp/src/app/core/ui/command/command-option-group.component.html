@@ -1,0 +1,12 @@
+@if (isGroupVisible()) {
+  <div [class]="classes()" role="group">
+    @if (zLabel()) {
+      <div [class]="headingClasses()" role="presentation">
+        {{ zLabel() }}
+      </div>
+    }
+    <div role="group">
+      <ng-content />
+    </div>
+  </div>
+}

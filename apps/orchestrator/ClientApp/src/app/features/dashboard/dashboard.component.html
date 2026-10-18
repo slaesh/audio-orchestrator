@@ -1,0 +1,46 @@
+<div class="page-container">
+  <header class="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-12">
+    <div>
+      <h1 class="header-title !mb-0">Audio Orchestrator</h1>
+    </div>
+    
+    <div class="flex items-center gap-3 overflow-x-auto pb-2 md:pb-0">
+      <z-button zType="outline" zSize="sm" (click)="data.refresh()" [zLoading]="data.loading()">
+        <ng-icon name="lucideRefreshCw" class="mr-2" />
+        Refresh
+      </z-button>
+      
+      <z-button zType="outline" zSize="icon-sm" (click)="themeService.toggleTheme()">
+         @if (themeService.theme() === 'dark') {
+           <ng-icon name="lucideSun" />
+         } @else {
+           <ng-icon name="lucideMoon" />
+         }
+      </z-button>
+
+    </div>
+  </header>
+
+  <main class="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-10">
+    <!-- Center/Left: Groups & Rooms -->
+    <div class="space-y-12">
+       <section aria-labelledby="groups-heading">
+         <h2 id="groups-heading" class="sr-only">Groups</h2>
+         <app-group-list />
+       </section>
+
+       <section aria-labelledby="unassigned-heading">
+         <h2 id="unassigned-heading" class="text-xl font-bold mb-6 flex items-center gap-2">
+           Unassigned Rooms
+         </h2>
+         <app-unassigned-rooms />
+       </section>
+    </div>
+
+    <!-- Right: Sources -->
+    <aside class="flex flex-col gap-10">
+       <app-spotify-list />
+       <app-radio-list />
+    </aside>
+  </main>
+</div>

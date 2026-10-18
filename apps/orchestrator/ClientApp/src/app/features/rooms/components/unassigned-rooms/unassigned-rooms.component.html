@@ -1,0 +1,39 @@
+<div class="glass-panel p-6 border-dashed border-2 transition-colors duration-300"
+     [ngClass]="{ 'border-primary/40': data.unassignedRooms().length > 0, 'border-muted-foreground/20': data.unassignedRooms().length === 0 }"
+     cdkDropList 
+     id="unassigned-list"
+     [cdkDropListData]="data.unassignedRooms()"
+     [cdkDropListConnectedTo]="data.allListIds()"
+     [cdkDropListSortingDisabled]="true"
+     (cdkDropListDropped)="handleDrop($event)">
+  
+  <div class="space-y-3">
+    @for (room of data.unassignedRooms(); track room.id) {
+      <app-room-item
+        [room]="room"
+        [showMix]="false"
+        [allowDelete]="true"
+        (onDelete)="onRoomDelete($event)"
+        (onRename)="onRoomRename($event)"
+        (onVolumeChange)="data.setRoomVolume(room.id, $event.percent, $event.muted)"
+      />
+    } @empty {
+      <div class="py-8 flex flex-col items-center justify-center text-center space-y-2">
+        <div class="size-12 rounded-full bg-muted/20 flex items-center justify-center text-muted-foreground/30 mb-2">
+            <ng-icon name="lucideMonitor" size="1.5rem" />
+        </div>
+        <p class="text-sm font-medium text-muted-foreground/60 italic">No unassigned rooms</p>
+        <p class="text-xs text-muted-foreground/40 max-w-[200px]">All rooms are currently assigned to groups.</p>
+      </div>
+    }
+  </div>
+  
+  @if (data.unassignedRooms().length > 0) {
+    <div class="mt-6 pt-4 border-t border-border/30">
+      <p class="text-[10px] text-center text-muted-foreground italic flex items-center justify-center gap-1">
+        <ng-icon name="lucideMousePointer2" size="0.75rem" />
+        Drag and drop rooms into groups to synchronize playback
+      </p>
+    </div>
+  }
+</div>

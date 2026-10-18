@@ -1,0 +1,66 @@
+services:
+
+  # Orchestrator
+  orchestrator:
+    image: audio-orchestrator:latest
+    build:
+      context: ./apps/orchestrator
+      dockerfile: Dockerfile
+    container_name: orchestrator
+    restart: unless-stopped
+    network_mode: host
+    security_opt:
+      - label:disable
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./storage/orchestrator:/app/data
+      - /tmp/audio_fifos:/tmp/audio_fifos
+    depends_on:
+      snapserver:
+        condition: service_started
+
+  # Snapserver: The Sync Engine
+  snapserver:
+    image: ivdata/snapserver@sha256:20840a2b507b13e167d7e817d9f310fce7271f3abb0b4457c12804cd367509df
+    container_name: snapserver
+    restart: unless-stopped
+    network_mode: host
+    user: "1000:1000"
+    security_opt:
+      - label:disable
+    environment:
+      - HOME=/var/lib/snapserver
+    volumes:
+      - ./infra/snapserver/snapserver.conf:/etc/snapserver.conf:ro
+      - ./storage/snapserver:/var/lib/snapserver
+      - /tmp/audio_fifos:/tmp/audio_fifos
+      - /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket # was needed for mDNS to work
+    # NOTE: We avoid active healthchecks here because Snapserver logs every 'nc' connection 
+    # as an error (End of File). The Orchestrator has its own internal 
+    # reconnection/reconciliation logic that handles "not ready" states gracefully.
+    # healthcheck:
+    #   test: ["CMD", "nc", "-z", "127.0.0.1", "1705"]
+    #   interval: 30s
+    #   timeout: 2s
+    #   retries: 3
+
+  # Single Local Client associated with "Laptop"
+  snapclient-local:
+    build:
+      context: .
+      dockerfile: Dockerfile.client
+    container_name: snapclient_local
+    restart: unless-stopped
+    network_mode: host
+    security_opt:
+      - label:disable
+    volumes:
+      - /run/user/1000/pulse/native:/run/user/1000/pulse/native
+      - ~/.config/pulse/cookie:/root/.config/pulse/cookie
+      - ./infra/snapclient/asound.conf:/etc/asound.conf:ro
+    environment:
+      - PULSE_SERVER=unix:/run/user/1000/pulse/native
+      - PULSE_COOKIE=/root/.config/pulse/cookie
+    command: [ "--hostID", "LocalTestingZone", "tcp://127.0.0.1:1704" ]
+
+

@@ -1,0 +1,228 @@
+<div class="max-w-xl mx-auto space-y-6 md:space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
+  <!-- Top Navigation -->
+  <div class="flex items-center justify-between">
+    <a routerLink="/widgets/selector" class="flex items-center gap-2 text-muted-foreground hover:text-primary transition-colors font-bold uppercase tracking-widest text-[10px]">
+      <ng-icon name="lucideChevronLeft" size="1.2rem" />
+      Back
+    </a>
+    
+    @if (group()) {
+      <button (click)="toggleSourcePanel()" class="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-muted-foreground hover:text-primary transition-all text-[10px] font-black uppercase tracking-widest">
+        <ng-icon name="lucideLayers" size="1rem" />
+        Source
+      </button>
+    }
+  </div>
+
+  @if (group(); as g) {
+    <div class="space-y-6 md:space-y-12">
+      <!-- Group Header -->
+      <div class="text-center space-y-1 md:space-y-2">
+        <h1 class="text-3xl md:text-5xl font-black tracking-tighter truncate">{{ g.name }}</h1>
+        <p class="text-[10px] md:text-sm text-muted-foreground font-black uppercase tracking-[0.2em]">{{ g.rooms.length }} Rooms active</p>
+      </div>
+
+      <!-- Main Widget Card -->
+      <div class="glass-panel p-6 md:p-8 relative overflow-hidden group shadow-2xl shadow-primary/5">
+        @if (currentStream(); as stream) {
+          <div class="space-y-6 md:space-y-8 relative z-10">
+            <!-- Metadata Section -->
+            <div class="flex items-center gap-5 md:gap-8">
+              <div class="size-20 md:size-32 rounded-2xl bg-white/5 overflow-hidden shadow-2xl shadow-black/40 flex-shrink-0 group-hover:scale-105 transition-transform duration-500">
+                @if (stream.data.currentCoverUrl) {
+                  <img [src]="stream.data.currentCoverUrl" class="size-full object-cover" alt="Cover">
+                } @else {
+                  <div class="size-full flex items-center justify-center text-muted-foreground/20">
+                    <ng-icon [name]="stream.type === 'spotify' ? 'lucideMusic' : 'lucideRadio'" size="3rem" />
+                  </div>
+                }
+              </div>
+              
+              <div class="flex-1 min-w-0 space-y-1 md:space-y-2">
+                <div class="flex items-center gap-2">
+                  <span class="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[8px] md:text-[10px] font-black uppercase tracking-wider">
+                    {{ stream.type === 'spotify' ? 'Spotify Connect' : 'Live Radio' }}
+                  </span>
+                  @if (stream.type === 'spotify' && !stream.data.errorMessage) {
+                    @if (stream.data.isActive) {
+                      <span class="px-2 py-0.5 rounded-full bg-primary/20 text-primary text-[8px] md:text-[10px] font-black uppercase tracking-wider">
+                        Playing
+                      </span>
+                    } @else {
+                      <span class="px-2 py-0.5 rounded-full bg-white/10 text-muted-foreground text-[8px] md:text-[10px] font-bold uppercase tracking-wider">
+                        {{ stream.data.currentTitle ? 'Standby' : 'Ready' }}
+                      </span>
+                    }
+                  }
+                  @if (stream.data.errorMessage) {
+                    <span class="px-2 py-0.5 rounded-full bg-destructive/20 text-destructive flex items-center gap-1 text-[8px] md:text-[10px] font-black uppercase tracking-wider animate-pulse">
+                      <ng-icon name="lucideCircleAlert" size="0.8rem" />
+                      {{ stream.data.errorMessage }}
+                    </span>
+                  }
+                </div>
+                @if (getSpotifyContextName(stream.data)) {
+                  <p class="text-[10px] md:text-xs uppercase tracking-wider text-primary/70 font-bold mb-0 md:mb-1 truncate">{{ getSpotifyContextName(stream.data) }}</p>
+                }
+                <h2 class="text-xl md:text-3xl font-black tracking-tight truncate leading-tight">{{ stream.data.currentTitle || 'No Track Info' }}</h2>
+                <p class="text-sm md:text-xl text-muted-foreground truncate leading-tight">{{ stream.data.currentArtist || 'Streaming...' }}</p>
+              </div>
+            </div>
+
+            <!-- Progress & Controls (Spotify Only) -->
+            @if (stream.type === 'spotify') {
+              <div class="space-y-4 md:space-y-6">
+                <app-spotify-progress-bar [source]="stream.data" [showTime]="true" />
+
+                <!-- Spotify Controls -->
+                <div class="flex items-center justify-center gap-6 md:gap-8 py-0 md:py-2">
+                  <button (click)="data.previousSpotify(stream.data.id)" class="size-10 md:size-12 rounded-xl md:rounded-2xl flex items-center justify-center hover:bg-white/5 text-muted-foreground hover:text-primary transition-all">
+                    <ng-icon name="lucideSkipBack" size="1.6rem" />
+                  </button>
+                  
+                  <button (click)="stream.data.isActive ? data.pauseSpotify(stream.data.id) : data.resumeSpotify(stream.data.id)" 
+                          [disabled]="stream.data.errorMessage != null || (!stream.data.isConnected && !stream.data.currentTitle)"
+                          [class.opacity-50]="stream.data.errorMessage != null || (!stream.data.isConnected && !stream.data.currentTitle)"
+                          class="size-16 md:size-20 rounded-[1.5rem] md:rounded-[2rem] bg-primary text-primary-foreground flex items-center justify-center shadow-xl shadow-primary/20 hover:scale-110 active:scale-95 transition-all">
+                    <ng-icon [name]="stream.data.isActive ? 'lucidePause' : 'lucidePlay'" size="2.2rem" />
+                  </button>
+
+                  <button (click)="data.nextSpotify(stream.data.id)" class="size-10 md:size-12 rounded-xl md:rounded-2xl flex items-center justify-center hover:bg-white/5 text-muted-foreground hover:text-primary transition-all">
+                    <ng-icon name="lucideSkipForward" size="1.6rem" />
+                  </button>
+                </div>
+              </div>
+            }
+
+            <!-- Integrated Volume Section -->
+            <div class="pt-6 md:pt-8 border-t border-white/5 space-y-4 md:space-y-6">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                  <button (click)="toggleMute()" class="size-10 md:size-12 rounded-xl md:rounded-2xl bg-white/5 flex items-center justify-center text-muted-foreground hover:text-primary transition-colors">
+                    <ng-icon [name]="g.isMuted ? 'lucideVolumeX' : 'lucideVolume2'" size="1.4rem" />
+                  </button>
+                  <span class="text-sm md:text-lg font-black tracking-tight uppercase">Volume</span>
+                </div>
+                <span class="text-xl md:text-3xl font-black text-primary">{{ g.masterVolume }}%</span>
+              </div>
+              
+              <z-slider 
+                [zValue]="g.masterVolume" 
+                (zSlideIndexChange)="setVolume($event)"
+                class="w-full h-10 md:h-12"
+              />
+            </div>
+          </div>
+        } @else {
+          <div class="py-12 text-center space-y-4">
+             <div class="size-16 md:size-20 rounded-3xl bg-white/5 mx-auto flex items-center justify-center text-muted-foreground/40">
+                <ng-icon name="lucideMusic" size="2.2rem" />
+             </div>
+             <p class="text-lg md:text-xl font-bold text-muted-foreground/60">No source selected</p>
+             <z-button zType="default" (click)="toggleSourcePanel()">Select Source</z-button>
+          </div>
+        }
+      </div>
+    </div>
+  } @else {
+    @if (!data.loading()) {
+      <div class="glass-panel p-10 text-center space-y-6 shadow-2xl shadow-primary/5">
+        <div class="size-16 md:size-20 rounded-3xl bg-white/5 mx-auto flex items-center justify-center text-muted-foreground/40">
+          <ng-icon name="lucideCircleAlert" size="2.5rem" class="text-muted-foreground/50" />
+        </div>
+        <div class="space-y-2">
+          <h2 class="text-2xl md:text-3xl font-black tracking-tight">Group Not Found</h2>
+          <p class="text-sm text-muted-foreground max-w-sm mx-auto">
+            This group does not exist or may have been deleted.
+          </p>
+        </div>
+        <div>
+          <z-button zType="default" routerLink="/widgets/selector">
+            Go to Groups Overview
+          </z-button>
+        </div>
+      </div>
+    } @else {
+      <div class="h-96 rounded-3xl bg-card/40 animate-pulse border border-border/50"></div>
+    }
+  }
+
+  <!-- Source Selector Overlay -->
+  @if (isSourcePanelOpen()) {
+    <div class="fixed inset-0 z-50 bg-background/80 backdrop-blur-xl flex items-center justify-center p-6 animate-in fade-in duration-300" (click)="toggleSourcePanel()">
+      <div class="w-full max-w-2xl glass-panel p-8 space-y-8 max-h-[80vh] overflow-y-auto" (click)="$event.stopPropagation()">
+        <div class="flex items-center justify-between">
+          <h2 class="text-3xl font-black tracking-tight">Select Source</h2>
+          <z-button zType="ghost" (click)="toggleSourcePanel()">Close</z-button>
+        </div>
+
+        <div class="grid grid-cols-1 gap-3">
+          <h3 class="text-[10px] font-black uppercase tracking-widest text-muted-foreground/50 ml-2">System</h3>
+          <button (click)="selectSource('default')" 
+                  class="w-full p-6 rounded-3xl border border-white/5 flex items-center justify-between hover:bg-primary/10 hover:border-primary/40 transition-all text-left group">
+            <div class="flex items-center gap-4">
+              <ng-icon name="lucideVolumeX" size="1.5rem" class="text-primary" />
+              <div>
+                <div class="font-black text-lg">No Source</div>
+                <div class="text-xs text-muted-foreground uppercase font-bold">Silence</div>
+              </div>
+            </div>
+            <div class="size-2 rounded-full bg-primary opacity-0 group-hover:opacity-100 transition-opacity"></div>
+          </button>
+
+          <h3 class="text-[10px] font-black uppercase tracking-widest text-muted-foreground/50 ml-2 mt-4">Spotify Connect</h3>
+          @for (s of data.spotifySources(); track s.id) {
+            <button (click)="selectSource('spotify_' + s.id)" 
+                    class="w-full p-6 rounded-3xl border border-white/5 flex items-center justify-between hover:bg-primary/10 hover:border-primary/40 transition-all text-left group">
+              <div class="flex items-center gap-4">
+                <ng-icon name="lucideMusic" size="1.5rem" class="text-primary" />
+                <div>
+                  <div class="font-black text-lg">{{ s.name }}</div>
+                  <div class="text-xs text-muted-foreground uppercase font-bold">
+                    @if (s.errorMessage) {
+                      <span class="text-destructive flex items-center gap-1">
+                        <ng-icon name="lucideCircleAlert" size="0.7rem" />
+                        Broken
+                      </span>
+                    } @else if (s.isActive) {
+                      <span class="text-primary font-semibold">Playing</span>
+                    } @else if (s.isConnected) {
+                      <span class="text-muted-foreground/80">Paused</span>
+                    } @else {
+                      <span class="text-muted-foreground/60">{{ s.currentTitle ? 'Standby' : 'Ready' }}</span>
+                    }
+                  </div>
+                </div>
+              </div>
+              <div class="size-2 rounded-full bg-primary opacity-0 group-hover:opacity-100 transition-opacity"></div>
+            </button>
+          }
+
+          <h3 class="text-[10px] font-black uppercase tracking-widest text-muted-foreground/50 ml-2 mt-4">Radio Streams</h3>
+          @for (r of data.streams(); track r.id) {
+            <button (click)="selectSource(r.id)" 
+                    class="w-full p-6 rounded-3xl border border-white/5 flex items-center justify-between hover:bg-primary/10 hover:border-primary/40 transition-all text-left group">
+              <div class="flex items-center gap-4">
+                <ng-icon name="lucideRadio" size="1.5rem" class="text-primary" />
+                <div>
+                  <div class="font-black text-lg">{{ r.name }}</div>
+                  <div class="text-xs text-muted-foreground uppercase font-bold">
+                    @if (r.errorMessage) {
+                      <span class="text-destructive flex items-center gap-1">
+                        <ng-icon name="lucideCircleAlert" size="0.7rem" />
+                        Broken
+                      </span>
+                    } @else {
+                      {{ r.status }}
+                    }
+                  </div>
+                </div>
+              </div>
+              <div class="size-2 rounded-full bg-primary opacity-0 group-hover:opacity-100 transition-opacity"></div>
+            </button>
+          }
+        </div>
+      </div>
+    </div>
+  }
+</div>

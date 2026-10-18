@@ -1,0 +1,11 @@
+{
+  "typeMappings": {
+    "ApiRoomsIdMixPutRequest": "number",
+    "CreateSourceRequestMaxVolume": "number",
+    "SpotifyMetadataDtoDurationMs": "number",
+    "SpotifySourceDtoCurrentDurationMs": "number",
+    "SpotifySourceDtoLastUpdateTimestamp": "number",
+    "VolumeRequestPercent": "number",
+    "ApiExternalControlGroupsIdVolumePutRequest": "number"
+  }
+}
