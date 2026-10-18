@@ -67,14 +67,18 @@ flowchart TD
 ### Prerequisites
 - Docker Engine & Docker Compose
 - Host `/var/run/docker.sock` accessible to the container
-- Linux audio pipes directory `/tmp/audio_fifos`
 
-### 1. Initialize Directories & Permissions
+### 1. Initialize Persistent Storage
+
+> [!NOTE]
+> Named audio pipes in `/tmp/audio_fifos` are self-healing: the Orchestrator automatically provisions the directory, FIFOs, and permissions (`0666`, UID 1000) on startup, even across system reboots.
+
+You only need to prepare the persistent storage directories for Snapserver and SQLite:
 
 ```bash
-mkdir -p storage/snapserver storage/orchestrator /tmp/audio_fifos
+mkdir -p storage/snapserver storage/orchestrator
 # Ensure ownership matches non-root container users (UID 1000)
-chown -R 1000:1000 storage /tmp/audio_fifos
+chown -R 1000:1000 storage
 ```
 
 ### 2. Configure Environment
