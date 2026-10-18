@@ -1,10 +1,12 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi;
 var builder = WebApplication.CreateBuilder(args);
+var isDesignOrDocumentGen = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name?.StartsWith("GetDocument") == true
+    || System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name?.StartsWith("ef") == true;
 
 var dbPath = builder.Configuration.GetValue<string>("DbPath") ?? "data/orchestrator.db";
 var dir = System.IO.Path.GetDirectoryName(dbPath);
-if (!string.IsNullOrEmpty(dir) && !System.IO.Directory.Exists(dir))
+if (!isDesignOrDocumentGen && !string.IsNullOrEmpty(dir) && !System.IO.Directory.Exists(dir))
 {
     try { System.IO.Directory.CreateDirectory(dir); } catch { /* Ignore for design-time */ }
 }
@@ -48,18 +50,23 @@ builder.Services.AddScoped<AudioOrchestrator.Services.VolumeOrchestratorService>
 builder.Services.AddScoped<AudioOrchestrator.Services.FullStateBuilder>();
 
 builder.Services.AddSingleton<AudioOrchestrator.Services.RadioMetadataService>();
-builder.Services.AddHostedService(sp => sp.GetRequiredService<AudioOrchestrator.Services.RadioMetadataService>());
+
+if (!isDesignOrDocumentGen)
+{
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<AudioOrchestrator.Services.RadioMetadataService>());
+    builder.Services.AddHostedService<AudioOrchestrator.Services.SnapcastTcpListenerService>();
+    builder.Services.AddHostedService<AudioOrchestrator.Services.StartupReconciliationService>();
+    builder.Services.AddHostedService<AudioOrchestrator.Services.ContainerHealthWatchdog>();
+}
 
 builder.Services.AddSignalR();
 builder.Services.AddHttpClient();
-builder.Services.AddHostedService<AudioOrchestrator.Services.SnapcastTcpListenerService>();
-builder.Services.AddHostedService<AudioOrchestrator.Services.StartupReconciliationService>();
-builder.Services.AddHostedService<AudioOrchestrator.Services.ContainerHealthWatchdog>();
 
 var app = builder.Build();
 
-using (var scope = app.Services.CreateScope())
+if (!isDesignOrDocumentGen)
 {
+    using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AudioOrchestrator.Data.OrchestratorDbContext>();
     db.Database.Migrate();
 
