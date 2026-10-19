@@ -4,6 +4,7 @@ using AudioOrchestrator.Data.Entities;
 using Microsoft.EntityFrameworkCore;
 using AudioOrchestrator.Hubs;
 using AudioOrchestrator.Contracts;
+using AudioOrchestrator.Services.Generated;
 using Microsoft.AspNetCore.SignalR;
 
 namespace AudioOrchestrator.Services;
@@ -77,7 +78,7 @@ public class VolumeOrchestratorService
                 {
                     await _librespotApi.SetVolumeAsync(sourceId, masterVolume);
                 }
-                catch (HttpRequestException ex)
+                catch (Exception ex) when (ex is HttpRequestException || ex is ApiException)
                 {
                     _logger.LogWarning("Could not push volume to Spotify source {SourceId} (node might still be starting or offline): {Message}", sourceId, ex.Message);
                 }

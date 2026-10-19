@@ -41,8 +41,19 @@ public class LibrespotApiClient : ILibrespotApiClient
     {
         var apiPort = GetApiPortForSource(sourceId);
         var client = CreateGeneratedClient(apiPort);
-        await client.Set_volumeAsync(new VolumeRequest { Volume = percent });
-        _logger.LogInformation("Pushed volume {Percent}% to spotify-node on port {ApiPort} via OpenAPI client", percent, apiPort);
+        try
+        {
+            await client.Set_volumeAsync(new VolumeRequest { Volume = percent });
+            _logger.LogInformation("Pushed volume {Percent}% to spotify-node on port {ApiPort} via OpenAPI client", percent, apiPort);
+        }
+        catch (ApiException ex) when (ex.StatusCode == 400 || ex.Response?.Contains("No active session") == true)
+        {
+            _logger.LogDebug("Spotify source {SourceId} on port {ApiPort} has no active session; volume will apply once playback starts", sourceId, apiPort);
+        }
+        catch (Exception ex) when (ex is HttpRequestException || ex is ApiException)
+        {
+            _logger.LogWarning("Could not push volume to Spotify source {SourceId} on port {ApiPort}: {Message}", sourceId, apiPort, ex.Message);
+        }
     }
 
     public async Task SendCommandAsync(string sourceId, string command)

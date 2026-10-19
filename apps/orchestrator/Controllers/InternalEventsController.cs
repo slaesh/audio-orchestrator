@@ -22,6 +22,7 @@ public class EventsController : ControllerBase
     private readonly IHubContext<AudioHub, IAudioClient> _hub;
     private readonly FullStateBuilder _stateBuilder;
     private readonly VolumeOrchestratorService _volumeOrchestrator;
+    private readonly ILibrespotApiClient _librespotApi;
     private readonly IServiceScopeFactory _scopeFactory;
 
     public EventsController(
@@ -31,6 +32,7 @@ public class EventsController : ControllerBase
         IHubContext<AudioHub, IAudioClient> hub,
         FullStateBuilder stateBuilder,
         VolumeOrchestratorService volumeOrchestrator,
+        ILibrespotApiClient librespotApi,
         IServiceScopeFactory scopeFactory)
     {
         _snapcast = snapcast;
@@ -39,6 +41,7 @@ public class EventsController : ControllerBase
         _hub = hub;
         _stateBuilder = stateBuilder;
         _volumeOrchestrator = volumeOrchestrator;
+        _librespotApi = librespotApi;
         _scopeFactory = scopeFactory;
     }
 
@@ -142,6 +145,7 @@ public class EventsController : ControllerBase
 
             var groupIds = listeningGroups.Select(g => g.Id).ToList();
             var groupNames = listeningGroups.Select(g => g.Name).ToList();
+            var targetVolume = listeningGroups.FirstOrDefault()?.MasterVolume ?? source?.MasterVolume;
 
             _ = Task.Run(async () => {
                 try {
@@ -149,6 +153,20 @@ public class EventsController : ControllerBase
                     var bgSnapcast = scope.ServiceProvider.GetRequiredService<ISnapcastService>();
                     var bgVolume = scope.ServiceProvider.GetRequiredService<VolumeOrchestratorService>();
                     var bgDb = scope.ServiceProvider.GetRequiredService<OrchestratorDbContext>();
+                    var bgLibrespot = scope.ServiceProvider.GetRequiredService<ILibrespotApiClient>();
+
+                    if (targetVolume.HasValue)
+                    {
+                        try
+                        {
+                            await bgLibrespot.SetVolumeAsync(payload.GroupId, targetVolume.Value);
+                            _logger.LogInformation("[Sync-BG] Enforced group volume {TargetVolume}% on Spotify playback start for {GroupId}", targetVolume.Value, payload.GroupId);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Failed to enforce volume on playback start for {GroupId}", payload.GroupId);
+                        }
+                    }
 
                     for (int i = 0; i < groupIds.Count; i++)
                     {
@@ -166,12 +184,28 @@ public class EventsController : ControllerBase
                 }
             });
         }
-        else if (payload.Event == "connected")
+        else if (payload.Event == "connected" || payload.Event == "session_connected")
         {
             _logger.LogInformation("[Sync] Spotify session established for source {GroupId}. Setting connected state.", payload.GroupId);
             if (source != null) {
                 source.IsConnected = true;
                 source.ErrorMessage = null;
+            }
+
+            var targetVolume = listeningGroups.FirstOrDefault()?.MasterVolume ?? source?.MasterVolume;
+            if (targetVolume.HasValue)
+            {
+                var vol = targetVolume.Value;
+                _ = Task.Run(async () => {
+                    try {
+                        using var scope = _scopeFactory.CreateScope();
+                        var bgLibrespot = scope.ServiceProvider.GetRequiredService<ILibrespotApiClient>();
+                        await bgLibrespot.SetVolumeAsync(payload.GroupId, vol);
+                        _logger.LogInformation("[Sync-BG] Pre-emptively enforced volume {Volume}% to newly connected Spotify session {GroupId}", vol, payload.GroupId);
+                    } catch (Exception ex) {
+                        _logger.LogWarning(ex, "Failed to pre-emptively enforce volume on session connect for {GroupId}", payload.GroupId);
+                    }
+                });
             }
         }
         else if (payload.Event == "started")
@@ -195,32 +229,54 @@ public class EventsController : ControllerBase
             if (payload.Volume.HasValue)
             {
                 int percent = (int)Math.Round((payload.Volume.Value / 65535.0) * 100);
-                
-                if (source != null) {
-                    source.MasterVolume = percent;
-                }
 
-                var groupIds = listeningGroups.Select(g => g.Id).ToList();
-                var groupNames = listeningGroups.Select(g => g.Name).ToList();
-
-                _ = Task.Run(async () => {
-                    try {
-                        using var scope = _scopeFactory.CreateScope();
-                        var bgVolume = scope.ServiceProvider.GetRequiredService<VolumeOrchestratorService>();
-                        var bgDb = scope.ServiceProvider.GetRequiredService<OrchestratorDbContext>();
-
-                        for (int i = 0; i < groupIds.Count; i++)
-                        {
-                            var id = groupIds[i];
-                            var g = await bgDb.Groups.FindAsync(id);
-                            if (g == null) continue;
-                            await bgVolume.SetGroupVolumeAsync(g.Id, percent, g.IsMuted, fromDocker: true);
-                            _logger.LogInformation("[Broadcast-BG] Synced Spotify volume ({Percent}%) to listening Group {GroupName}", percent, groupNames[i]);
-                        }
-                    } catch (Exception ex) {
-                        _logger.LogError(ex, "Failed to sync volume in background for {Event}", payload.Event);
+                // If playback is not active yet and listening groups exist, do not let an initial/startup volume
+                // from Docker/Spotify overwrite the group's established volume. Instead, push the group volume back to Spotify.
+                if (source != null && !source.IsActive && listeningGroups.Count > 0)
+                {
+                    var targetVolume = listeningGroups[0].MasterVolume;
+                    if (percent != targetVolume)
+                    {
+                        _logger.LogInformation("[Sync] Inactive Spotify source {GroupId} reported initial volume {Percent}%. Preserving group volume {TargetVolume}% and enforcing to Spotify.", payload.GroupId, percent, targetVolume);
+                        _ = Task.Run(async () => {
+                            try {
+                                using var scope = _scopeFactory.CreateScope();
+                                var bgLibrespot = scope.ServiceProvider.GetRequiredService<ILibrespotApiClient>();
+                                await bgLibrespot.SetVolumeAsync(payload.GroupId, targetVolume);
+                            } catch (Exception ex) {
+                                _logger.LogWarning(ex, "Failed to enforce preserved group volume for {GroupId}", payload.GroupId);
+                            }
+                        });
                     }
-                });
+                }
+                else
+                {
+                    if (source != null) {
+                        source.MasterVolume = percent;
+                    }
+
+                    var groupIds = listeningGroups.Select(g => g.Id).ToList();
+                    var groupNames = listeningGroups.Select(g => g.Name).ToList();
+
+                    _ = Task.Run(async () => {
+                        try {
+                            using var scope = _scopeFactory.CreateScope();
+                            var bgVolume = scope.ServiceProvider.GetRequiredService<VolumeOrchestratorService>();
+                            var bgDb = scope.ServiceProvider.GetRequiredService<OrchestratorDbContext>();
+
+                            for (int i = 0; i < groupIds.Count; i++)
+                            {
+                                var id = groupIds[i];
+                                var g = await bgDb.Groups.FindAsync(id);
+                                if (g == null) continue;
+                                await bgVolume.SetGroupVolumeAsync(g.Id, percent, g.IsMuted, fromDocker: true);
+                                _logger.LogInformation("[Broadcast-BG] Synced Spotify volume ({Percent}%) to listening Group {GroupName}", percent, groupNames[i]);
+                            }
+                        } catch (Exception ex) {
+                            _logger.LogError(ex, "Failed to sync volume in background for {Event}", payload.Event);
+                        }
+                    });
+                }
             }
         }
         else if (payload.Event == "stopped" || payload.Event == "inactive" || payload.Event == "paused")
