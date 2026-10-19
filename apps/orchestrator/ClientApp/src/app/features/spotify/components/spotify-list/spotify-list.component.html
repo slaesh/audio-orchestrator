@@ -27,9 +27,14 @@
               <span class="font-bold tracking-tight">{{ source.name }}</span>
               <span class="text-[10px] font-mono uppercase">
                 @if (source.errorMessage) {
-                  <span class="text-destructive flex items-center gap-1">
+                  <span class="text-destructive flex items-center gap-1" [title]="source.errorMessage">
                     <ng-icon name="lucideCircleAlert" size="0.7rem" />
-                    broken
+                    error
+                  </span>
+                } @else if (!source.containerRunning) {
+                  <span class="text-amber-500/80 flex items-center gap-1" title="Container is stopped">
+                    <ng-icon name="lucidePowerOff" size="0.7rem" />
+                    stopped
                   </span>
                 } @else if (source.isActive) {
                   <span class="text-primary font-semibold">playing</span>
@@ -48,9 +53,15 @@
                 <ng-icon name="lucideCircleArrowUp" />
               </z-button>
             }
-            <z-button zType="ghost" zSize="icon-xs" (click)="restartSource(source.id, source.name)" title="Restart Source">
-              <ng-icon name="lucideRefreshCw" />
-            </z-button>
+            @if (source.containerRunning) {
+              <z-button zType="ghost" zSize="icon-xs" (click)="restartSource(source.id, source.name)" title="Restart Source">
+                <ng-icon name="lucideRefreshCw" />
+              </z-button>
+            } @else {
+              <z-button zType="ghost" zSize="icon-xs" class="text-primary hover:bg-primary/10" (click)="startSource(source.id, source.name)" title="Start Source">
+                <ng-icon name="lucidePower" />
+              </z-button>
+            }
             <z-button zType="ghost" zSize="icon-xs" (click)="editSource(source)" title="Edit Source">
               <ng-icon name="lucideSettings" />
             </z-button>

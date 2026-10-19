@@ -28,6 +28,7 @@ import {
 } from 'rxjs';
 import { SignalRService } from './signalr.service';
 import { ToastService } from './toast.service';
+import { HttpErrorResponse } from '@angular/common/http';
 
 @Injectable({ providedIn: 'root' })
 export class DataService {
@@ -402,9 +403,9 @@ export class DataService {
     targetVersion?: string,
   ): Promise<SpotifyReleaseDto[]> {
     try {
-      return await firstValueFrom(
+      return (await firstValueFrom(
         this.spotifyApi.apiSpotifySourcesIdReleasesGet(id, targetVersion),
-      );
+      )) as SpotifyReleaseDto[];
     } catch {
       this.toast.error('Failed to fetch release information');
       return [];
@@ -414,16 +415,26 @@ export class DataService {
   async upgradeSpotifySource(
     id: string,
     targetVersion?: string,
-  ): Promise<boolean> {
+  ): Promise<{ success: boolean; error?: string }> {
     try {
       await firstValueFrom(
         this.spotifyApi.apiSpotifySourcesIdUpgradePost(id, { targetVersion }),
       );
-      this.toast.success('Spotify source upgrade started');
-      return true;
-    } catch {
-      this.toast.error('Failed to upgrade Spotify source');
-      return false;
+      this.toast.success('Spotify source upgrade completed');
+      return { success: true };
+    } catch (e: unknown) {
+      let error = 'Failed to upgrade Spotify source';
+      if (e instanceof HttpErrorResponse) {
+        if (typeof e.error === 'string') {
+          error = e.error;
+        } else if (e.error && typeof e.error === 'object' && 'message' in e.error) {
+          error = String(e.error.message);
+        }
+      } else if (e instanceof Error) {
+        error = e.message;
+      }
+      this.toast.error(error);
+      return { success: false, error };
     }
   }
 
@@ -569,9 +580,9 @@ export class DataService {
     targetVersion?: string,
   ): Promise<NodeReleaseDto[]> {
     try {
-      return await firstValueFrom(
+      return (await firstValueFrom(
         this.radioPluginsApi.apiRadioPluginsIdReleasesGet(id, targetVersion),
-      );
+      )) as NodeReleaseDto[];
     } catch {
       this.toast.error('Failed to fetch release information');
       return [];
@@ -581,16 +592,26 @@ export class DataService {
   async upgradeRadioPlugin(
     id: string,
     targetVersion?: string,
-  ): Promise<boolean> {
+  ): Promise<{ success: boolean; error?: string }> {
     try {
       await firstValueFrom(
         this.radioPluginsApi.apiRadioPluginsIdUpgradePost(id, { targetVersion }),
       );
-      this.toast.success('Radio plugin upgrade started');
-      return true;
-    } catch {
-      this.toast.error('Failed to upgrade radio plugin');
-      return false;
+      this.toast.success('Radio plugin upgrade completed');
+      return { success: true };
+    } catch (e: unknown) {
+      let error = 'Failed to upgrade radio plugin';
+      if (e instanceof HttpErrorResponse) {
+        if (typeof e.error === 'string') {
+          error = e.error;
+        } else if (e.error && typeof e.error === 'object' && 'message' in e.error) {
+          error = String(e.error.message);
+        }
+      } else if (e instanceof Error) {
+        error = e.message;
+      }
+      this.toast.error(error);
+      return { success: false, error };
     }
   }
 }

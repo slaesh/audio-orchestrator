@@ -4,6 +4,8 @@ using AudioOrchestrator.Contracts;
 using AudioOrchestrator.Data;
 using AudioOrchestrator.Data.Entities;
 using AudioOrchestrator.Services;
+using Docker.DotNet;
+using Docker.DotNet.Models;
 using Microsoft.EntityFrameworkCore;
 
 namespace AudioOrchestrator.Services;
@@ -14,28 +16,35 @@ public class FullStateBuilder
     private readonly ISnapcastService _snapcast;
     private readonly INodeReleaseService? _nodeReleaseService;
     private readonly ISpotifyNodeReleaseService? _spotifyReleaseService;
+    private readonly IDockerClient? _dockerClient;
 
     public FullStateBuilder(OrchestratorDbContext db, ISnapcastService snapcast)
-        : this(db, snapcast, null, null)
+        : this(db, snapcast, null, null, null)
     {
     }
 
     public FullStateBuilder(OrchestratorDbContext db, ISnapcastService snapcast, ISpotifyNodeReleaseService? releaseService)
-        : this(db, snapcast, releaseService as INodeReleaseService, releaseService)
+        : this(db, snapcast, releaseService as INodeReleaseService, releaseService, null)
     {
     }
 
     public FullStateBuilder(OrchestratorDbContext db, ISnapcastService snapcast, INodeReleaseService? nodeReleaseService)
-        : this(db, snapcast, nodeReleaseService, nodeReleaseService as ISpotifyNodeReleaseService)
+        : this(db, snapcast, nodeReleaseService, nodeReleaseService as ISpotifyNodeReleaseService, null)
     {
     }
 
-    public FullStateBuilder(OrchestratorDbContext db, ISnapcastService snapcast, INodeReleaseService? nodeReleaseService, ISpotifyNodeReleaseService? spotifyReleaseService)
+    public FullStateBuilder(
+        OrchestratorDbContext db, 
+        ISnapcastService snapcast, 
+        INodeReleaseService? nodeReleaseService, 
+        ISpotifyNodeReleaseService? spotifyReleaseService,
+        IDockerClient? dockerClient = null)
     {
         _db = db;
         _snapcast = snapcast;
         _nodeReleaseService = nodeReleaseService ?? (spotifyReleaseService as INodeReleaseService);
         _spotifyReleaseService = spotifyReleaseService ?? (_nodeReleaseService as ISpotifyNodeReleaseService);
+        _dockerClient = dockerClient;
     }
 
     public virtual async Task<FullStateDto> BuildAsync()
@@ -45,6 +54,19 @@ public class FullStateBuilder
         var radios = await _db.RadioStreams.AsNoTracking().ToListAsync();
         var spotifySources = await _db.SpotifySources.AsNoTracking().ToListAsync();
         var status = await _snapcast.GetStatusAsync();
+
+        IList<ContainerListResponse>? containers = null;
+        if (_dockerClient != null)
+        {
+            try
+            {
+                containers = await _dockerClient.Containers.ListContainersAsync(new ContainersListParameters { All = true });
+            }
+            catch
+            {
+                // Ignore docker connection issues in test/restricted environments
+            }
+        }
 
         var snapGroups = status?["server"]?["groups"]?.AsArray();
         var snapStreams = status?["server"]?["streams"]?.AsArray();
@@ -88,6 +110,10 @@ public class FullStateBuilder
                 hasUpdate = !string.IsNullOrEmpty(latestCompatible) && latestCompatible != currentVersion;
             }
 
+            var containerName = $"/{OrchestratorConstants.SpotifyContainerPrefix}{source.Id}";
+            var c = containers?.FirstOrDefault(ct => ct.Names != null && ct.Names.Contains(containerName));
+            bool containerRunning = containers == null || (c != null && c.State == "running");
+
             spotifySourceDtos.Add(new SpotifySourceDto(
                 source.Id, 
                 source.Name, 
@@ -111,7 +137,8 @@ public class FullStateBuilder
                 recents,
                 currentVersion,
                 latestCompatible,
-                hasUpdate
+                hasUpdate,
+                containerRunning
             ));
         }
 
@@ -139,7 +166,8 @@ public class FullStateBuilder
                 p.CreatedAt,
                 curVer,
                 latest,
-                hasUpdate
+                hasUpdate,
+                p.GitHubRepository
             ));
         }
 
@@ -178,6 +206,10 @@ public class FullStateBuilder
                 }
             }
 
+            var radioContainerName = $"/{OrchestratorConstants.RadioContainerPrefix}{radio.Id}";
+            var rc = containers?.FirstOrDefault(ct => ct.Names != null && ct.Names.Contains(radioContainerName));
+            bool radioContainerRunning = containers == null || (rc != null && rc.State == "running");
+
             radioDtos.Add(new StreamDto(
                 $"{OrchestratorConstants.RadioPrefix}{radio.Id}", 
                 radio.Name, 
@@ -190,7 +222,8 @@ public class FullStateBuilder
                 pluginVer,
                 latestComp,
                 hasUpdate,
-                pluginId
+                pluginId,
+                radioContainerRunning
             ));
         }
 

@@ -33,9 +33,14 @@
               <span class="font-bold tracking-tight">{{ stream.name }}</span>
               <span class="text-[10px] font-mono uppercase">
                 @if (stream.errorMessage) {
-                  <span class="text-destructive flex items-center gap-1">
+                  <span class="text-destructive flex items-center gap-1" [title]="stream.errorMessage">
                     <ng-icon name="lucideCircleAlert" size="0.7rem" />
-                    broken
+                    error
+                  </span>
+                } @else if (!stream.containerRunning) {
+                  <span class="text-amber-500/80 flex items-center gap-1" title="Container is stopped">
+                    <ng-icon name="lucidePowerOff" size="0.7rem" />
+                    stopped
                   </span>
                 } @else {
                   <span class="text-muted-foreground/60">{{ stream.status }}</span>
@@ -52,9 +57,15 @@
                 </z-button>
               }
             }
-            <z-button zType="ghost" zSize="icon-xs" (click)="onRestartRadio(stream.id, stream.name)" title="Restart Stream">
-              <ng-icon name="lucideRefreshCcw" />
-            </z-button>
+            @if (stream.containerRunning) {
+              <z-button zType="ghost" zSize="icon-xs" (click)="onRestartRadio(stream.id, stream.name)" title="Restart Stream">
+                <ng-icon name="lucideRefreshCcw" />
+              </z-button>
+            } @else {
+              <z-button zType="ghost" zSize="icon-xs" class="text-primary hover:bg-primary/10" (click)="onStartRadio(stream.id, stream.name)" title="Start Stream">
+                <ng-icon name="lucidePower" />
+              </z-button>
+            }
             <z-button zType="ghost" zSize="icon-xs" (click)="onEditRadio(stream)" title="Edit Station">
               <ng-icon name="lucideSettings" />
             </z-button>

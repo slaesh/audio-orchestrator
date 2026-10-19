@@ -6,7 +6,7 @@ import { firstValueFrom } from 'rxjs';
 import { ZardButtonComponent } from '../../../../core/ui/button/button.component';
 import { ZardBadgeComponent } from '../../../../core/ui/badge/badge.component';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucidePlus, lucideTrash2, lucideRadio, lucideGlobe, lucideSettings, lucideRefreshCcw, lucideMusic, lucideCircleAlert, lucideBoxes, lucideZap, lucideCircleArrowUp } from '@ng-icons/lucide';
+import { lucidePlus, lucideTrash2, lucideRadio, lucideGlobe, lucideSettings, lucideRefreshCcw, lucideMusic, lucideCircleAlert, lucideBoxes, lucideZap, lucideCircleArrowUp, lucidePower, lucidePowerOff } from '@ng-icons/lucide';
 
 import { Dialog } from '@angular/cdk/dialog';
 import { RadioFormDialogComponent } from '../../../../shared/dialogs/radio-form-dialog.component';
@@ -21,7 +21,7 @@ import { StreamDto, RadioPluginDto } from '@api';
   templateUrl: './radio-list.component.html',
   styleUrl: './radio-list.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  viewProviders: [provideIcons({ lucidePlus, lucideTrash2, lucideRadio, lucideGlobe, lucideSettings, lucideRefreshCcw, lucideMusic, lucideCircleAlert, lucideBoxes, lucideZap, lucideCircleArrowUp })]
+  viewProviders: [provideIcons({ lucidePlus, lucideTrash2, lucideRadio, lucideGlobe, lucideSettings, lucideRefreshCcw, lucideMusic, lucideCircleAlert, lucideBoxes, lucideZap, lucideCircleArrowUp, lucidePower, lucidePowerOff })]
 })
 export class RadioListComponent {
   public data = inject(DataService);
@@ -87,6 +87,18 @@ export class RadioListComponent {
     }
   }
 
+   async onStartRadio(id: string, name: string) {
+     const ok = await this.confirm.confirm({
+       title: 'Start Radio Stream',
+       message: `Are you sure you want to start "${name}"? This will spawn the radio container.`,
+       confirmLabel: 'Start',
+       variant: 'default'
+     });
+     if (ok) {
+       this.data.restartRadio(id);
+     }
+   }
+
    async onRestartRadio(id: string, name: string) {
      const ok = await this.confirm.confirm({
        title: 'Restart Radio Stream',
@@ -110,7 +122,8 @@ export class RadioListComponent {
     const parts = (plugin.dockerImage || '').split(':');
     const imageWithoutTag = parts[0];
     const segments = imageWithoutTag.split('/');
-    const repo = segments.length >= 2 ? `${segments.at(-2)}/${segments.at(-1)}` : undefined;
+    const fallbackRepo = segments.length >= 2 ? `${segments.at(-2)}/${segments.at(-1)}` : undefined;
+    const repo = plugin.gitHubRepository || fallbackRepo;
 
     this.dialog.open(NodeUpgradeDialogComponent, {
       data: {

@@ -141,6 +141,9 @@ public class RadioStreamsController : ControllerBase
         _logger.LogInformation($"Forced restart of Radio {radio.Name} ({id}) requested");
         var fifoPath = $"{OrchestratorConstants.FifoBaseDir}/{OrchestratorConstants.RadioPrefix}{radio.Id}";
         await _containerLifecycle.StopAndRemoveContainerAsync($"{OrchestratorConstants.RadioContainerPrefix}{guidId}");
+        radio.ErrorMessage = null;
+        await _db.SaveChangesAsync();
+
         await _containerLifecycle.SpawnRadioStreamAsync(radio, fifoPath);
 
         await _hub.Clients.All.OnFullStateUpdate(await _stateBuilder.BuildAsync());

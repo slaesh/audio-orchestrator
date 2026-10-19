@@ -10,6 +10,9 @@ import {
   lucideExternalLink,
   lucideTag,
   lucideSparkles,
+  lucideCircleAlert,
+  lucideCircleCheck,
+  lucideRefreshCw,
 } from '@ng-icons/lucide';
 import { ZardButtonComponent } from '../../../core/ui/button/button.component';
 import { NodeReleaseDto } from '@api';
@@ -24,6 +27,8 @@ export interface NodeUpgradeDialogData {
   targetVersion: string;
   repository?: string;
 }
+
+export type UpgradePhase = 'idle' | 'pulling' | 'restarting' | 'success' | 'failed';
 
 @Component({
   selector: 'app-node-upgrade-dialog',
@@ -46,6 +51,9 @@ export interface NodeUpgradeDialogData {
       lucideExternalLink,
       lucideTag,
       lucideSparkles,
+      lucideCircleAlert,
+      lucideCircleCheck,
+      lucideRefreshCw,
     }),
   ],
 })
@@ -56,7 +64,8 @@ export class NodeUpgradeDialogComponent implements OnInit {
 
   public node = this.data;
   public loading = signal<boolean>(true);
-  public upgrading = signal<boolean>(false);
+  public upgradePhase = signal<UpgradePhase>('idle');
+  public errorMessage = signal<string>('');
   public releases = signal<NodeReleaseDto[]>([]);
 
   public get dialogTitle(): string {
@@ -87,21 +96,29 @@ export class NodeUpgradeDialogComponent implements OnInit {
   }
 
   close(): void {
-    if (this.upgrading()) return;
-    this.dialogRef.close(false);
+    this.dialogRef.close(this.upgradePhase() === 'success');
   }
 
   async upgrade(): Promise<void> {
-    if (this.upgrading()) return;
+    if (this.upgradePhase() === 'pulling' || this.upgradePhase() === 'restarting') return;
 
-    this.upgrading.set(true);
-    const success = this.node.type === 'spotify'
+    this.upgradePhase.set('pulling');
+    this.errorMessage.set('');
+
+    const res = this.node.type === 'spotify'
       ? await this.dataService.upgradeSpotifySource(this.node.id, this.node.targetVersion)
       : await this.dataService.upgradeRadioPlugin(this.node.id, this.node.targetVersion);
 
-    this.upgrading.set(false);
+    if (res.success) {
+      this.upgradePhase.set('success');
+    } else {
+      this.upgradePhase.set('failed');
+      this.errorMessage.set(res.error || 'Upgrade failed.');
+    }
+  }
 
-    if (!success) return;
-    this.dialogRef.close(true);
+  retry(): void {
+    this.upgradePhase.set('idle');
+    this.errorMessage.set('');
   }
 }

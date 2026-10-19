@@ -1837,6 +1837,12 @@
           "enabled": {
             "type": "boolean",
             "default": true
+          },
+          "gitHubRepository": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         }
       },
@@ -1886,6 +1892,12 @@
           "hasUpdate": {
             "type": "boolean",
             "default": false
+          },
+          "gitHubRepository": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         }
       },
@@ -1912,6 +1924,12 @@
           },
           "enabled": {
             "type": "boolean"
+          },
+          "gitHubRepository": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         }
       },
@@ -2230,6 +2248,10 @@
           "hasUpdate": {
             "type": "boolean",
             "default": false
+          },
+          "containerRunning": {
+            "type": "boolean",
+            "default": true
           }
         }
       },
@@ -2302,6 +2324,10 @@
               "null",
               "string"
             ]
+          },
+          "containerRunning": {
+            "type": "boolean",
+            "default": true
           }
         }
       },

@@ -48,6 +48,8 @@ export type StreamDto = {
     hasUpdate: boolean;
     /** Transpiled from string? */
     pluginId?: string;
+    /** Transpiled from bool */
+    containerRunning: boolean;
 }
 
 /** Transpiled from AudioOrchestrator.Contracts.SpotifyRecentContextDto */
@@ -154,6 +156,8 @@ export type SpotifySourceDto = {
     latestCompatibleVersion?: string;
     /** Transpiled from bool */
     hasUpdate: boolean;
+    /** Transpiled from bool */
+    containerRunning: boolean;
 }
 
 /** Transpiled from AudioOrchestrator.Contracts.GroupDto */
@@ -192,6 +196,8 @@ export type RadioPluginDto = {
     latestCompatibleVersion?: string;
     /** Transpiled from bool */
     hasUpdate: boolean;
+    /** Transpiled from string? */
+    gitHubRepository?: string;
 }
 
 /** Transpiled from AudioOrchestrator.Contracts.RadioPluginCreateRequest */
@@ -206,6 +212,8 @@ export type RadioPluginCreateRequest = {
     urlPatterns: string[];
     /** Transpiled from bool */
     enabled: boolean;
+    /** Transpiled from string? */
+    gitHubRepository?: string;
 }
 
 /** Transpiled from AudioOrchestrator.Contracts.RadioPluginUpdateRequest */
@@ -218,6 +226,8 @@ export type RadioPluginUpdateRequest = {
     urlPatterns: string[];
     /** Transpiled from bool */
     enabled: boolean;
+    /** Transpiled from string? */
+    gitHubRepository?: string;
 }
 
 /** Transpiled from AudioOrchestrator.Contracts.RadioEventPayload */

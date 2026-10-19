@@ -154,12 +154,15 @@ public class SpotifySourcesController : ControllerBase
         var source = await _db.SpotifySources.FindAsync(id);
         if (source == null) return NotFound();
 
-        _logger.LogInformation($"Forced restart of Spotify source {source.Name} ({id}) requested");
+        _logger.LogInformation($"Restart of Spotify source {source.Name} ({id}) requested");
         var streamId = $"{OrchestratorConstants.SpotifyPrefix}{source.Id}";
         var fifoPath = $"{OrchestratorConstants.FifoBaseDir}/{streamId}";
         
         await _containerLifecycle.StopAndRemoveContainerAsync($"{OrchestratorConstants.SpotifyContainerPrefix}{id}");
-        await _containerLifecycle.SpawnLibreSpotAsync(source.Id, source.Name, fifoPath, source.MaxVolume);
+        source.ErrorMessage = null;
+        await _db.SaveChangesAsync();
+
+        await _containerLifecycle.SpawnLibreSpotAsync(source.Id, source.Name, fifoPath, source.MaxVolume, version: source.CurrentVersion);
 
         await _hub.Clients.All.OnFullStateUpdate(await _stateBuilder.BuildAsync());
         return Ok();
@@ -300,6 +303,9 @@ public class SpotifySourcesController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to upgrade Spotify source {SourceId} to {TargetVersion}", id, targetVersion);
+            source.ErrorMessage = $"Upgrade failed: {ex.Message}";
+            await _db.SaveChangesAsync();
+            await _hub.Clients.All.OnFullStateUpdate(await _stateBuilder.BuildAsync());
             return StatusCode(500, $"Failed to upgrade Spotify node: {ex.Message}");
         }
     }

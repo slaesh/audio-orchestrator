@@ -6,7 +6,7 @@ import { ConfirmService } from '../../../../core/ui/dialog/confirm.service';
 import { ZardButtonComponent } from '../../../../core/ui/button/button.component';
 import { ZardBadgeComponent } from '../../../../core/ui/badge/badge.component';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucidePlus, lucideTrash2, lucideMusic, lucideSpeaker, lucideSettings, lucideRefreshCw, lucideChevronDown, lucideChevronUp, lucideClock, lucidePlay, lucidePause, lucideSkipForward, lucideSkipBack, lucideCircleAlert, lucideListMusic, lucideDisc3, lucideCircleArrowUp } from '@ng-icons/lucide';
+import { lucidePlus, lucideTrash2, lucideMusic, lucideSpeaker, lucideSettings, lucideRefreshCw, lucideChevronDown, lucideChevronUp, lucideClock, lucidePlay, lucidePause, lucideSkipForward, lucideSkipBack, lucideCircleAlert, lucideListMusic, lucideDisc3, lucideCircleArrowUp, lucidePower, lucidePowerOff } from '@ng-icons/lucide';
 import { Dialog } from '@angular/cdk/dialog';
 import { SpotifySourceDto } from '@api';
 import { SpotifySourceFormDialogComponent } from '../../../../shared/dialogs/spotify-source-form-dialog.component';
@@ -20,7 +20,7 @@ import { SpotifyProgressBarComponent } from '../../../../shared/components/spoti
   templateUrl: './spotify-list.component.html',
   styleUrl: './spotify-list.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  viewProviders: [provideIcons({ lucidePlus, lucideTrash2, lucideMusic, lucideSpeaker, lucideSettings, lucideRefreshCw, lucideChevronDown, lucideChevronUp, lucideClock, lucidePlay, lucidePause, lucideSkipForward, lucideSkipBack, lucideCircleAlert, lucideListMusic, lucideDisc3, lucideCircleArrowUp })]
+  viewProviders: [provideIcons({ lucidePlus, lucideTrash2, lucideMusic, lucideSpeaker, lucideSettings, lucideRefreshCw, lucideChevronDown, lucideChevronUp, lucideClock, lucidePlay, lucidePause, lucideSkipForward, lucideSkipBack, lucideCircleAlert, lucideListMusic, lucideDisc3, lucideCircleArrowUp, lucidePower, lucidePowerOff })]
 })
 export class SpotifyListComponent {
   public data = inject(DataService);
@@ -49,24 +49,24 @@ export class SpotifyListComponent {
   }
 
   async addSource() {
-    const dialogRef = this.dialog.open<any>(SpotifySourceFormDialogComponent, {
+    const dialogRef = this.dialog.open<{ name: string; maxVolume: number }>(SpotifySourceFormDialogComponent, {
       width: '400px',
       data: { mode: 'create' }
     });
 
-    const result = (await firstValueFrom(dialogRef.closed)) as { name: string; maxVolume: number } | undefined;
+    const result = await firstValueFrom(dialogRef.closed);
     if (result) {
       await this.data.createSpotifySource(result.name, result.maxVolume);
     }
   }
 
   async editSource(source: SpotifySourceDto) {
-    const dialogRef = this.dialog.open<any>(SpotifySourceFormDialogComponent, {
+    const dialogRef = this.dialog.open<{ name: string; maxVolume: number }>(SpotifySourceFormDialogComponent, {
       width: '400px',
       data: { mode: 'edit', source }
     });
 
-    const result = (await firstValueFrom(dialogRef.closed)) as { name: string; maxVolume: number } | undefined;
+    const result = await firstValueFrom(dialogRef.closed);
     if (result) {
       await this.data.updateSpotifySource(source.id, result.name, result.maxVolume);
     }
@@ -76,6 +76,18 @@ export class SpotifyListComponent {
     const ok = await this.confirm.delete('Delete Spotify Source', `Are you sure you want to delete "${name}"?`);
     if (ok) {
       this.data.deleteSpotifySource(id);
+    }
+  }
+
+  async startSource(id: string, name: string) {
+    const ok = await this.confirm.confirm({
+      title: 'Start Spotify Source',
+      message: `Are you sure you want to start "${name}"? This will spawn the Librespot container.`,
+      confirmLabel: 'Start',
+      variant: 'default'
+    });
+    if (ok) {
+      this.data.restartSpotifySource(id);
     }
   }
 

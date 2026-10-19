@@ -20,6 +20,8 @@ public class RadioPluginEntity
 
     public string CurrentVersion { get; set; } = "0.1.0";
 
+    public string? GitHubRepository { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public string GetEffectiveVersion()
@@ -38,6 +40,11 @@ public class RadioPluginEntity
 
     public string? GetGitHubRepository()
     {
+        if (!string.IsNullOrWhiteSpace(GitHubRepository))
+        {
+            return GitHubRepository.Trim();
+        }
+
         if (string.IsNullOrWhiteSpace(DockerImage)) return null;
         var imageWithoutTag = DockerImage.Split(':')[0];
         var segments = imageWithoutTag.Split('/');

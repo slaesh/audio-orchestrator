@@ -18,7 +18,8 @@ public record StreamDto(
     string? CurrentVersion = null,
     string? LatestCompatibleVersion = null,
     bool HasUpdate = false,
-    string? PluginId = null
+    string? PluginId = null,
+    bool ContainerRunning = true
 );
 
 [TranspilationSource]
@@ -76,7 +77,8 @@ public record SpotifySourceDto(
     IReadOnlyList<SpotifyRecentContextDto>? RecentContexts = null,
     string CurrentVersion = OrchestratorConstants.SpotifyNodeVersion,
     string? LatestCompatibleVersion = null,
-    bool HasUpdate = false
+    bool HasUpdate = false,
+    bool ContainerRunning = true
 );
 
 [TranspilationSource]
@@ -92,7 +94,8 @@ public record RadioPluginDto(
     DateTime CreatedAt,
     string CurrentVersion = "0.1.0",
     string? LatestCompatibleVersion = null,
-    bool HasUpdate = false
+    bool HasUpdate = false,
+    string? GitHubRepository = null
 );
 
 [TranspilationSource]
@@ -101,7 +104,8 @@ public record RadioPluginCreateRequest(
     string Name,
     string DockerImage,
     List<string> UrlPatterns,
-    bool Enabled = true
+    bool Enabled = true,
+    string? GitHubRepository = null
 );
 
 [TranspilationSource]
@@ -109,7 +113,8 @@ public record RadioPluginUpdateRequest(
     string Name,
     string DockerImage,
     List<string> UrlPatterns,
-    bool Enabled
+    bool Enabled,
+    string? GitHubRepository = null
 );
 
 [TranspilationSource]

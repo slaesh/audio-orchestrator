@@ -45,10 +45,12 @@ import { NodeUpgradeDialogComponent, NodeUpgradeDialogData } from './node-upgrad
               <ng-icon name="lucideBoxes" size="1.25rem" />
             </div>
             <div>
-              <h2 class="text-xl font-bold tracking-tight">Radio Plugins</h2>
+              <h2 class="text-xl font-bold tracking-tight">
+                {{ isEditing() ? (editMode() === 'create' ? 'Register New Radio Plugin' : 'Edit Radio Plugin') : 'Radio Plugins' }}
+              </h2>
             </div>
           </div>
-          <button (click)="ref.close()" class="p-1.5 rounded-lg hover:bg-muted transition-colors opacity-60 hover:opacity-100">
+          <button (click)="isEditing() ? cancelEdit() : ref.close()" class="p-1.5 rounded-lg hover:bg-muted transition-colors opacity-60 hover:opacity-100 cursor-pointer">
             <ng-icon name="lucideX" />
           </button>
         </div>
@@ -98,6 +100,9 @@ import { NodeUpgradeDialogComponent, NodeUpgradeDialogData } from './node-upgrad
                       </div>
                       <p class="text-[11px] font-mono text-muted-foreground break-all">
                         Image: <span class="text-foreground/80">{{ plugin.dockerImage }}</span>
+                        @if (plugin.gitHubRepository) {
+                          <span class="ml-2 text-muted-foreground/60">(repo: {{ plugin.gitHubRepository }})</span>
+                        }
                       </p>
                     </div>
 
@@ -164,13 +169,6 @@ import { NodeUpgradeDialogComponent, NodeUpgradeDialogData } from './node-upgrad
           <!-- Mode: Create / Edit Form -->
           @if (isEditing()) {
             <div class="space-y-4 animate-in fade-in duration-200">
-              <div class="flex items-center justify-between pb-2 border-b border-border/30">
-                <h3 class="font-bold text-sm">
-                  {{ editMode() === 'create' ? 'Register New Radio Plugin' : 'Edit Radio Plugin' }}
-                </h3>
-                <z-button zType="ghost" zSize="xs" (click)="cancelEdit()">Cancel</z-button>
-              </div>
-
               <div class="space-y-3">
                 @if (editMode() === 'create') {
                   <div class="space-y-1">
@@ -198,8 +196,22 @@ import { NodeUpgradeDialogComponent, NodeUpgradeDialogData } from './node-upgrad
                   <label class="text-[11px] uppercase font-bold tracking-wider text-muted-foreground">Docker Image</label>
                   <input 
                     z-input 
-                    [(ngModel)]="formImage" 
-                    placeholder="e.g. radio-node-audalaxy:latest"
+                    [ngModel]="formImage"
+                    (ngModelChange)="onImageChange($event)"
+                    placeholder="e.g. ghcr.io/slaesh/radio-node-audalaxy:latest"
+                    class="w-full text-sm font-mono"
+                  />
+                </div>
+
+                <div class="space-y-1">
+                  <div class="flex items-center justify-between">
+                    <label class="text-[11px] uppercase font-bold tracking-wider text-muted-foreground">GitHub Repository (Optional)</label>
+                    <span class="text-[10px] text-muted-foreground">For release notes & updates (owner/repo)</span>
+                  </div>
+                  <input 
+                    z-input 
+                    [(ngModel)]="formGitHubRepo" 
+                    placeholder="e.g. slaesh/radio-node-audalaxy"
                     class="w-full text-sm font-mono"
                   />
                 </div>
@@ -229,26 +241,26 @@ import { NodeUpgradeDialogComponent, NodeUpgradeDialogData } from './node-upgrad
                   </label>
                 </div>
               </div>
-
-              <div class="flex justify-end gap-2 pt-4 border-t border-border/30">
-                <z-button zType="outline" zSize="sm" (click)="cancelEdit()">Cancel</z-button>
-                <z-button 
-                  zType="default" 
-                  zSize="sm" 
-                  (click)="savePlugin()"
-                  [zDisabled]="!formName || !formImage || (editMode() === 'create' && !formId)"
-                >
-                  <ng-icon name="lucideCheck" class="mr-1" />
-                  Save Plugin
-                </z-button>
-              </div>
             </div>
           }
         </div>
 
         <!-- Footer -->
-        <div class="pt-3 border-t border-border/40 flex justify-end">
-          <z-button zType="outline" zSize="sm" (click)="ref.close()">Close</z-button>
+        <div class="pt-3 border-t border-border/40 flex justify-end gap-2">
+          @if (!isEditing()) {
+            <z-button zType="outline" zSize="sm" (click)="ref.close()">Close</z-button>
+          } @else {
+            <z-button zType="outline" zSize="sm" (click)="cancelEdit()">Cancel</z-button>
+            <z-button 
+              zType="default" 
+              zSize="sm" 
+              (click)="savePlugin()"
+              [zDisabled]="!formName || !formImage || (editMode() === 'create' && !formId)"
+            >
+              <ng-icon name="lucideCheck" class="mr-1" />
+              Save Plugin
+            </z-button>
+          }
         </div>
       </div>
     </div>
@@ -280,14 +292,36 @@ export class RadioPluginsDialogComponent {
   formId = '';
   formName = '';
   formImage = '';
+  formGitHubRepo = '';
   formPatternsRaw = '';
   formEnabled = true;
+
+  onImageChange(newImage: string) {
+    this.formImage = newImage;
+    if (!this.formGitHubRepo) {
+      const autoRepo = this.extractGitHubRepo(newImage);
+      if (autoRepo) {
+        this.formGitHubRepo = autoRepo;
+      }
+    }
+  }
+
+  private extractGitHubRepo(image: string): string | null {
+    if (!image) return null;
+    const withoutTag = image.split(':')[0];
+    const segments = withoutTag.split('/');
+    if (segments.length >= 2) {
+      return `${segments.at(-2)}/${segments.at(-1)}`;
+    }
+    return null;
+  }
 
   startCreate() {
     this.editMode.set('create');
     this.formId = '';
     this.formName = '';
-    this.formImage = 'radio-node-audalaxy:latest';
+    this.formImage = 'ghcr.io/slaesh/radio-node-audalaxy:latest';
+    this.formGitHubRepo = 'slaesh/radio-node-audalaxy';
     this.formPatternsRaw = '';
     this.formEnabled = true;
     this.isEditing.set(true);
@@ -299,6 +333,7 @@ export class RadioPluginsDialogComponent {
     this.formId = plugin.id;
     this.formName = plugin.name;
     this.formImage = plugin.dockerImage;
+    this.formGitHubRepo = plugin.gitHubRepository || '';
     this.formPatternsRaw = (plugin.urlPatterns || []).join('\n');
     this.formEnabled = plugin.enabled;
     this.isEditing.set(true);
@@ -314,13 +349,16 @@ export class RadioPluginsDialogComponent {
       .map(p => p.trim())
       .filter(p => p.length > 0);
 
+    const repo = this.formGitHubRepo.trim() || undefined;
+
     if (this.editMode() === 'create') {
       const req: RadioPluginCreateRequest = {
         id: this.formId.trim().toLowerCase(),
         name: this.formName.trim(),
         dockerImage: this.formImage.trim(),
         urlPatterns: patterns,
-        enabled: this.formEnabled
+        enabled: this.formEnabled,
+        gitHubRepository: repo
       };
       await this.data.createRadioPlugin(req);
     } else {
@@ -328,7 +366,8 @@ export class RadioPluginsDialogComponent {
         name: this.formName.trim(),
         dockerImage: this.formImage.trim(),
         urlPatterns: patterns,
-        enabled: this.formEnabled
+        enabled: this.formEnabled,
+        gitHubRepository: repo
       };
       await this.data.updateRadioPlugin(this.currentEditId(), req);
     }
@@ -346,10 +385,7 @@ export class RadioPluginsDialogComponent {
   }
 
   openUpgradeDialog(plugin: RadioPluginDto): void {
-    const parts = (plugin.dockerImage || '').split(':');
-    const imageWithoutTag = parts[0];
-    const segments = imageWithoutTag.split('/');
-    const repo = segments.length >= 2 ? `${segments.at(-2)}/${segments.at(-1)}` : undefined;
+    const repo = plugin.gitHubRepository || this.extractGitHubRepo(plugin.dockerImage) || undefined;
 
     this.dialog.open(NodeUpgradeDialogComponent, {
       data: {

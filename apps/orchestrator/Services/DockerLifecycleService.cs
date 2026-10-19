@@ -197,6 +197,7 @@ public class DockerLifecycleService : IContainerLifecycleService
         _logger.LogInformation("Upgrading Spotify node {SourceName} ({SourceId}) from {CurrentVersion} to {TargetVersion} (image {TargetImage})",
             source.Name, sourceId, source.CurrentVersion, targetVersion, targetImage);
 
+        // 1. MUST pull/ensure the target image exists BEFORE touching the existing running container!
         await EnsureImageExistsAsync(targetImage);
 
         var containerName = $"{OrchestratorConstants.SpotifyContainerPrefix}{sourceId}";
@@ -204,10 +205,29 @@ public class DockerLifecycleService : IContainerLifecycleService
 
         var streamId = $"{OrchestratorConstants.SpotifyPrefix}{source.Id}";
         var fifoPath = $"{OrchestratorConstants.FifoBaseDir}/{streamId}";
-        await SpawnLibreSpotAsync(source.Id, source.Name, fifoPath, source.MaxVolume, version: targetVersion);
+        try
+        {
+            await SpawnLibreSpotAsync(source.Id, source.Name, fifoPath, source.MaxVolume, version: targetVersion);
+            source.CurrentVersion = targetVersion;
+            source.ErrorMessage = null;
+            await db.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to spawn upgraded container for Spotify source {SourceId}. Attempting rollback.", sourceId);
+            source.ErrorMessage = $"Failed to start container with version {targetVersion}: {ex.Message}";
+            await db.SaveChangesAsync();
 
-        source.CurrentVersion = targetVersion;
-        await db.SaveChangesAsync();
+            try
+            {
+                await SpawnLibreSpotAsync(source.Id, source.Name, fifoPath, source.MaxVolume, version: source.CurrentVersion);
+            }
+            catch (Exception rollbackEx)
+            {
+                _logger.LogError(rollbackEx, "Rollback failed for Spotify source {SourceId}", sourceId);
+            }
+            throw;
+        }
 
         var hub = scope.ServiceProvider.GetRequiredService<IHubContext<AudioHub, IAudioClient>>();
         var stateBuilder = scope.ServiceProvider.GetRequiredService<FullStateBuilder>();
@@ -494,27 +514,28 @@ public class DockerLifecycleService : IContainerLifecycleService
 
     private async Task EnsureImageExistsAsync(string image)
     {
+        var images = await _dockerClient.Images.ListImagesAsync(new ImagesListParameters { All = true });
+        var normalizedImage = image.Contains(':') ? image : $"{image}:latest";
+        var exists = images.Any(img => img.RepoTags != null && img.RepoTags.Any(t => t == normalizedImage || t == image));
+        if (exists) return;
+
+        _logger.LogInformation("Docker image {Image} not found locally. Pulling from registry...", image);
+        var lastColon = image.LastIndexOf(':');
+        var repo = lastColon != -1 && !image.Substring(lastColon).Contains('/') ? image.Substring(0, lastColon) : image;
+        var tag = lastColon != -1 && !image.Substring(lastColon).Contains('/') ? image.Substring(lastColon + 1) : "latest";
+
         try
         {
-            var images = await _dockerClient.Images.ListImagesAsync(new ImagesListParameters { All = true });
-            var normalizedImage = image.Contains(':') ? image : $"{image}:latest";
-            var exists = images.Any(img => img.RepoTags != null && img.RepoTags.Any(t => t == normalizedImage || t == image));
-            if (!exists)
-            {
-                _logger.LogInformation("Docker image {Image} not found locally. Pulling from registry...", image);
-                var lastColon = image.LastIndexOf(':');
-                var repo = lastColon != -1 && !image.Substring(lastColon).Contains('/') ? image.Substring(0, lastColon) : image;
-                var tag = lastColon != -1 && !image.Substring(lastColon).Contains('/') ? image.Substring(lastColon + 1) : "latest";
-                await _dockerClient.Images.CreateImageAsync(
-                    new ImagesCreateParameters { FromImage = repo, Tag = tag },
-                    null,
-                    new Progress<JSONMessage>());
-                _logger.LogInformation("Successfully pulled Docker image {Image}", image);
-            }
+            await _dockerClient.Images.CreateImageAsync(
+                new ImagesCreateParameters { FromImage = repo, Tag = tag },
+                null,
+                new Progress<JSONMessage>());
+            _logger.LogInformation("Successfully pulled Docker image {Image}", image);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to check or pull Docker image {Image}. Will attempt to proceed if cached locally.", image);
+            _logger.LogError(ex, "Failed to pull Docker image {Image} from registry.", image);
+            throw new InvalidOperationException($"Docker image '{image}' could not be pulled from registry: {ex.Message}", ex);
         }
     }
 }

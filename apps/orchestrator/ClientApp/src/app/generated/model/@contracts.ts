@@ -22,5 +22,6 @@ export interface StreamDto {
     latestCompatibleVersion?: string | null;
     hasUpdate?: boolean;
     pluginId?: string | null;
+    containerRunning?: boolean;
 }
 

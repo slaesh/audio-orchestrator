@@ -62,7 +62,8 @@ public class RadioPluginsController : ControllerBase
                 p.CreatedAt,
                 curVer,
                 latest,
-                hasUpdate
+                hasUpdate,
+                p.GitHubRepository
             ));
         }
         return Ok(dtos);
@@ -93,7 +94,8 @@ public class RadioPluginsController : ControllerBase
             p.CreatedAt,
             curVer,
             latest,
-            hasUpdate
+            hasUpdate,
+            p.GitHubRepository
         ));
     }
 
@@ -129,6 +131,7 @@ public class RadioPluginsController : ControllerBase
             Id = request.Id.Trim().ToLowerInvariant(),
             Name = request.Name.Trim(),
             DockerImage = request.DockerImage.Trim(),
+            GitHubRepository = string.IsNullOrWhiteSpace(request.GitHubRepository) ? null : request.GitHubRepository.Trim(),
             Enabled = request.Enabled,
             CreatedAt = DateTime.UtcNow
         };
@@ -147,7 +150,8 @@ public class RadioPluginsController : ControllerBase
             entity.DockerImage,
             entity.GetUrlPatterns(),
             entity.Enabled,
-            entity.CreatedAt
+            entity.CreatedAt,
+            GitHubRepository: entity.GitHubRepository
         ));
     }
 
@@ -177,6 +181,7 @@ public class RadioPluginsController : ControllerBase
 
         entity.Name = request.Name.Trim();
         entity.DockerImage = request.DockerImage.Trim();
+        entity.GitHubRepository = string.IsNullOrWhiteSpace(request.GitHubRepository) ? null : request.GitHubRepository.Trim();
         entity.Enabled = request.Enabled;
         entity.SetUrlPatterns(request.UrlPatterns ?? new List<string>());
 
@@ -192,7 +197,8 @@ public class RadioPluginsController : ControllerBase
             entity.DockerImage,
             entity.GetUrlPatterns(),
             entity.Enabled,
-            entity.CreatedAt
+            entity.CreatedAt,
+            GitHubRepository: entity.GitHubRepository
         ));
     }
 

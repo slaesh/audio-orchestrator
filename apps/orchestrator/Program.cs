@@ -87,6 +87,7 @@ if (!isDesignOrDocumentGen)
             Id = "audalaxy",
             Name = "Sunshine Live",
             DockerImage = seededImage,
+            GitHubRepository = "slaesh/radio-node-audalaxy",
             Enabled = true
         };
         audalaxyPlugin.SetUrlPatterns(new[]
