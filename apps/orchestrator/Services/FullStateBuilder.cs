@@ -12,18 +12,30 @@ public class FullStateBuilder
 {
     private readonly OrchestratorDbContext _db;
     private readonly ISnapcastService _snapcast;
-    private readonly ISpotifyNodeReleaseService? _releaseService;
+    private readonly INodeReleaseService? _nodeReleaseService;
+    private readonly ISpotifyNodeReleaseService? _spotifyReleaseService;
 
     public FullStateBuilder(OrchestratorDbContext db, ISnapcastService snapcast)
-        : this(db, snapcast, null)
+        : this(db, snapcast, null, null)
     {
     }
 
     public FullStateBuilder(OrchestratorDbContext db, ISnapcastService snapcast, ISpotifyNodeReleaseService? releaseService)
+        : this(db, snapcast, releaseService as INodeReleaseService, releaseService)
+    {
+    }
+
+    public FullStateBuilder(OrchestratorDbContext db, ISnapcastService snapcast, INodeReleaseService? nodeReleaseService)
+        : this(db, snapcast, nodeReleaseService, nodeReleaseService as ISpotifyNodeReleaseService)
+    {
+    }
+
+    public FullStateBuilder(OrchestratorDbContext db, ISnapcastService snapcast, INodeReleaseService? nodeReleaseService, ISpotifyNodeReleaseService? spotifyReleaseService)
     {
         _db = db;
         _snapcast = snapcast;
-        _releaseService = releaseService;
+        _nodeReleaseService = nodeReleaseService ?? (spotifyReleaseService as INodeReleaseService);
+        _spotifyReleaseService = spotifyReleaseService ?? (_nodeReleaseService as ISpotifyNodeReleaseService);
     }
 
     public virtual async Task<FullStateDto> BuildAsync()
@@ -70,9 +82,9 @@ public class FullStateBuilder
 
             string? latestCompatible = null;
             bool hasUpdate = false;
-            if (_releaseService != null)
+            if (_spotifyReleaseService != null)
             {
-                latestCompatible = await _releaseService.GetLatestCompatibleVersionAsync(currentVersion);
+                latestCompatible = await _spotifyReleaseService.GetLatestCompatibleVersionAsync(currentVersion);
                 hasUpdate = !string.IsNullOrEmpty(latestCompatible) && latestCompatible != currentVersion;
             }
 
@@ -103,12 +115,69 @@ public class FullStateBuilder
             ));
         }
 
+        // Build Radio Plugins
+        var pluginsFromDb = await _db.RadioPlugins.AsNoTracking().ToListAsync();
+        var pluginDtos = new List<RadioPluginDto>();
+        foreach (var p in pluginsFromDb)
+        {
+            var curVer = p.GetEffectiveVersion();
+            string? latest = null;
+            bool hasUpdate = false;
+            var repo = p.GetGitHubRepository();
+            if (_nodeReleaseService != null && !string.IsNullOrEmpty(repo))
+            {
+                latest = await _nodeReleaseService.GetLatestCompatibleVersionAsync(repo, curVer);
+                hasUpdate = !string.IsNullOrEmpty(latest) && latest != curVer;
+            }
+
+            pluginDtos.Add(new RadioPluginDto(
+                p.Id,
+                p.Name,
+                p.DockerImage,
+                p.GetUrlPatterns(),
+                p.Enabled,
+                p.CreatedAt,
+                curVer,
+                latest,
+                hasUpdate
+            ));
+        }
+
         // Build Radio Streams (from DB)
         foreach (var radio in radios)
         {
             // We find the corresponding snapcast stream for status
             var ss = snapStreams?.FirstOrDefault(s => s?["id"]?.GetValue<string>() == $"{OrchestratorConstants.RadioPrefix}{radio.Id}");
             var st = ss?["status"]?.GetValue<string>() ?? "idle";
+
+            var matchedPlugin = pluginsFromDb.FirstOrDefault(p => p.Enabled && p.GetUrlPatterns().Any(pattern =>
+            {
+                if (string.IsNullOrWhiteSpace(pattern)) return false;
+                try
+                {
+                    return System.Text.RegularExpressions.Regex.IsMatch(radio.StreamUrl, pattern, System.Text.RegularExpressions.RegexOptions.IgnoreCase, TimeSpan.FromMilliseconds(100));
+                }
+                catch
+                {
+                    return false;
+                }
+            }));
+
+            string? pluginVer = matchedPlugin?.GetEffectiveVersion();
+            string? latestComp = null;
+            bool hasUpdate = false;
+            string? pluginId = matchedPlugin?.Id;
+
+            if (matchedPlugin != null)
+            {
+                var pDto = pluginDtos.FirstOrDefault(p => p.Id == matchedPlugin.Id);
+                if (pDto != null)
+                {
+                    latestComp = pDto.LatestCompatibleVersion;
+                    hasUpdate = pDto.HasUpdate;
+                }
+            }
+
             radioDtos.Add(new StreamDto(
                 $"{OrchestratorConstants.RadioPrefix}{radio.Id}", 
                 radio.Name, 
@@ -117,7 +186,11 @@ public class FullStateBuilder
                 radio.CurrentTitle,
                 radio.CurrentArtist,
                 radio.CurrentCoverUrl,
-                radio.ErrorMessage
+                radio.ErrorMessage,
+                pluginVer,
+                latestComp,
+                hasUpdate,
+                pluginId
             ));
         }
 
@@ -177,18 +250,6 @@ public class FullStateBuilder
                 }
             }
         }
-
-        // Build Radio Plugins
-        var pluginsFromDb = await _db.RadioPlugins.AsNoTracking().ToListAsync();
-        var pluginDtos = pluginsFromDb.Select(p => new RadioPluginDto(
-            p.Id,
-            p.Name,
-            p.DockerImage,
-            p.GetUrlPatterns(),
-            p.Enabled,
-            p.CreatedAt
-        )).ToList();
-
         return new FullStateDto(groupDtos, unassignedRooms, radioDtos, spotifySourceDtos, snapcastStreamDtos, pluginDtos);
     }
 

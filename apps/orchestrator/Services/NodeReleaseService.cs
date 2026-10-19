@@ -5,6 +5,13 @@ using Microsoft.Extensions.Caching.Memory;
 
 namespace AudioOrchestrator.Services;
 
+public interface INodeReleaseService
+{
+    Task<IReadOnlyList<NodeReleaseDto>> GetReleasesAsync(string repository, string? currentVersion = null, bool forceRefresh = false);
+    Task<string?> GetLatestCompatibleVersionAsync(string repository, string currentVersion);
+    Task<IReadOnlyList<NodeReleaseDto>> GetReleaseHistoryAsync(string repository, string currentVersion, string? targetVersion = null);
+}
+
 public interface ISpotifyNodeReleaseService
 {
     Task<IReadOnlyList<SpotifyReleaseDto>> GetReleasesAsync(string? currentVersion = null, bool forceRefresh = false);
@@ -12,48 +19,79 @@ public interface ISpotifyNodeReleaseService
     Task<IReadOnlyList<SpotifyReleaseDto>> GetReleaseHistoryAsync(string currentVersion, string? targetVersion = null);
 }
 
-public class SpotifyNodeReleaseService : ISpotifyNodeReleaseService
+public class NodeReleaseService : INodeReleaseService, ISpotifyNodeReleaseService
 {
     private readonly HttpClient _httpClient;
     private readonly IMemoryCache _cache;
-    private readonly ILogger<SpotifyNodeReleaseService> _logger;
-    private const string CacheKey = "SpotifyNodeReleases";
+    private readonly ILogger<NodeReleaseService> _logger;
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
 
-    public SpotifyNodeReleaseService(HttpClient httpClient, IMemoryCache cache, ILogger<SpotifyNodeReleaseService> logger)
+    public NodeReleaseService(HttpClient httpClient, IMemoryCache cache, ILogger<NodeReleaseService> logger)
     {
         _httpClient = httpClient;
         _cache = cache;
         _logger = logger;
     }
 
-    public async Task<IReadOnlyList<SpotifyReleaseDto>> GetReleasesAsync(string? currentVersion = null, bool forceRefresh = false)
+    // ISpotifyNodeReleaseService backward compatibility
+    async Task<IReadOnlyList<SpotifyReleaseDto>> ISpotifyNodeReleaseService.GetReleasesAsync(string? currentVersion, bool forceRefresh)
     {
-        if (!forceRefresh && _cache.TryGetValue(CacheKey, out List<GitHubReleaseRaw>? cachedReleases) && cachedReleases != null)
+        var list = await GetReleasesAsync(OrchestratorConstants.SpotifyRepository, currentVersion, forceRefresh);
+        return list.Select(r => new SpotifyReleaseDto(r.TagName, r.Version, r.Name, r.Body, r.PublishedAt, r.IsCompatible, r.Url)).ToList();
+    }
+
+    Task<string?> ISpotifyNodeReleaseService.GetLatestCompatibleVersionAsync(string currentVersion)
+    {
+        return GetLatestCompatibleVersionAsync(OrchestratorConstants.SpotifyRepository, currentVersion);
+    }
+
+    async Task<IReadOnlyList<SpotifyReleaseDto>> ISpotifyNodeReleaseService.GetReleaseHistoryAsync(string currentVersion, string? targetVersion)
+    {
+        var list = await GetReleaseHistoryAsync(OrchestratorConstants.SpotifyRepository, currentVersion, targetVersion);
+        return list.Select(r => new SpotifyReleaseDto(r.TagName, r.Version, r.Name, r.Body, r.PublishedAt, r.IsCompatible, r.Url)).ToList();
+    }
+
+    // INodeReleaseService implementation
+    public async Task<IReadOnlyList<NodeReleaseDto>> GetReleasesAsync(string repository, string? currentVersion = null, bool forceRefresh = false)
+    {
+        if (string.IsNullOrWhiteSpace(repository)) return Array.Empty<NodeReleaseDto>();
+
+        var cacheKey = $"NodeReleases:{repository.Trim().ToLowerInvariant()}";
+        if (!forceRefresh && _cache.TryGetValue(cacheKey, out List<GitHubReleaseRaw>? cachedReleases) && cachedReleases != null)
         {
             return MapToDtos(cachedReleases, currentVersion);
         }
 
         try
         {
-            var rawList = await _httpClient.GetFromJsonAsync<List<GitHubReleaseRaw>>("https://api.github.com/repos/slaesh/librespot-server/releases");
-            if (rawList != null)
+            using var response = await _httpClient.GetAsync($"https://api.github.com/repos/{repository.Trim()}/releases");
+            if (response.IsSuccessStatusCode)
             {
-                _cache.Set(CacheKey, rawList, CacheDuration);
-                return MapToDtos(rawList, currentVersion);
+                var rawList = await response.Content.ReadFromJsonAsync<List<GitHubReleaseRaw>>();
+                if (rawList != null)
+                {
+                    _cache.Set(cacheKey, rawList, CacheDuration);
+                    return MapToDtos(rawList, currentVersion);
+                }
+            }
+            else
+            {
+                _logger.LogDebug("GitHub API returned {StatusCode} for {Repository}", response.StatusCode, repository);
+                _cache.Set(cacheKey, new List<GitHubReleaseRaw>(), CacheDuration);
             }
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to query releases from GitHub API for slaesh/librespot-server");
+            _logger.LogWarning(ex, "Failed to query releases from GitHub API for {Repository}", repository);
+            _cache.Set(cacheKey, new List<GitHubReleaseRaw>(), CacheDuration);
         }
 
-        return Array.Empty<SpotifyReleaseDto>();
+        return Array.Empty<NodeReleaseDto>();
     }
 
-    public async Task<string?> GetLatestCompatibleVersionAsync(string currentVersion)
+    public async Task<string?> GetLatestCompatibleVersionAsync(string repository, string currentVersion)
     {
-        var releases = await GetReleasesAsync(currentVersion);
+        var releases = await GetReleasesAsync(repository, currentVersion);
         var compatible = releases
             .Where(r => r.IsCompatible)
             .OrderByDescending(r => ParseSemVer(r.Version))
@@ -62,9 +100,9 @@ public class SpotifyNodeReleaseService : ISpotifyNodeReleaseService
         return compatible?.Version;
     }
 
-    public async Task<IReadOnlyList<SpotifyReleaseDto>> GetReleaseHistoryAsync(string currentVersion, string? targetVersion = null)
+    public async Task<IReadOnlyList<NodeReleaseDto>> GetReleaseHistoryAsync(string repository, string currentVersion, string? targetVersion = null)
     {
-        var releases = await GetReleasesAsync(currentVersion);
+        var releases = await GetReleasesAsync(repository, currentVersion);
         var currentSemVer = ParseSemVer(currentVersion);
         var targetSemVer = string.IsNullOrWhiteSpace(targetVersion) ? null : ParseSemVer(targetVersion);
 
@@ -85,9 +123,9 @@ public class SpotifyNodeReleaseService : ISpotifyNodeReleaseService
             .ToList();
     }
 
-    private static IReadOnlyList<SpotifyReleaseDto> MapToDtos(IEnumerable<GitHubReleaseRaw> rawReleases, string? currentVersion)
+    private static IReadOnlyList<NodeReleaseDto> MapToDtos(IEnumerable<GitHubReleaseRaw> rawReleases, string? currentVersion)
     {
-        var list = new List<SpotifyReleaseDto>();
+        var list = new List<NodeReleaseDto>();
         foreach (var r in rawReleases)
         {
             if (r.Draft) continue;
@@ -102,38 +140,42 @@ public class SpotifyNodeReleaseService : ISpotifyNodeReleaseService
                 isCompatible = IsNonBreakingUpgrade(currentVersion, cleanVersion);
             }
 
-            list.Add(new SpotifyReleaseDto(
+            list.Add(new NodeReleaseDto(
                 TagName: rawTag,
                 Version: cleanVersion,
                 Name: string.IsNullOrWhiteSpace(r.Name) ? rawTag : r.Name,
                 Body: r.Body ?? string.Empty,
                 PublishedAt: r.PublishedAt ?? DateTime.UtcNow,
-                IsCompatible: isCompatible
+                IsCompatible: isCompatible,
+                Url: r.HtmlUrl
             ));
         }
 
         return list;
     }
 
-    public static bool IsNonBreakingUpgrade(string currentVersion, string targetVersion)
+    public static bool IsNonBreakingUpgrade(string currentVersionStr, string targetVersionStr)
     {
-        var current = ParseSemVer(currentVersion);
-        var target = ParseSemVer(targetVersion);
+        var current = ParseSemVer(currentVersionStr);
+        var target = ParseSemVer(targetVersionStr);
 
         if (current == null || target == null) return false;
 
         // Target must be strictly newer
         if (target.CompareTo(current) <= 0) return false;
 
-        // For 0.x.y: breaking changes occur on minor bumps (0.3 -> 0.4).
-        // Only patch bumps within the same minor (0.3.0 -> 0.3.1) are non-breaking.
+        // SemVer 2.0 rules:
+        // For Major == 0 (0.x.y): Minor bumps are breaking changes!
+        // Only patch bumps (0.x.y -> 0.x.z) are non-breaking.
         if (current.Major == 0)
         {
-            return target.Major == 0 && target.Minor == current.Minor;
+            return target.Major == 0 && target.Minor == current.Minor && target.Patch > current.Patch;
         }
 
-        // For >= 1.0.0: Minor and Patch bumps within the same Major are non-breaking.
-        return target.Major == current.Major;
+        // For Major >= 1: Major version must match, minor or patch bump is non-breaking.
+        if (target.Major != current.Major) return false;
+
+        return true;
     }
 
     public static SemVer? ParseSemVer(string? versionStr)
@@ -148,6 +190,9 @@ public class SpotifyNodeReleaseService : ISpotifyNodeReleaseService
             prerelease = clean[(dashIdx + 1)..];
             clean = clean[..dashIdx];
         }
+
+        var plusIdx = clean.IndexOf('+');
+        if (plusIdx >= 0) clean = clean[..plusIdx];
 
         var parts = clean.Split('.');
         if (parts.Length < 1) return null;
@@ -179,7 +224,7 @@ public class SpotifyNodeReleaseService : ISpotifyNodeReleaseService
         public override string ToString() => $"{Major}.{Minor}.{Patch}{(string.IsNullOrEmpty(Prerelease) ? "" : $"-{Prerelease}")}";
     }
 
-    public class GitHubReleaseRaw
+    private sealed class GitHubReleaseRaw
     {
         [JsonPropertyName("tag_name")]
         public string? TagName { get; set; }
@@ -190,10 +235,16 @@ public class SpotifyNodeReleaseService : ISpotifyNodeReleaseService
         [JsonPropertyName("body")]
         public string? Body { get; set; }
 
-        [JsonPropertyName("draft")]
-        public bool Draft { get; set; }
+        [JsonPropertyName("html_url")]
+        public string? HtmlUrl { get; set; }
 
         [JsonPropertyName("published_at")]
         public DateTime? PublishedAt { get; set; }
+
+        [JsonPropertyName("draft")]
+        public bool Draft { get; set; }
+
+        [JsonPropertyName("prerelease")]
+        public bool Prerelease { get; set; }
     }
 }

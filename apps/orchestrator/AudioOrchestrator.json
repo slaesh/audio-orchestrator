@@ -678,6 +678,123 @@
         }
       }
     },
+    "/api/radio-plugins/{id}/releases": {
+      "get": {
+        "tags": [
+          "RadioPlugins"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "targetVersion",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/NodeReleaseDto"
+                  }
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/NodeReleaseDto"
+                  }
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/NodeReleaseDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/radio-plugins/{id}/upgrade": {
+      "post": {
+        "tags": [
+          "RadioPlugins"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/NodeUpgradeRequest"
+                  }
+                ]
+              }
+            },
+            "text/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/NodeUpgradeRequest"
+                  }
+                ]
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/NodeUpgradeRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
     "/api/streams/radio": {
       "get": {
         "tags": [
@@ -1598,6 +1715,55 @@
           }
         }
       },
+      "NodeReleaseDto": {
+        "required": [
+          "tagName",
+          "version",
+          "name",
+          "body",
+          "publishedAt",
+          "isCompatible"
+        ],
+        "type": "object",
+        "properties": {
+          "tagName": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "publishedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "isCompatible": {
+            "type": "boolean"
+          },
+          "url": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "NodeUpgradeRequest": {
+        "type": "object",
+        "properties": {
+          "targetVersion": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
       "PlayContextRequest": {
         "type": "object",
         "properties": {
@@ -1631,6 +1797,12 @@
             ]
           },
           "coverUrl": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "version": {
             "type": [
               "null",
               "string"
@@ -1700,6 +1872,20 @@
           "createdAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "currentVersion": {
+            "type": "string",
+            "default": "0.1.0"
+          },
+          "latestCompatibleVersion": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "hasUpdate": {
+            "type": "boolean",
+            "default": false
           }
         }
       },
@@ -1914,6 +2100,12 @@
           },
           "isCompatible": {
             "type": "boolean"
+          },
+          "url": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         }
       },
@@ -2084,6 +2276,28 @@
             ]
           },
           "errorMessage": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "currentVersion": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "latestCompatibleVersion": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "hasUpdate": {
+            "type": "boolean",
+            "default": false
+          },
+          "pluginId": {
             "type": [
               "null",
               "string"

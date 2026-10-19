@@ -40,6 +40,14 @@ export type StreamDto = {
     currentCoverUrl?: string;
     /** Transpiled from string? */
     errorMessage?: string;
+    /** Transpiled from string? */
+    currentVersion?: string;
+    /** Transpiled from string? */
+    latestCompatibleVersion?: string;
+    /** Transpiled from bool */
+    hasUpdate: boolean;
+    /** Transpiled from string? */
+    pluginId?: string;
 }
 
 /** Transpiled from AudioOrchestrator.Contracts.SpotifyRecentContextDto */
@@ -48,6 +56,24 @@ export type SpotifyRecentContextDto = {
     uri: string;
     /** Transpiled from string */
     name: string;
+}
+
+/** Transpiled from AudioOrchestrator.Contracts.NodeReleaseDto */
+export type NodeReleaseDto = {
+    /** Transpiled from string */
+    tagName: string;
+    /** Transpiled from string */
+    version: string;
+    /** Transpiled from string */
+    name: string;
+    /** Transpiled from string */
+    body: string;
+    /** Transpiled from System.DateTime */
+    publishedAt: (Date | string);
+    /** Transpiled from bool */
+    isCompatible: boolean;
+    /** Transpiled from string? */
+    url?: string;
 }
 
 /** Transpiled from AudioOrchestrator.Contracts.SpotifyReleaseDto */
@@ -64,6 +90,14 @@ export type SpotifyReleaseDto = {
     publishedAt: (Date | string);
     /** Transpiled from bool */
     isCompatible: boolean;
+    /** Transpiled from string? */
+    url?: string;
+}
+
+/** Transpiled from AudioOrchestrator.Contracts.NodeUpgradeRequest */
+export type NodeUpgradeRequest = {
+    /** Transpiled from string? */
+    targetVersion?: string;
 }
 
 /** Transpiled from AudioOrchestrator.Contracts.UpgradeSpotifySourceRequest */
@@ -152,6 +186,12 @@ export type RadioPluginDto = {
     enabled: boolean;
     /** Transpiled from System.DateTime */
     createdAt: (Date | string);
+    /** Transpiled from string */
+    currentVersion: string;
+    /** Transpiled from string? */
+    latestCompatibleVersion?: string;
+    /** Transpiled from bool */
+    hasUpdate: boolean;
 }
 
 /** Transpiled from AudioOrchestrator.Contracts.RadioPluginCreateRequest */
@@ -190,6 +230,8 @@ export type RadioEventPayload = {
     artist?: string;
     /** Transpiled from string? */
     coverUrl?: string;
+    /** Transpiled from string? */
+    version?: string;
 }
 
 /** Transpiled from AudioOrchestrator.Contracts.FullStateDto */

@@ -21,13 +21,9 @@ import { CreateSourceRequest } from '../model/createSourceRequest';
 // @ts-ignore
 import { PlayContextRequest } from '../model/playContextRequest';
 // @ts-ignore
-import { SpotifyMetadataDto } from '@contracts';
-// @ts-ignore
-import { SpotifyReleaseDto } from '../model/spotifyReleaseDto';
+import { SpotifyMetadataDto, SpotifyReleaseDto, UpgradeSpotifySourceRequest } from '@contracts';
 // @ts-ignore
 import { UpdateSourceRequest } from '../model/updateSourceRequest';
-// @ts-ignore
-import { UpgradeSpotifySourceRequest } from '../model/upgradeSpotifySourceRequest';
 
 // @ts-ignore
 import { BASE_PATH, COLLECTION_FORMATS }                     from '../variables';

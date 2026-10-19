@@ -18,5 +18,9 @@ export interface StreamDto {
     currentArtist?: string | null;
     currentCoverUrl?: string | null;
     errorMessage?: string | null;
+    currentVersion?: string | null;
+    latestCompatibleVersion?: string | null;
+    hasUpdate?: boolean;
+    pluginId?: string | null;
 }
 

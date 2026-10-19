@@ -16,5 +16,6 @@ export interface SpotifyReleaseDto {
     body: string;
     publishedAt: string;
     isCompatible: boolean;
+    url?: string | null;
 }
 

@@ -14,11 +14,26 @@ public record StreamDto(
     string? CurrentTitle = null,
     string? CurrentArtist = null,
     string? CurrentCoverUrl = null,
-    string? ErrorMessage = null
+    string? ErrorMessage = null,
+    string? CurrentVersion = null,
+    string? LatestCompatibleVersion = null,
+    bool HasUpdate = false,
+    string? PluginId = null
 );
 
 [TranspilationSource]
 public record SpotifyRecentContextDto(string Uri, string Name);
+
+[TranspilationSource]
+public record NodeReleaseDto(
+    string TagName,
+    string Version,
+    string Name,
+    string Body,
+    DateTime PublishedAt,
+    bool IsCompatible,
+    string? Url = null
+);
 
 [TranspilationSource]
 public record SpotifyReleaseDto(
@@ -27,8 +42,12 @@ public record SpotifyReleaseDto(
     string Name,
     string Body,
     DateTime PublishedAt,
-    bool IsCompatible
+    bool IsCompatible,
+    string? Url = null
 );
+
+[TranspilationSource]
+public record NodeUpgradeRequest(string? TargetVersion = null);
 
 [TranspilationSource]
 public record UpgradeSpotifySourceRequest(string? TargetVersion = null);
@@ -70,7 +89,10 @@ public record RadioPluginDto(
     string DockerImage,
     List<string> UrlPatterns,
     bool Enabled,
-    DateTime CreatedAt
+    DateTime CreatedAt,
+    string CurrentVersion = "0.1.0",
+    string? LatestCompatibleVersion = null,
+    bool HasUpdate = false
 );
 
 [TranspilationSource]
@@ -95,7 +117,8 @@ public record RadioEventPayload(
     string StreamId,
     string? Title,
     string? Artist,
-    string? CoverUrl
+    string? CoverUrl,
+    string? Version = null
 );
 
 [TranspilationSource]

@@ -6,11 +6,12 @@ import { firstValueFrom } from 'rxjs';
 import { ZardButtonComponent } from '../../../../core/ui/button/button.component';
 import { ZardBadgeComponent } from '../../../../core/ui/badge/badge.component';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucidePlus, lucideTrash2, lucideRadio, lucideGlobe, lucideSettings, lucideRefreshCcw, lucideMusic, lucideCircleAlert, lucideBoxes, lucideZap } from '@ng-icons/lucide';
+import { lucidePlus, lucideTrash2, lucideRadio, lucideGlobe, lucideSettings, lucideRefreshCcw, lucideMusic, lucideCircleAlert, lucideBoxes, lucideZap, lucideCircleArrowUp } from '@ng-icons/lucide';
 
 import { Dialog } from '@angular/cdk/dialog';
 import { RadioFormDialogComponent } from '../../../../shared/dialogs/radio-form-dialog.component';
 import { RadioPluginsDialogComponent } from '../../../../shared/dialogs/radio-plugins-dialog.component';
+import { NodeUpgradeDialogComponent, NodeUpgradeDialogData } from '../../../../shared/dialogs/node-upgrade-dialog/node-upgrade-dialog.component';
 import { StreamDto, RadioPluginDto } from '@api';
 
 @Component({
@@ -20,7 +21,7 @@ import { StreamDto, RadioPluginDto } from '@api';
   templateUrl: './radio-list.component.html',
   styleUrl: './radio-list.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  viewProviders: [provideIcons({ lucidePlus, lucideTrash2, lucideRadio, lucideGlobe, lucideSettings, lucideRefreshCcw, lucideMusic, lucideCircleAlert, lucideBoxes, lucideZap })]
+  viewProviders: [provideIcons({ lucidePlus, lucideTrash2, lucideRadio, lucideGlobe, lucideSettings, lucideRefreshCcw, lucideMusic, lucideCircleAlert, lucideBoxes, lucideZap, lucideCircleArrowUp })]
 })
 export class RadioListComponent {
   public data = inject(DataService);
@@ -103,5 +104,23 @@ export class RadioListComponent {
     if (ok) {
       this.data.deleteRadio(id);
     }
+  }
+
+  openPluginUpgrade(plugin: RadioPluginDto): void {
+    const parts = (plugin.dockerImage || '').split(':');
+    const imageWithoutTag = parts[0];
+    const segments = imageWithoutTag.split('/');
+    const repo = segments.length >= 2 ? `${segments.at(-2)}/${segments.at(-1)}` : undefined;
+
+    this.dialog.open(NodeUpgradeDialogComponent, {
+      data: {
+        type: 'radio-plugin',
+        id: plugin.id,
+        name: plugin.name,
+        currentVersion: plugin.currentVersion || '0.1.0',
+        targetVersion: plugin.latestCompatibleVersion || 'latest',
+        repository: repo,
+      } satisfies NodeUpgradeDialogData,
+    });
   }
 }

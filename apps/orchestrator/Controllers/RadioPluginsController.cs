@@ -16,17 +16,23 @@ public class RadioPluginsController : ControllerBase
     private readonly OrchestratorDbContext _db;
     private readonly IHubContext<AudioHub, IAudioClient> _hub;
     private readonly FullStateBuilder _stateBuilder;
+    private readonly INodeReleaseService _releaseService;
+    private readonly IContainerLifecycleService _containerLifecycle;
     private readonly ILogger<RadioPluginsController> _logger;
 
     public RadioPluginsController(
         OrchestratorDbContext db,
         IHubContext<AudioHub, IAudioClient> hub,
         FullStateBuilder stateBuilder,
+        INodeReleaseService releaseService,
+        IContainerLifecycleService containerLifecycle,
         ILogger<RadioPluginsController> logger)
     {
         _db = db;
         _hub = hub;
         _stateBuilder = stateBuilder;
+        _releaseService = releaseService;
+        _containerLifecycle = containerLifecycle;
         _logger = logger;
     }
 
@@ -34,14 +40,31 @@ public class RadioPluginsController : ControllerBase
     public async Task<ActionResult<List<RadioPluginDto>>> GetPlugins()
     {
         var entities = await _db.RadioPlugins.AsNoTracking().OrderBy(p => p.Name).ToListAsync();
-        var dtos = entities.Select(p => new RadioPluginDto(
-            p.Id,
-            p.Name,
-            p.DockerImage,
-            p.GetUrlPatterns(),
-            p.Enabled,
-            p.CreatedAt
-        )).ToList();
+        var dtos = new List<RadioPluginDto>();
+        foreach (var p in entities)
+        {
+            var curVer = p.GetEffectiveVersion();
+            string? latest = null;
+            bool hasUpdate = false;
+            var repo = p.GetGitHubRepository();
+            if (!string.IsNullOrEmpty(repo))
+            {
+                latest = await _releaseService.GetLatestCompatibleVersionAsync(repo, curVer);
+                hasUpdate = !string.IsNullOrEmpty(latest) && latest != curVer;
+            }
+
+            dtos.Add(new RadioPluginDto(
+                p.Id,
+                p.Name,
+                p.DockerImage,
+                p.GetUrlPatterns(),
+                p.Enabled,
+                p.CreatedAt,
+                curVer,
+                latest,
+                hasUpdate
+            ));
+        }
         return Ok(dtos);
     }
 
@@ -51,13 +74,26 @@ public class RadioPluginsController : ControllerBase
         var p = await _db.RadioPlugins.FindAsync(id);
         if (p == null) return NotFound();
 
+        var curVer = p.GetEffectiveVersion();
+        string? latest = null;
+        bool hasUpdate = false;
+        var repo = p.GetGitHubRepository();
+        if (!string.IsNullOrEmpty(repo))
+        {
+            latest = await _releaseService.GetLatestCompatibleVersionAsync(repo, curVer);
+            hasUpdate = !string.IsNullOrEmpty(latest) && latest != curVer;
+        }
+
         return Ok(new RadioPluginDto(
             p.Id,
             p.Name,
             p.DockerImage,
             p.GetUrlPatterns(),
             p.Enabled,
-            p.CreatedAt
+            p.CreatedAt,
+            curVer,
+            latest,
+            hasUpdate
         ));
     }
 
@@ -174,5 +210,55 @@ public class RadioPluginsController : ControllerBase
         await _hub.Clients.All.OnFullStateUpdate(await _stateBuilder.BuildAsync());
 
         return NoContent();
+    }
+
+    [HttpGet("{id}/releases")]
+    public async Task<ActionResult<IReadOnlyList<NodeReleaseDto>>> GetPluginReleases(string id, [FromQuery] string? targetVersion = null)
+    {
+        var plugin = await _db.RadioPlugins.FindAsync(id);
+        if (plugin == null) return NotFound();
+
+        var repo = plugin.GetGitHubRepository();
+        if (string.IsNullOrWhiteSpace(repo))
+        {
+            return Ok(Array.Empty<NodeReleaseDto>());
+        }
+
+        var history = await _releaseService.GetReleaseHistoryAsync(repo, plugin.GetEffectiveVersion(), targetVersion);
+        return Ok(history);
+    }
+
+    [HttpPost("{id}/upgrade")]
+    public async Task<IActionResult> UpgradePlugin(string id, [FromBody] NodeUpgradeRequest? req = null)
+    {
+        var plugin = await _db.RadioPlugins.FindAsync(id);
+        if (plugin == null) return NotFound();
+
+        var targetVersion = req?.TargetVersion;
+        if (string.IsNullOrWhiteSpace(targetVersion))
+        {
+            var repo = plugin.GetGitHubRepository();
+            if (string.IsNullOrWhiteSpace(repo))
+            {
+                return BadRequest("No GitHub repository could be inferred for this plugin.");
+            }
+
+            targetVersion = await _releaseService.GetLatestCompatibleVersionAsync(repo, plugin.GetEffectiveVersion());
+            if (string.IsNullOrWhiteSpace(targetVersion))
+            {
+                return BadRequest("No compatible upgrade version available for this plugin.");
+            }
+        }
+
+        try
+        {
+            await _containerLifecycle.UpgradeRadioPluginAsync(id, targetVersion);
+            return Ok(new { message = $"Plugin upgraded to {targetVersion}", version = targetVersion });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to upgrade Radio plugin {PluginId} to {TargetVersion}", id, targetVersion);
+            return StatusCode(500, $"Failed to upgrade Radio plugin: {ex.Message}");
+        }
     }
 }

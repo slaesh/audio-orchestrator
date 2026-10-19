@@ -30,6 +30,8 @@ model/createGroupRequest.ts
 model/createRadioStreamRequest.ts
 model/createSourceRequest.ts
 model/models.ts
+model/nodeReleaseDto.ts
+model/nodeUpgradeRequest.ts
 model/playContextRequest.ts
 model/renameGroupRequest.ts
 model/renameRoomRequest.ts

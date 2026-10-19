@@ -15,6 +15,7 @@ public interface IContainerLifecycleService
 {
     Task SpawnLibreSpotAsync(string sourceId, string sourceName, string fifoPath, int maxVolume = 50, IList<ContainerListResponse>? existingContainers = null, string? version = null);
     Task UpgradeSpotifyNodeAsync(string sourceId, string targetVersion);
+    Task UpgradeRadioPluginAsync(string pluginId, string targetVersion);
     Task SpawnRadioStreamAsync(RadioStreamEntity stream, string fifoPath, IList<ContainerListResponse>? existingContainers = null);
     Task StopAndRemoveContainerAsync(string containerName);
 }
@@ -213,6 +214,67 @@ public class DockerLifecycleService : IContainerLifecycleService
         await hub.Clients.All.OnFullStateUpdate(await stateBuilder.BuildAsync());
 
         _logger.LogInformation("Successfully upgraded Spotify node {SourceName} ({SourceId}) to {TargetVersion}", source.Name, sourceId, targetVersion);
+    }
+
+    public async Task UpgradeRadioPluginAsync(string pluginId, string targetVersion)
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<OrchestratorDbContext>();
+        var plugin = await db.RadioPlugins.FindAsync(pluginId);
+        if (plugin == null)
+        {
+            throw new KeyNotFoundException($"Radio plugin {pluginId} not found.");
+        }
+
+        var currentImage = plugin.DockerImage;
+        var imageRepo = currentImage.Contains(':') ? currentImage[..currentImage.LastIndexOf(':')] : currentImage;
+        var targetImage = $"{imageRepo}:{targetVersion}";
+
+        _logger.LogInformation("Upgrading Radio plugin {PluginName} ({PluginId}) from {CurrentVersion} to {TargetVersion} (image {TargetImage})",
+            plugin.Name, pluginId, plugin.CurrentVersion, targetVersion, targetImage);
+
+        await EnsureImageExistsAsync(targetImage);
+
+        plugin.DockerImage = targetImage;
+        plugin.CurrentVersion = targetVersion;
+        await db.SaveChangesAsync();
+
+        // If the plugin has active radio streams running, restart them with the new image
+        var patterns = plugin.GetUrlPatterns();
+        var allStreams = await db.RadioStreams.ToListAsync();
+        foreach (var stream in allStreams)
+        {
+            bool matches = patterns.Any(pattern =>
+            {
+                if (string.IsNullOrWhiteSpace(pattern)) return false;
+                try
+                {
+                    return System.Text.RegularExpressions.Regex.IsMatch(stream.StreamUrl, pattern, System.Text.RegularExpressions.RegexOptions.IgnoreCase, TimeSpan.FromMilliseconds(250));
+                }
+                catch
+                {
+                    return false;
+                }
+            });
+
+            if (!matches) continue;
+
+            var containerName = $"{OrchestratorConstants.RadioContainerPrefix}{stream.Id}";
+            var containers = await _dockerClient.Containers.ListContainersAsync(new ContainersListParameters { All = true });
+            if (containers.Any(c => c.Names.Any(n => n.TrimStart('/') == containerName)))
+            {
+                _logger.LogInformation("Recreating active stream container {ContainerName} for updated plugin {PluginId}", containerName, pluginId);
+                await StopAndRemoveContainerAsync(containerName);
+                var fifoPath = $"{OrchestratorConstants.FifoBaseDir}/{OrchestratorConstants.RadioPrefix}{stream.Id}";
+                await SpawnRadioStreamAsync(stream, fifoPath);
+            }
+        }
+
+        var hub = scope.ServiceProvider.GetRequiredService<IHubContext<AudioHub, IAudioClient>>();
+        var stateBuilder = scope.ServiceProvider.GetRequiredService<FullStateBuilder>();
+        await hub.Clients.All.OnFullStateUpdate(await stateBuilder.BuildAsync());
+
+        _logger.LogInformation("Successfully upgraded Radio plugin {PluginName} ({PluginId}) to {TargetVersion}", plugin.Name, pluginId, targetVersion);
     }
 
     public async Task SpawnRadioStreamAsync(RadioStreamEntity stream, string fifoPath, IList<ContainerListResponse>? existingContainers = null)

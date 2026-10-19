@@ -54,6 +54,35 @@ public class RadioMetadataService : BackgroundService
             await _hub.Clients.All.OnRadioMetadataChanged(signalrId, payload.Title, payload.Artist, payload.CoverUrl);
             _logger.LogInformation("Radio {StreamId} metadata updated: {Artist} - {Title}", streamDbId, payload.Artist, payload.Title);
         }
+
+        if (!string.IsNullOrWhiteSpace(payload.Version))
+        {
+            var plugins = await db.RadioPlugins.ToListAsync(ct);
+            foreach (var p in plugins)
+            {
+                var patterns = p.GetUrlPatterns();
+                bool matches = patterns.Any(pattern =>
+                {
+                    if (string.IsNullOrWhiteSpace(pattern)) return false;
+                    try
+                    {
+                        return System.Text.RegularExpressions.Regex.IsMatch(stream.StreamUrl, pattern, System.Text.RegularExpressions.RegexOptions.IgnoreCase, TimeSpan.FromMilliseconds(250));
+                    }
+                    catch
+                    {
+                        return false;
+                    }
+                });
+
+                if (matches && p.CurrentVersion != payload.Version)
+                {
+                    p.CurrentVersion = payload.Version;
+                    await db.SaveChangesAsync(ct);
+                    _logger.LogInformation("Updated RadioPlugin {PluginId} version to {Version} from radio event", p.Id, payload.Version);
+                    break;
+                }
+            }
+        }
     }
 
     public async Task ClearMetadataAsync(string streamId, CancellationToken ct = default)

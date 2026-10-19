@@ -45,6 +45,13 @@
           </div>
           
           <div class="flex items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100 transition-opacity">
+            @if (getMatchedPlugin(stream.url); as plugin) {
+              @if (plugin.hasUpdate) {
+                <z-button zType="ghost" zSize="icon-xs" class="text-amber-400 hover:text-amber-300 hover:bg-amber-400/10" (click)="openPluginUpgrade(plugin)" [title]="'Update Available for ' + plugin.name + ' (v' + plugin.latestCompatibleVersion + ')'">
+                  <ng-icon name="lucideCircleArrowUp" />
+                </z-button>
+              }
+            }
             <z-button zType="ghost" zSize="icon-xs" (click)="onRestartRadio(stream.id, stream.name)" title="Restart Stream">
               <ng-icon name="lucideRefreshCcw" />
             </z-button>
@@ -62,8 +69,19 @@
             @if (getMatchedPlugin(stream.url); as plugin) {
               <z-badge zType="outline" class="bg-primary/10 border-primary/30 text-primary text-[10px] py-0 px-2 font-mono flex items-center gap-1" [title]="'Powered by ' + plugin.name + ' (' + plugin.dockerImage + ')'">
                 <ng-icon name="lucideZap" size="0.65rem" />
-                {{ plugin.name }}
+                {{ plugin.name }} <span class="opacity-70">v{{ plugin.currentVersion || '0.1.0' }}</span>
               </z-badge>
+              @if (plugin.hasUpdate) {
+                <button 
+                  type="button" 
+                  (click)="openPluginUpgrade(plugin)" 
+                  class="flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 hover:bg-amber-500/25 border border-amber-500/30 text-[10px] font-mono transition-colors cursor-pointer"
+                  [title]="'Update available to v' + plugin.latestCompatibleVersion"
+                >
+                  <ng-icon name="lucideCircleArrowUp" size="0.75rem" />
+                  <span>Update v{{ plugin.latestCompatibleVersion }}</span>
+                </button>
+              }
             }
           </div>
           

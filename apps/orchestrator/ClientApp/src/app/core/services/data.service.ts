@@ -15,6 +15,7 @@ import {
   StreamDto,
   SpotifySourceDto,
   SpotifyReleaseDto,
+  NodeReleaseDto,
 } from '@api';
 import {
   asyncScheduler,
@@ -527,8 +528,9 @@ export class DataService {
     try {
       await firstValueFrom(this.radioPluginsApi.apiRadioPluginsPost(req));
       this.toast.success('Radio plugin created');
-    } catch (e: any) {
-      this.toast.error(e?.error || 'Failed to create radio plugin');
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Failed to create radio plugin';
+      this.toast.error(msg);
     }
   }
 
@@ -536,8 +538,9 @@ export class DataService {
     try {
       await firstValueFrom(this.radioPluginsApi.apiRadioPluginsIdPut(id, req));
       this.toast.success('Radio plugin updated');
-    } catch (e: any) {
-      this.toast.error(e?.error || 'Failed to update radio plugin');
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Failed to update radio plugin';
+      this.toast.error(msg);
     }
   }
 
@@ -545,8 +548,9 @@ export class DataService {
     try {
       await firstValueFrom(this.radioPluginsApi.apiRadioPluginsIdDelete(id));
       this.toast.success('Radio plugin deleted');
-    } catch (e: any) {
-      this.toast.error(e?.error || 'Failed to delete radio plugin');
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Failed to delete radio plugin';
+      this.toast.error(msg);
     }
   }
 
@@ -558,5 +562,35 @@ export class DataService {
       enabled: !plugin.enabled,
     };
     await this.updateRadioPlugin(plugin.id, req);
+  }
+
+  async getRadioPluginReleases(
+    id: string,
+    targetVersion?: string,
+  ): Promise<NodeReleaseDto[]> {
+    try {
+      return await firstValueFrom(
+        this.radioPluginsApi.apiRadioPluginsIdReleasesGet(id, targetVersion),
+      );
+    } catch {
+      this.toast.error('Failed to fetch release information');
+      return [];
+    }
+  }
+
+  async upgradeRadioPlugin(
+    id: string,
+    targetVersion?: string,
+  ): Promise<boolean> {
+    try {
+      await firstValueFrom(
+        this.radioPluginsApi.apiRadioPluginsIdUpgradePost(id, { targetVersion }),
+      );
+      this.toast.success('Radio plugin upgrade started');
+      return true;
+    } catch {
+      this.toast.error('Failed to upgrade radio plugin');
+      return false;
+    }
   }
 }

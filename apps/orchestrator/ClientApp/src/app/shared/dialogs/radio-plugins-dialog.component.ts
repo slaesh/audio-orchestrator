@@ -1,7 +1,7 @@
 import { Component, inject, signal, ChangeDetectionStrategy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { DialogRef } from '@angular/cdk/dialog';
+import { Dialog, DialogRef } from '@angular/cdk/dialog';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   lucideX,
@@ -11,7 +11,8 @@ import {
   lucideSettings,
   lucideCheck,
   lucidePower,
-  lucideCircleAlert
+  lucideCircleAlert,
+  lucideCircleArrowUp
 } from '@ng-icons/lucide';
 import { ZardButtonComponent } from '@ui/button/button.component';
 import { ZardBadgeComponent } from '@ui/badge/badge.component';
@@ -19,6 +20,7 @@ import { ZardInputDirective } from '@ui/input/input.directive';
 import { ConfirmService } from '@ui/dialog/confirm.service';
 import { DataService } from '../../core/services/data.service';
 import { RadioPluginDto, RadioPluginCreateRequest, RadioPluginUpdateRequest } from '@api';
+import { NodeUpgradeDialogComponent, NodeUpgradeDialogData } from './node-upgrade-dialog/node-upgrade-dialog.component';
 
 @Component({
   selector: 'app-radio-plugins-dialog',
@@ -79,6 +81,20 @@ import { RadioPluginDto, RadioPluginCreateRequest, RadioPluginUpdateRequest } fr
                         >
                           {{ plugin.enabled ? 'Active' : 'Disabled' }}
                         </z-badge>
+                        <z-badge zType="secondary" class="text-[9px] py-0 px-1.5 opacity-60 font-mono" title="Plugin Version">
+                          v{{ plugin.currentVersion || '0.1.0' }}
+                        </z-badge>
+                        @if (plugin.hasUpdate) {
+                          <button 
+                            type="button" 
+                            (click)="openUpgradeDialog(plugin)" 
+                            class="flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 hover:bg-amber-500/25 border border-amber-500/30 text-[10px] font-mono transition-colors cursor-pointer"
+                            [title]="'Update available to v' + plugin.latestCompatibleVersion"
+                          >
+                            <ng-icon name="lucideCircleArrowUp" size="0.75rem" />
+                            <span>Update v{{ plugin.latestCompatibleVersion }}</span>
+                          </button>
+                        }
                       </div>
                       <p class="text-[11px] font-mono text-muted-foreground break-all">
                         Image: <span class="text-foreground/80">{{ plugin.dockerImage }}</span>
@@ -86,6 +102,15 @@ import { RadioPluginDto, RadioPluginCreateRequest, RadioPluginUpdateRequest } fr
                     </div>
 
                     <div class="flex items-center gap-1">
+                      @if (plugin.hasUpdate) {
+                        <button 
+                          (click)="openUpgradeDialog(plugin)"
+                          class="p-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 transition-all cursor-pointer"
+                          [title]="'Update Available (v' + plugin.latestCompatibleVersion + ')'"
+                        >
+                          <ng-icon name="lucideCircleArrowUp" size="0.9rem" />
+                        </button>
+                      }
                       <button 
                         (click)="data.toggleRadioPlugin(plugin)"
                         class="p-1.5 rounded-lg border border-border/40 hover:bg-muted text-muted-foreground hover:text-foreground transition-all"
@@ -237,7 +262,8 @@ import { RadioPluginDto, RadioPluginCreateRequest, RadioPluginUpdateRequest } fr
       lucideSettings,
       lucideCheck,
       lucidePower,
-      lucideCircleAlert
+      lucideCircleAlert,
+      lucideCircleArrowUp
     })
   ]
 })
@@ -245,6 +271,7 @@ export class RadioPluginsDialogComponent {
   public data = inject(DataService);
   public ref = inject(DialogRef);
   private confirm = inject(ConfirmService);
+  private dialog = inject(Dialog);
 
   isEditing = signal(false);
   editMode = signal<'create' | 'edit'>('create');
@@ -316,5 +343,23 @@ export class RadioPluginsDialogComponent {
     );
     if (!ok) return;
     await this.data.deleteRadioPlugin(id);
+  }
+
+  openUpgradeDialog(plugin: RadioPluginDto): void {
+    const parts = (plugin.dockerImage || '').split(':');
+    const imageWithoutTag = parts[0];
+    const segments = imageWithoutTag.split('/');
+    const repo = segments.length >= 2 ? `${segments.at(-2)}/${segments.at(-1)}` : undefined;
+
+    this.dialog.open(NodeUpgradeDialogComponent, {
+      data: {
+        type: 'radio-plugin',
+        id: plugin.id,
+        name: plugin.name,
+        currentVersion: plugin.currentVersion || '0.1.0',
+        targetVersion: plugin.latestCompatibleVersion || 'latest',
+        repository: repo,
+      } satisfies NodeUpgradeDialogData,
+    });
   }
 }

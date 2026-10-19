@@ -10,7 +10,7 @@ import { lucidePlus, lucideTrash2, lucideMusic, lucideSpeaker, lucideSettings, l
 import { Dialog } from '@angular/cdk/dialog';
 import { SpotifySourceDto } from '@api';
 import { SpotifySourceFormDialogComponent } from '../../../../shared/dialogs/spotify-source-form-dialog.component';
-import { SpotifyUpgradeDialogComponent } from '../../../../shared/dialogs/spotify-upgrade-dialog/spotify-upgrade-dialog.component';
+import { NodeUpgradeDialogComponent, NodeUpgradeDialogData } from '../../../../shared/dialogs/node-upgrade-dialog/node-upgrade-dialog.component';
 import { SpotifyProgressBarComponent } from '../../../../shared/components/spotify-progress-bar/spotify-progress-bar.component';
 
 @Component({
@@ -92,8 +92,15 @@ export class SpotifyListComponent {
   }
 
   openUpgradeDialog(source: SpotifySourceDto): void {
-    this.dialog.open(SpotifyUpgradeDialogComponent, {
-      data: { source }
+    this.dialog.open(NodeUpgradeDialogComponent, {
+      data: {
+        type: 'spotify',
+        id: source.id,
+        name: source.name,
+        currentVersion: source.currentVersion || '0.3.0',
+        targetVersion: source.latestCompatibleVersion || 'latest',
+        repository: 'slaesh/librespot-server',
+      } satisfies NodeUpgradeDialogData,
     });
   }
 }

@@ -8,8 +8,8 @@
           <ng-icon name="lucideCircleArrowUp" size="1.25rem" />
         </div>
         <div>
-          <h2 class="text-xl font-bold tracking-tight">Update Spotify Node</h2>
-          <p class="text-xs text-muted-foreground">{{ source.name }}</p>
+          <h2 class="text-xl font-bold tracking-tight">{{ dialogTitle }}</h2>
+          <p class="text-xs text-muted-foreground">{{ node.name }}</p>
         </div>
       </div>
       <button 
@@ -39,7 +39,7 @@
       </div>
       <div class="mt-3 pt-3 border-t border-border/40 flex items-center gap-1.5 text-[11px] text-muted-foreground">
         <ng-icon name="lucideSparkles" class="text-amber-400" size="0.85rem" />
-        <span>Compatible non-breaking update for this Spotify Connect instance.</span>
+        <span>Compatible non-breaking update for this node container.</span>
       </div>
     </div>
 
@@ -63,31 +63,34 @@
           </div>
         } @else if (releases().length === 0) {
           <div class="py-6 text-center text-muted-foreground/60">
-            No detailed release history found between v{{ source.currentVersion }} and v{{ targetVersion }}.
+            No detailed release history found between v{{ currentVersion }} and v{{ targetVersion }}.
           </div>
         } @else {
           @for (rel of releases(); track rel.tagName) {
-            <div class="space-y-1.5 pb-3 border-b border-border/30 last:border-0 last:pb-0">
+            <div class="space-y-2 pb-3 border-b border-border/30 last:border-0 last:pb-0">
               <div class="flex items-center justify-between gap-2">
                 <div class="flex items-center gap-2">
                   <span class="font-bold text-foreground">{{ rel.name || rel.tagName }}</span>
                   <span class="font-mono text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary">{{ rel.tagName }}</span>
                 </div>
-                <a 
-                  [href]="getReleaseUrl(rel)" 
-                  target="_blank" 
-                  rel="noopener noreferrer" 
-                  class="text-[10px] text-muted-foreground hover:text-primary transition-colors flex items-center gap-0.5"
-                >
-                  GitHub
-                  <ng-icon name="lucideExternalLink" size="0.65rem" />
-                </a>
+                @if (getReleaseUrl(rel) !== '#') {
+                  <a 
+                    [href]="getReleaseUrl(rel)" 
+                    target="_blank" 
+                    rel="noopener noreferrer" 
+                    class="text-[10px] text-muted-foreground hover:text-primary transition-colors flex items-center gap-0.5"
+                  >
+                    GitHub
+                    <ng-icon name="lucideExternalLink" size="0.65rem" />
+                  </a>
+                }
               </div>
 
               @if (rel.body) {
-                <div class="release-body text-[11px] text-muted-foreground/90 whitespace-pre-wrap font-sans leading-relaxed pl-1 max-h-36 overflow-y-auto">
-                  {{ rel.body }}
-                </div>
+                <div 
+                  class="markdown-content text-[11px] text-muted-foreground/90 font-sans leading-relaxed pl-1 max-h-36 overflow-y-auto"
+                  [innerHTML]="rel.body | markdown"
+                ></div>
               }
             </div>
           }
@@ -98,7 +101,7 @@
     <!-- Actions -->
     <div class="flex items-center justify-end gap-3 pt-2">
       <z-button 
-        zType="outline" 
+        zType="ghost" 
         (click)="close()" 
         [zDisabled]="upgrading()"
       >
@@ -108,13 +111,15 @@
         zType="default" 
         (click)="upgrade()" 
         [zDisabled]="upgrading() || loading()"
-        [zLoading]="upgrading()"
-        class="bg-primary text-primary-foreground hover:bg-primary/90"
+        class="flex items-center gap-2"
       >
-        @if (!upgrading()) {
-          <ng-icon name="lucideCircleArrowUp" class="mr-2" />
+        @if (upgrading()) {
+          <ng-icon name="lucideLoaderCircle" class="animate-spin" size="1rem" />
+          <span>Updating...</span>
+        } @else {
+          <ng-icon name="lucideCircleArrowUp" size="1rem" />
+          <span>Update to v{{ targetVersion }}</span>
         }
-        Upgrade to v{{ targetVersion }}
       </z-button>
     </div>
 

@@ -44,11 +44,12 @@ builder.Services.AddHttpClient<AudioOrchestrator.Services.ILibrespotApiClient, A
 {
     client.Timeout = TimeSpan.FromSeconds(5);
 });
-builder.Services.AddHttpClient<AudioOrchestrator.Services.ISpotifyNodeReleaseService, AudioOrchestrator.Services.SpotifyNodeReleaseService>(client =>
+builder.Services.AddHttpClient<AudioOrchestrator.Services.INodeReleaseService, AudioOrchestrator.Services.NodeReleaseService>(client =>
 {
     client.Timeout = TimeSpan.FromSeconds(10);
     client.DefaultRequestHeaders.Add("User-Agent", "AudioOrchestrator");
 });
+builder.Services.AddScoped<AudioOrchestrator.Services.ISpotifyNodeReleaseService>(sp => (AudioOrchestrator.Services.NodeReleaseService)sp.GetRequiredService<AudioOrchestrator.Services.INodeReleaseService>());
 builder.Services.AddSingleton<AudioOrchestrator.Services.IReconciliationService, AudioOrchestrator.Services.ReconciliationService>();
 builder.Services.AddSingleton<AudioOrchestrator.Services.SnapcastConnectionService>();
 builder.Services.AddSingleton<AudioOrchestrator.Services.ISnapcastService, AudioOrchestrator.Services.SnapcastService>();
