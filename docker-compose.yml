@@ -3,6 +3,7 @@ services:
   # Orchestrator
   orchestrator:
     image: audio-orchestrator:latest
+    pull_policy: build
     build:
       context: ./apps/orchestrator
       dockerfile: Dockerfile
