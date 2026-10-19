@@ -64,12 +64,16 @@ public class FullStateBuilder
                 }
             }
 
+            var currentVersion = string.IsNullOrWhiteSpace(source.CurrentVersion)
+                ? OrchestratorConstants.SpotifyNodeVersion
+                : source.CurrentVersion;
+
             string? latestCompatible = null;
             bool hasUpdate = false;
-            if (_releaseService != null && !string.IsNullOrEmpty(source.CurrentVersion))
+            if (_releaseService != null)
             {
-                latestCompatible = await _releaseService.GetLatestCompatibleVersionAsync(source.CurrentVersion);
-                hasUpdate = !string.IsNullOrEmpty(latestCompatible) && latestCompatible != source.CurrentVersion;
+                latestCompatible = await _releaseService.GetLatestCompatibleVersionAsync(currentVersion);
+                hasUpdate = !string.IsNullOrEmpty(latestCompatible) && latestCompatible != currentVersion;
             }
 
             spotifySourceDtos.Add(new SpotifySourceDto(
@@ -93,7 +97,7 @@ public class FullStateBuilder
                 source.ContextUri,
                 source.ContextName,
                 recents,
-                source.CurrentVersion,
+                currentVersion,
                 latestCompatible,
                 hasUpdate
             ));

@@ -66,7 +66,7 @@
               Max: {{ source.maxVolume }}%
             </z-badge>
             <z-badge zType="secondary" class="text-[9px] py-0 px-1.5 opacity-60 font-mono" title="Spotify Node Version">
-              v{{ source.currentVersion }}
+              v{{ source.currentVersion || '0.3.0' }}
             </z-badge>
             @if (source.hasUpdate) {
               <button 

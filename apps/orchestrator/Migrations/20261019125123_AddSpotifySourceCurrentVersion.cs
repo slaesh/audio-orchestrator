@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
@@ -15,7 +15,9 @@ namespace AudioOrchestrator.Migrations
                 table: "SpotifySources",
                 type: "TEXT",
                 nullable: false,
-                defaultValue: "");
+                defaultValue: "0.3.0");
+
+            migrationBuilder.Sql("UPDATE SpotifySources SET CurrentVersion = '0.3.0' WHERE CurrentVersion IS NULL OR CurrentVersion = '';");
         }
 
         /// <inheritdoc />

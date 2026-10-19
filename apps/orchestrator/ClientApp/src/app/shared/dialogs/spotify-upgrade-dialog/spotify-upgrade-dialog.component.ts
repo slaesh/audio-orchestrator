@@ -52,6 +52,10 @@ export class SpotifyUpgradeDialogComponent implements OnInit {
   public upgrading = signal<boolean>(false);
   public releases = signal<SpotifyReleaseDto[]>([]);
 
+  public get currentVersion(): string {
+    return this.source.currentVersion || '0.3.0';
+  }
+
   public get targetVersion(): string {
     return this.source.latestCompatibleVersion || 'latest';
   }

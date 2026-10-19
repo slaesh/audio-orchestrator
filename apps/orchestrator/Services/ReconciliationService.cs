@@ -109,6 +109,10 @@ public class ReconciliationService : IReconciliationService, IDisposable
             s.ContextUri = null;
             s.ContextName = null;
             s.ErrorMessage = null;
+            if (string.IsNullOrWhiteSpace(s.CurrentVersion))
+            {
+                s.CurrentVersion = OrchestratorConstants.SpotifyNodeVersion;
+            }
 
             var streamId = $"{OrchestratorConstants.SpotifyPrefix}{s.Id}";
             var fifoPath = $"{OrchestratorConstants.FifoBaseDir}/{streamId}";
