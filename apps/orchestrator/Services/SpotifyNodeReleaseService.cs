@@ -18,7 +18,7 @@ public class SpotifyNodeReleaseService : ISpotifyNodeReleaseService
     private readonly IMemoryCache _cache;
     private readonly ILogger<SpotifyNodeReleaseService> _logger;
     private const string CacheKey = "SpotifyNodeReleases";
-    private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(30);
+    private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
 
     public SpotifyNodeReleaseService(HttpClient httpClient, IMemoryCache cache, ILogger<SpotifyNodeReleaseService> logger)
     {
