@@ -1302,6 +1302,178 @@
           }
         }
       }
+    },
+    "/api/SpotifySources/releases": {
+      "get": {
+        "tags": [
+          "SpotifySources"
+        ],
+        "parameters": [
+          {
+            "name": "currentVersion",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "forceRefresh",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SpotifyReleaseDto"
+                  }
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SpotifyReleaseDto"
+                  }
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SpotifyReleaseDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/SpotifySources/{id}/releases": {
+      "get": {
+        "tags": [
+          "SpotifySources"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "targetVersion",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SpotifyReleaseDto"
+                  }
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SpotifyReleaseDto"
+                  }
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SpotifyReleaseDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/SpotifySources/{id}/upgrade": {
+      "post": {
+        "tags": [
+          "SpotifySources"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/UpgradeSpotifySourceRequest"
+                  }
+                ]
+              }
+            },
+            "text/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/UpgradeSpotifySourceRequest"
+                  }
+                ]
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/UpgradeSpotifySourceRequest"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1713,6 +1885,38 @@
           }
         }
       },
+      "SpotifyReleaseDto": {
+        "required": [
+          "tagName",
+          "version",
+          "name",
+          "body",
+          "publishedAt",
+          "isCompatible"
+        ],
+        "type": "object",
+        "properties": {
+          "tagName": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "publishedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "isCompatible": {
+            "type": "boolean"
+          }
+        }
+      },
       "SpotifySourceDto": {
         "required": [
           "id",
@@ -1820,6 +2024,20 @@
             "items": {
               "$ref": "#/components/schemas/SpotifyRecentContextDto"
             }
+          },
+          "currentVersion": {
+            "type": "string",
+            "default": "0.3.0"
+          },
+          "latestCompatibleVersion": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "hasUpdate": {
+            "type": "boolean",
+            "default": false
           }
         }
       },
@@ -1882,6 +2100,17 @@
           "maxVolume": {
             "type": "integer",
             "format": "int32"
+          }
+        }
+      },
+      "UpgradeSpotifySourceRequest": {
+        "type": "object",
+        "properties": {
+          "targetVersion": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         }
       },

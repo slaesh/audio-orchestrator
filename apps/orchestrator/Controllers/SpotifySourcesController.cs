@@ -20,6 +20,7 @@ public class SpotifySourcesController : ControllerBase
     private readonly ILogger<SpotifySourcesController> _logger;
     private readonly IHubContext<AudioHub, IAudioClient> _hub;
     private readonly FullStateBuilder _stateBuilder;
+    private readonly ISpotifyNodeReleaseService _releaseService;
 
     public SpotifySourcesController(
         IContainerLifecycleService containerLifecycle,
@@ -28,7 +29,8 @@ public class SpotifySourcesController : ControllerBase
         OrchestratorDbContext db,
         ILogger<SpotifySourcesController> logger,
         IHubContext<AudioHub, IAudioClient> hub,
-        FullStateBuilder stateBuilder)
+        FullStateBuilder stateBuilder,
+        ISpotifyNodeReleaseService releaseService)
     {
         _containerLifecycle = containerLifecycle;
         _librespotApi = librespotApi;
@@ -37,6 +39,7 @@ public class SpotifySourcesController : ControllerBase
         _logger = logger;
         _hub = hub;
         _stateBuilder = stateBuilder;
+        _releaseService = releaseService;
     }
 
     [HttpGet]
@@ -253,6 +256,51 @@ public class SpotifySourcesController : ControllerBase
         {
             _logger.LogWarning(ex, "Failed to send play-context to spotify-node for source {SourceId}. Node container might need rebuilding.", id);
             return StatusCode(502, "Failed to communicate with Spotify node (please ensure the container image is updated).");
+        }
+    }
+
+    [HttpGet("releases")]
+    public async Task<ActionResult<IReadOnlyList<SpotifyReleaseDto>>> GetReleases([FromQuery] string? currentVersion = null, [FromQuery] bool forceRefresh = false)
+    {
+        var releases = await _releaseService.GetReleasesAsync(currentVersion, forceRefresh);
+        return Ok(releases);
+    }
+
+    [HttpGet("{id}/releases")]
+    public async Task<ActionResult<IReadOnlyList<SpotifyReleaseDto>>> GetSourceReleases(string id, [FromQuery] string? targetVersion = null)
+    {
+        var source = await _db.SpotifySources.FindAsync(id);
+        if (source == null) return NotFound();
+
+        var history = await _releaseService.GetReleaseHistoryAsync(source.CurrentVersion, targetVersion);
+        return Ok(history);
+    }
+
+    [HttpPost("{id}/upgrade")]
+    public async Task<IActionResult> UpgradeSource(string id, [FromBody] UpgradeSpotifySourceRequest? req = null)
+    {
+        var source = await _db.SpotifySources.FindAsync(id);
+        if (source == null) return NotFound();
+
+        var targetVersion = req?.TargetVersion;
+        if (string.IsNullOrWhiteSpace(targetVersion))
+        {
+            targetVersion = await _releaseService.GetLatestCompatibleVersionAsync(source.CurrentVersion);
+            if (string.IsNullOrWhiteSpace(targetVersion))
+            {
+                return BadRequest("No compatible upgrade version available for this node.");
+            }
+        }
+
+        try
+        {
+            await _containerLifecycle.UpgradeSpotifyNodeAsync(id, targetVersion);
+            return Ok(new { message = $"Node upgraded to {targetVersion}", version = targetVersion });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to upgrade Spotify source {SourceId} to {TargetVersion}", id, targetVersion);
+            return StatusCode(500, $"Failed to upgrade Spotify node: {ex.Message}");
         }
     }
 }

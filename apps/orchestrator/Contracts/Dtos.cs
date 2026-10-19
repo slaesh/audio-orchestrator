@@ -21,6 +21,19 @@ public record StreamDto(
 public record SpotifyRecentContextDto(string Uri, string Name);
 
 [TranspilationSource]
+public record SpotifyReleaseDto(
+    string TagName,
+    string Version,
+    string Name,
+    string Body,
+    DateTime PublishedAt,
+    bool IsCompatible
+);
+
+[TranspilationSource]
+public record UpgradeSpotifySourceRequest(string? TargetVersion = null);
+
+[TranspilationSource]
 public record SpotifySourceDto(
     string Id, 
     string Name, 
@@ -41,7 +54,10 @@ public record SpotifySourceDto(
     string? ErrorMessage = null,
     string? ContextUri = null,
     string? ContextName = null,
-    IReadOnlyList<SpotifyRecentContextDto>? RecentContexts = null
+    IReadOnlyList<SpotifyRecentContextDto>? RecentContexts = null,
+    string CurrentVersion = OrchestratorConstants.SpotifyNodeVersion,
+    string? LatestCompatibleVersion = null,
+    bool HasUpdate = false
 );
 
 [TranspilationSource]

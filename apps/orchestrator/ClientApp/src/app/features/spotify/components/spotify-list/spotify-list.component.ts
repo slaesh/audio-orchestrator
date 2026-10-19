@@ -6,10 +6,11 @@ import { ConfirmService } from '../../../../core/ui/dialog/confirm.service';
 import { ZardButtonComponent } from '../../../../core/ui/button/button.component';
 import { ZardBadgeComponent } from '../../../../core/ui/badge/badge.component';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucidePlus, lucideTrash2, lucideMusic, lucideSpeaker, lucideSettings, lucideRefreshCw, lucideChevronDown, lucideChevronUp, lucideClock, lucidePlay, lucidePause, lucideSkipForward, lucideSkipBack, lucideCircleAlert, lucideListMusic, lucideDisc3 } from '@ng-icons/lucide';
+import { lucidePlus, lucideTrash2, lucideMusic, lucideSpeaker, lucideSettings, lucideRefreshCw, lucideChevronDown, lucideChevronUp, lucideClock, lucidePlay, lucidePause, lucideSkipForward, lucideSkipBack, lucideCircleAlert, lucideListMusic, lucideDisc3, lucideCircleArrowUp } from '@ng-icons/lucide';
 import { Dialog } from '@angular/cdk/dialog';
 import { SpotifySourceDto } from '@api';
 import { SpotifySourceFormDialogComponent } from '../../../../shared/dialogs/spotify-source-form-dialog.component';
+import { SpotifyUpgradeDialogComponent } from '../../../../shared/dialogs/spotify-upgrade-dialog/spotify-upgrade-dialog.component';
 import { SpotifyProgressBarComponent } from '../../../../shared/components/spotify-progress-bar/spotify-progress-bar.component';
 
 @Component({
@@ -19,7 +20,7 @@ import { SpotifyProgressBarComponent } from '../../../../shared/components/spoti
   templateUrl: './spotify-list.component.html',
   styleUrl: './spotify-list.component.css',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  viewProviders: [provideIcons({ lucidePlus, lucideTrash2, lucideMusic, lucideSpeaker, lucideSettings, lucideRefreshCw, lucideChevronDown, lucideChevronUp, lucideClock, lucidePlay, lucidePause, lucideSkipForward, lucideSkipBack, lucideCircleAlert, lucideListMusic, lucideDisc3 })]
+  viewProviders: [provideIcons({ lucidePlus, lucideTrash2, lucideMusic, lucideSpeaker, lucideSettings, lucideRefreshCw, lucideChevronDown, lucideChevronUp, lucideClock, lucidePlay, lucidePause, lucideSkipForward, lucideSkipBack, lucideCircleAlert, lucideListMusic, lucideDisc3, lucideCircleArrowUp })]
 })
 export class SpotifyListComponent {
   public data = inject(DataService);
@@ -88,5 +89,11 @@ export class SpotifyListComponent {
     if (ok) {
       this.data.restartSpotifySource(id);
     }
+  }
+
+  openUpgradeDialog(source: SpotifySourceDto): void {
+    this.dialog.open(SpotifyUpgradeDialogComponent, {
+      data: { source }
+    });
   }
 }

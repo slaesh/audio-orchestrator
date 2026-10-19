@@ -50,6 +50,28 @@ export type SpotifyRecentContextDto = {
     name: string;
 }
 
+/** Transpiled from AudioOrchestrator.Contracts.SpotifyReleaseDto */
+export type SpotifyReleaseDto = {
+    /** Transpiled from string */
+    tagName: string;
+    /** Transpiled from string */
+    version: string;
+    /** Transpiled from string */
+    name: string;
+    /** Transpiled from string */
+    body: string;
+    /** Transpiled from System.DateTime */
+    publishedAt: (Date | string);
+    /** Transpiled from bool */
+    isCompatible: boolean;
+}
+
+/** Transpiled from AudioOrchestrator.Contracts.UpgradeSpotifySourceRequest */
+export type UpgradeSpotifySourceRequest = {
+    /** Transpiled from string? */
+    targetVersion?: string;
+}
+
 /** Transpiled from AudioOrchestrator.Contracts.SpotifySourceDto */
 export type SpotifySourceDto = {
     /** Transpiled from string */
@@ -92,6 +114,12 @@ export type SpotifySourceDto = {
     contextName?: string;
     /** Transpiled from System.Collections.Generic.IReadOnlyList<AudioOrchestrator.Contracts.SpotifyRecentContextDto>? */
     recentContexts?: SpotifyRecentContextDto[];
+    /** Transpiled from string */
+    currentVersion: string;
+    /** Transpiled from string? */
+    latestCompatibleVersion?: string;
+    /** Transpiled from bool */
+    hasUpdate: boolean;
 }
 
 /** Transpiled from AudioOrchestrator.Contracts.GroupDto */

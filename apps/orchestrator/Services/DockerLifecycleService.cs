@@ -13,7 +13,8 @@ namespace AudioOrchestrator.Services;
 
 public interface IContainerLifecycleService
 {
-    Task SpawnLibreSpotAsync(string sourceId, string sourceName, string fifoPath, int maxVolume = 50, IList<ContainerListResponse>? existingContainers = null);
+    Task SpawnLibreSpotAsync(string sourceId, string sourceName, string fifoPath, int maxVolume = 50, IList<ContainerListResponse>? existingContainers = null, string? version = null);
+    Task UpgradeSpotifyNodeAsync(string sourceId, string targetVersion);
     Task SpawnRadioStreamAsync(RadioStreamEntity stream, string fifoPath, IList<ContainerListResponse>? existingContainers = null);
     Task StopAndRemoveContainerAsync(string containerName);
 }
@@ -43,7 +44,7 @@ public class DockerLifecycleService : IContainerLifecycleService
         _configuration = configuration;
     }
 
-    public async Task SpawnLibreSpotAsync(string sourceId, string sourceName, string fifoPath, int maxVolume = 50, IList<ContainerListResponse>? existingContainers = null)
+    public async Task SpawnLibreSpotAsync(string sourceId, string sourceName, string fifoPath, int maxVolume = 50, IList<ContainerListResponse>? existingContainers = null, string? version = null)
     {
         bool fifoWasDirectory = false;
         if (System.IO.Directory.Exists(fifoPath))
@@ -60,7 +61,13 @@ public class DockerLifecycleService : IContainerLifecycleService
                        ?? (await _dockerClient.Containers.ListContainersAsync(new ContainersListParameters { All = true }))
                           .FirstOrDefault(c => c.Names.Any(n => n == $"/{containerName}"));
 
-        var spotifyImage = _configuration["SPOTIFY_NODE_IMAGE"] ?? OrchestratorConstants.DefaultSpotifyNodeImage;
+        var baseImage = _configuration["SPOTIFY_NODE_IMAGE"] ?? OrchestratorConstants.DefaultSpotifyNodeImage;
+        var spotifyImage = baseImage;
+        if (!string.IsNullOrWhiteSpace(version))
+        {
+            var repo = baseImage.Contains(':') ? baseImage[..baseImage.LastIndexOf(':')] : baseImage;
+            spotifyImage = $"{repo}:{version}";
+        }
         var internalUrl = (_configuration["ORCHESTRATOR_INTERNAL_URL"] ?? "http://localhost:5000").TrimEnd('/');
         var parameters = new CreateContainerParameters
         {
@@ -170,6 +177,42 @@ public class DockerLifecycleService : IContainerLifecycleService
             _logger.LogError(ex, "Failed to spawn container {ContainerName}.", containerName);
             throw;
         }
+    }
+
+    public async Task UpgradeSpotifyNodeAsync(string sourceId, string targetVersion)
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<OrchestratorDbContext>();
+        var source = await db.SpotifySources.FindAsync(sourceId);
+        if (source == null)
+        {
+            throw new KeyNotFoundException($"Spotify source {sourceId} not found.");
+        }
+
+        var baseImage = _configuration["SPOTIFY_NODE_IMAGE"] ?? OrchestratorConstants.DefaultSpotifyNodeImage;
+        var repo = baseImage.Contains(':') ? baseImage[..baseImage.LastIndexOf(':')] : baseImage;
+        var targetImage = $"{repo}:{targetVersion}";
+
+        _logger.LogInformation("Upgrading Spotify node {SourceName} ({SourceId}) from {CurrentVersion} to {TargetVersion} (image {TargetImage})",
+            source.Name, sourceId, source.CurrentVersion, targetVersion, targetImage);
+
+        await EnsureImageExistsAsync(targetImage);
+
+        var containerName = $"{OrchestratorConstants.SpotifyContainerPrefix}{sourceId}";
+        await StopAndRemoveContainerAsync(containerName);
+
+        var streamId = $"{OrchestratorConstants.SpotifyPrefix}{source.Id}";
+        var fifoPath = $"{OrchestratorConstants.FifoBaseDir}/{streamId}";
+        await SpawnLibreSpotAsync(source.Id, source.Name, fifoPath, source.MaxVolume, version: targetVersion);
+
+        source.CurrentVersion = targetVersion;
+        await db.SaveChangesAsync();
+
+        var hub = scope.ServiceProvider.GetRequiredService<IHubContext<AudioHub, IAudioClient>>();
+        var stateBuilder = scope.ServiceProvider.GetRequiredService<FullStateBuilder>();
+        await hub.Clients.All.OnFullStateUpdate(await stateBuilder.BuildAsync());
+
+        _logger.LogInformation("Successfully upgraded Spotify node {SourceName} ({SourceId}) to {TargetVersion}", source.Name, sourceId, targetVersion);
     }
 
     public async Task SpawnRadioStreamAsync(RadioStreamEntity stream, string fifoPath, IList<ContainerListResponse>? existingContainers = null)

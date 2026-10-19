@@ -178,6 +178,10 @@ namespace AudioOrchestrator.Migrations
                     b.Property<string>("CurrentTrackId")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("CurrentVersion")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("ErrorMessage")
                         .HasColumnType("TEXT");
 

@@ -14,6 +14,7 @@ import {
   RoomDto,
   StreamDto,
   SpotifySourceDto,
+  SpotifyReleaseDto,
 } from '@api';
 import {
   asyncScheduler,
@@ -392,6 +393,36 @@ export class DataService {
       this.toast.success('Restarting Spotify source...');
     } catch (e) {
       this.toast.error('Failed to restart Spotify source');
+    }
+  }
+
+  async getSpotifySourceReleases(
+    id: string,
+    targetVersion?: string,
+  ): Promise<SpotifyReleaseDto[]> {
+    try {
+      return await firstValueFrom(
+        this.spotifyApi.apiSpotifySourcesIdReleasesGet(id, targetVersion),
+      );
+    } catch {
+      this.toast.error('Failed to fetch release information');
+      return [];
+    }
+  }
+
+  async upgradeSpotifySource(
+    id: string,
+    targetVersion?: string,
+  ): Promise<boolean> {
+    try {
+      await firstValueFrom(
+        this.spotifyApi.apiSpotifySourcesIdUpgradePost(id, { targetVersion }),
+      );
+      this.toast.success('Spotify source upgrade started');
+      return true;
+    } catch {
+      this.toast.error('Failed to upgrade Spotify source');
+      return false;
     }
   }
 

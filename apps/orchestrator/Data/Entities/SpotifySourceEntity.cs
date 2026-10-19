@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using AudioOrchestrator.Contracts;
 
 namespace AudioOrchestrator.Data.Entities;
 
@@ -16,6 +17,8 @@ public class SpotifySourceEntity
     public bool IsConnected { get; set; } = false;
 
     public int MaxVolume { get; set; } = 30;
+
+    public string CurrentVersion { get; set; } = OrchestratorConstants.SpotifyNodeVersion;
 
     // Metadata
     public string? CurrentTrackId { get; set; }

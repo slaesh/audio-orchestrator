@@ -38,7 +38,9 @@ model/setMuteRequest.ts
 model/setStreamRequest.ts
 model/setVolumeRequest.ts
 model/spotifyRecentContextDto.ts
+model/spotifyReleaseDto.ts
 model/updateSourceRequest.ts
+model/upgradeSpotifySourceRequest.ts
 model/volumeRequest.ts
 model/webhookEventPayload.ts
 param.ts

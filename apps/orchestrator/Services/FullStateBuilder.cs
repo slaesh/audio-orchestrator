@@ -12,11 +12,18 @@ public class FullStateBuilder
 {
     private readonly OrchestratorDbContext _db;
     private readonly ISnapcastService _snapcast;
+    private readonly ISpotifyNodeReleaseService? _releaseService;
 
     public FullStateBuilder(OrchestratorDbContext db, ISnapcastService snapcast)
+        : this(db, snapcast, null)
+    {
+    }
+
+    public FullStateBuilder(OrchestratorDbContext db, ISnapcastService snapcast, ISpotifyNodeReleaseService? releaseService)
     {
         _db = db;
         _snapcast = snapcast;
+        _releaseService = releaseService;
     }
 
     public virtual async Task<FullStateDto> BuildAsync()
@@ -57,6 +64,14 @@ public class FullStateBuilder
                 }
             }
 
+            string? latestCompatible = null;
+            bool hasUpdate = false;
+            if (_releaseService != null && !string.IsNullOrEmpty(source.CurrentVersion))
+            {
+                latestCompatible = await _releaseService.GetLatestCompatibleVersionAsync(source.CurrentVersion);
+                hasUpdate = !string.IsNullOrEmpty(latestCompatible) && latestCompatible != source.CurrentVersion;
+            }
+
             spotifySourceDtos.Add(new SpotifySourceDto(
                 source.Id, 
                 source.Name, 
@@ -77,7 +92,10 @@ public class FullStateBuilder
                 source.ErrorMessage,
                 source.ContextUri,
                 source.ContextName,
-                recents
+                recents,
+                source.CurrentVersion,
+                latestCompatible,
+                hasUpdate
             ));
         }
 

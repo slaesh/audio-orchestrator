@@ -112,7 +112,7 @@ public class ReconciliationService : IReconciliationService, IDisposable
 
             var streamId = $"{OrchestratorConstants.SpotifyPrefix}{s.Id}";
             var fifoPath = $"{OrchestratorConstants.FifoBaseDir}/{streamId}";
-            await _containerLifecycle.SpawnLibreSpotAsync(s.Id, s.Name, fifoPath, s.MaxVolume, containers);
+            await _containerLifecycle.SpawnLibreSpotAsync(s.Id, s.Name, fifoPath, s.MaxVolume, containers, s.CurrentVersion);
         }
 
         // 2. Reconcile Radio Streams (Ensure all are running and FIFOs exist)

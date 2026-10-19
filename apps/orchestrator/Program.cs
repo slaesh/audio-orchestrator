@@ -39,9 +39,15 @@ builder.Services.AddSingleton<Docker.DotNet.IDockerClient>(_ => new Docker.DotNe
 
 builder.Services.AddSingleton<AudioOrchestrator.Services.IFifoService, AudioOrchestrator.Services.FifoService>();
 builder.Services.AddSingleton<AudioOrchestrator.Services.IContainerLifecycleService, AudioOrchestrator.Services.DockerLifecycleService>();
+builder.Services.AddMemoryCache();
 builder.Services.AddHttpClient<AudioOrchestrator.Services.ILibrespotApiClient, AudioOrchestrator.Services.LibrespotApiClient>(client =>
 {
     client.Timeout = TimeSpan.FromSeconds(5);
+});
+builder.Services.AddHttpClient<AudioOrchestrator.Services.ISpotifyNodeReleaseService, AudioOrchestrator.Services.SpotifyNodeReleaseService>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(10);
+    client.DefaultRequestHeaders.Add("User-Agent", "AudioOrchestrator");
 });
 builder.Services.AddSingleton<AudioOrchestrator.Services.IReconciliationService, AudioOrchestrator.Services.ReconciliationService>();
 builder.Services.AddSingleton<AudioOrchestrator.Services.SnapcastConnectionService>();
