@@ -105,7 +105,7 @@ if (!isDesignOrDocumentGen)
         db.Settings.Add(new AudioOrchestrator.Data.Entities.OrchestratorSettingsEntity
         {
             Id = "default",
-            VolumeProfile = "cubic"
+            VolumeProfile = AudioOrchestrator.Contracts.VolumeProfile.Cubic
         });
         db.SaveChanges();
     }

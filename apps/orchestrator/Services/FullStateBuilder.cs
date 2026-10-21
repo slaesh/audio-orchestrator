@@ -284,7 +284,7 @@ public class FullStateBuilder
             }
         }
         var settings = await _db.Settings.FirstOrDefaultAsync();
-        var volumeProfile = settings?.VolumeProfile ?? "cubic";
+        var volumeProfile = settings?.VolumeProfile ?? VolumeProfile.Cubic;
 
         return new FullStateDto(groupDtos, unassignedRooms, radioDtos, spotifySourceDtos, snapcastStreamDtos, pluginDtos, volumeProfile);
     }

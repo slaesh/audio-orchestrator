@@ -17,5 +17,11 @@ public class OrchestratorDbContext : DbContext
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+
+        modelBuilder.Entity<AudioOrchestrator.Data.Entities.OrchestratorSettingsEntity>()
+            .Property(s => s.VolumeProfile)
+            .HasConversion(
+                v => v.ToString().ToLowerInvariant(),
+                v => Enum.Parse<AudioOrchestrator.Contracts.VolumeProfile>(v, true));
     }
 }

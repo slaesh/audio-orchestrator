@@ -9,19 +9,10 @@
  */
 
 
-export interface StreamDto { 
-    id: string;
-    name: string;
-    status: string;
-    url: string | null;
-    currentTitle?: string | null;
-    currentArtist?: string | null;
-    currentCoverUrl?: string | null;
-    errorMessage?: string | null;
-    currentVersion?: string | null;
-    latestCompatibleVersion?: string | null;
-    hasUpdate?: boolean;
-    pluginId?: string | null;
-    containerRunning?: boolean;
+export enum VolumeProfile {
+
+    Cubic = 'Cubic',
+
+    Linear = 'Linear'
 }
 

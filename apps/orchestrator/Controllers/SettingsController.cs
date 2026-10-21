@@ -37,32 +37,26 @@ public class SettingsController : ControllerBase
     public async Task<IActionResult> GetSettings()
     {
         var settings = await _db.Settings.FirstOrDefaultAsync();
-        var profile = settings?.VolumeProfile ?? "cubic";
+        var profile = settings?.VolumeProfile ?? VolumeProfile.Cubic;
         return Ok(new { volumeProfile = profile });
     }
 
     [HttpPut]
     public async Task<IActionResult> UpdateSettings([FromBody] UpdateSettingsRequest req)
     {
-        var normalizedProfile = req.VolumeProfile?.ToLowerInvariant();
-        if (normalizedProfile != "cubic" && normalizedProfile != "linear")
-        {
-            return BadRequest("Invalid volume profile. Allowed values are 'cubic' and 'linear'.");
-        }
-
         var settings = await _db.Settings.FirstOrDefaultAsync();
         if (settings == null)
         {
-            settings = new OrchestratorSettingsEntity { Id = "default", VolumeProfile = normalizedProfile };
+            settings = new OrchestratorSettingsEntity { Id = "default", VolumeProfile = req.VolumeProfile };
             _db.Settings.Add(settings);
         }
         else
         {
-            settings.VolumeProfile = normalizedProfile;
+            settings.VolumeProfile = req.VolumeProfile;
         }
 
         await _db.SaveChangesAsync();
-        _logger.LogInformation("Volume profile updated to {Profile}. Recalculating all volumes...", normalizedProfile);
+        _logger.LogInformation("Volume profile updated to {Profile}. Recalculating all volumes...", req.VolumeProfile);
 
         // Recalculate hardware output for all active groups and unassigned rooms
         await _volumeOrchestrator.RecalculateAllAsync();
@@ -70,6 +64,6 @@ public class SettingsController : ControllerBase
         // Broadcast full state update to SignalR clients
         await _hub.Clients.All.OnFullStateUpdate(await _stateBuilder.BuildAsync());
 
-        return Ok(new { volumeProfile = normalizedProfile });
+        return Ok(new { volumeProfile = req.VolumeProfile });
     }
 }

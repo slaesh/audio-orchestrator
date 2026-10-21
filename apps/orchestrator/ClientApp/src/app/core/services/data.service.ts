@@ -18,8 +18,8 @@ import {
   NodeReleaseDto,
   SettingsService,
   UpdateSettingsRequest,
+  VolumeProfile,
 } from '@api';
-import { VolumeProfile } from '../utils/volume-calculator';
 import {
   asyncScheduler,
   distinctUntilChanged,
@@ -54,7 +54,7 @@ export class DataService {
     () => this.stateSignal()?.radioPlugins || [],
   );
   public volumeProfile = computed<VolumeProfile>(
-    () => (this.stateSignal()?.volumeProfile as VolumeProfile) || 'cubic',
+    () => this.stateSignal()?.volumeProfile || 'cubic',
   );
   public showRawVolume = signal<boolean>(
     localStorage.getItem('orch_show_raw_volume') === 'true',

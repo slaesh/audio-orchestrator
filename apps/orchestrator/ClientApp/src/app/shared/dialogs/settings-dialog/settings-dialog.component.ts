@@ -18,7 +18,7 @@ import {
 } from '@ng-icons/lucide';
 import { ZardButtonComponent } from '../../../core/ui/button/button.component';
 import { DataService } from '../../../core/services/data.service';
-import { VolumeProfile } from '../../../core/utils/volume-calculator';
+import { VolumeProfile } from '@api';
 
 @Component({
   selector: 'app-settings-dialog',

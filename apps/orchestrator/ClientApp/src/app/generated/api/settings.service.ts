@@ -17,7 +17,7 @@ import { Observable }                                        from 'rxjs';
 import { OpenApiHttpParams, QueryParamStyle } from '../query.params';
 
 // @ts-ignore
-import { UpdateSettingsRequest } from '../model/updateSettingsRequest';
+import { UpdateSettingsRequest } from '@contracts';
 
 // @ts-ignore
 import { BASE_PATH, COLLECTION_FORMATS }                     from '../variables';

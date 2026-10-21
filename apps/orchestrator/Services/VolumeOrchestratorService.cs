@@ -122,24 +122,24 @@ public class VolumeOrchestratorService
 
         // If not in a group, just push absolute volume (1:1 with mix) and preserve room mute
         var settings = await _db.Settings.FirstOrDefaultAsync();
-        var profile = settings?.VolumeProfile ?? "cubic";
+        var profile = settings?.VolumeProfile ?? VolumeProfile.Cubic;
         int snapcastVolume = CalculateSnapcastVolume(100, mixVolume, profile);
 
         await _snapcast.SetClientVolumeAsync(roomMac, snapcastVolume, room.IsMuted);
         await _hub.Clients.All.OnRoomVolumeChanged(roomMac, snapcastVolume, room.IsMuted);
     }
 
-    public static double CalculateAudioGain(double normalizedValue, string profile)
+    public static double CalculateAudioGain(double normalizedValue, VolumeProfile profile)
     {
         double x = Math.Clamp(normalizedValue, 0.0, 1.0);
         return profile switch
         {
-            "linear" => x,
-            _ => x * x * x // Default: "cubic" (f(x) = x³)
+            VolumeProfile.Linear => x,
+            _ => x * x * x // Default: VolumeProfile.Cubic (f(x) = x³)
         };
     }
 
-    public static int CalculateSnapcastVolume(int groupMasterPercent, int roomMixPercent, string profile)
+    public static int CalculateSnapcastVolume(int groupMasterPercent, int roomMixPercent, VolumeProfile profile)
     {
         double groupSlider = Math.Clamp(groupMasterPercent, 0, 100) / 100.0;
         double roomSlider = Math.Clamp(roomMixPercent, 0, 100) / 100.0;
@@ -158,7 +158,7 @@ public class VolumeOrchestratorService
     public virtual async Task RecalculateAllAsync()
     {
         var settings = await _db.Settings.FirstOrDefaultAsync();
-        var profile = settings?.VolumeProfile ?? "cubic";
+        var profile = settings?.VolumeProfile ?? VolumeProfile.Cubic;
 
         // 1. Recalculate all orchestrated groups
         var groups = await _db.Groups.Where(g => !string.IsNullOrEmpty(g.SnapcastGroupId)).ToListAsync();
@@ -214,7 +214,7 @@ public class VolumeOrchestratorService
         if (clients == null) return;
 
         var settings = await _db.Settings.FirstOrDefaultAsync();
-        var profile = settings?.VolumeProfile ?? "cubic";
+        var profile = settings?.VolumeProfile ?? VolumeProfile.Cubic;
         var roomsFromDb = await _db.Rooms.ToListAsync();
 
         foreach (var client in clients)

@@ -1,6 +1,15 @@
+using System.Text.Json.Serialization;
 using Tapper;
 
 namespace AudioOrchestrator.Contracts;
+
+[TranspilationSource]
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum VolumeProfile
+{
+    Cubic,
+    Linear
+}
 
 [TranspilationSource]
 public record RoomDto(string Id, string Name, string? FriendlyName, string? HostName, bool Connected, int VolumePercent, bool VolumeMuted, int MixVolume);
@@ -48,7 +57,7 @@ public record SpotifyReleaseDto(
 );
 
 [TranspilationSource]
-public record UpdateSettingsRequest(string VolumeProfile);
+public record UpdateSettingsRequest(VolumeProfile VolumeProfile);
 
 [TranspilationSource]
 public record NodeUpgradeRequest(string? TargetVersion = null);
@@ -137,7 +146,7 @@ public record FullStateDto(
     List<SpotifySourceDto> SpotifySources,
     List<StreamDto> SnapcastStreams,
     List<RadioPluginDto>? RadioPlugins = null,
-    string VolumeProfile = "cubic");
+    VolumeProfile VolumeProfile = VolumeProfile.Cubic);
 
 [TranspilationSource]
 public record SpotifyMetadataDto(

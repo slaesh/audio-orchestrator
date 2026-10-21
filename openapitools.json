@@ -25,7 +25,9 @@
           "RadioPluginDto": "RadioPluginDto",
           "RadioPluginCreateRequest": "RadioPluginCreateRequest",
           "RadioPluginUpdateRequest": "RadioPluginUpdateRequest",
-          "RadioEventPayload": "RadioEventPayload"
+          "RadioEventPayload": "RadioEventPayload",
+          "VolumeProfile": "VolumeProfile",
+          "UpdateSettingsRequest": "UpdateSettingsRequest"
         },
         "importMappings": {
           "FullStateDto": "@contracts",
@@ -38,7 +40,9 @@
           "RadioPluginDto": "@contracts",
           "RadioPluginCreateRequest": "@contracts",
           "RadioPluginUpdateRequest": "@contracts",
-          "RadioEventPayload": "@contracts"
+          "RadioEventPayload": "@contracts",
+          "VolumeProfile": "@contracts",
+          "UpdateSettingsRequest": "@contracts"
         }
       }
     }

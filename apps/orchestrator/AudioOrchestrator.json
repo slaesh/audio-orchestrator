@@ -1718,8 +1718,7 @@
             }
           },
           "volumeProfile": {
-            "type": "string",
-            "default": "cubic"
+            "$ref": "#/components/schemas/VolumeProfile"
           }
         }
       },
@@ -2384,7 +2383,7 @@
         "type": "object",
         "properties": {
           "volumeProfile": {
-            "type": "string"
+            "$ref": "#/components/schemas/VolumeProfile"
           }
         }
       },
@@ -2410,6 +2409,13 @@
             ]
           }
         }
+      },
+      "VolumeProfile": {
+        "enum": [
+          "Cubic",
+          "Linear"
+        ],
+        "default": "Cubic"
       },
       "VolumeRequest": {
         "type": "object",

@@ -27,6 +27,8 @@ model/@contracts.ts
 model/@contracts.ts
 model/@contracts.ts
 model/@contracts.ts
+model/@contracts.ts
+model/@contracts.ts
 model/createGroupRequest.ts
 model/createRadioStreamRequest.ts
 model/createSourceRequest.ts
@@ -42,7 +44,6 @@ model/setStreamRequest.ts
 model/setVolumeRequest.ts
 model/spotifyRecentContextDto.ts
 model/spotifyReleaseDto.ts
-model/updateSettingsRequest.ts
 model/updateSourceRequest.ts
 model/upgradeSpotifySourceRequest.ts
 model/volumeRequest.ts
