@@ -7,7 +7,9 @@ namespace AudioOrchestrator.Contracts;
 [JsonConverter(typeof(JsonStringEnumConverter))]
 public enum VolumeProfile
 {
+    [JsonStringEnumMemberName("cubic")]
     Cubic,
+    [JsonStringEnumMemberName("linear")]
     Linear
 }
 

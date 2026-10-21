@@ -2412,10 +2412,10 @@
       },
       "VolumeProfile": {
         "enum": [
-          "Cubic",
-          "Linear"
+          "cubic",
+          "linear"
         ],
-        "default": "Cubic"
+        "default": "cubic"
       },
       "VolumeRequest": {
         "type": "object",
