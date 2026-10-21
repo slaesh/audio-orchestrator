@@ -182,7 +182,8 @@ public class RadioPluginsController : ControllerBase
         }
 
         entity.Name = request.Name.Trim();
-        var imageChanged = !string.Equals(entity.DockerImage, request.DockerImage.Trim(), StringComparison.OrdinalIgnoreCase);
+        // Docker tags can be case-sensitive (e.g. :RC1 vs :rc1), so use Ordinal comparison
+        var imageChanged = !string.Equals(entity.DockerImage, request.DockerImage.Trim(), StringComparison.Ordinal);
         entity.DockerImage = request.DockerImage.Trim();
         if (imageChanged)
         {

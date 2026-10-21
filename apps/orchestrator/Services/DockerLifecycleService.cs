@@ -66,7 +66,11 @@ public class DockerLifecycleService : IContainerLifecycleService
         var spotifyImage = baseImage;
         if (!string.IsNullOrWhiteSpace(version))
         {
-            var repo = baseImage.Contains(':') ? baseImage[..baseImage.LastIndexOf(':')] : baseImage;
+            var lastColon = baseImage.LastIndexOf(':');
+            var lastSlash = baseImage.LastIndexOf('/');
+            // A colon is only a Docker tag separator if it appears after the last slash.
+            // Colons before the last slash belong to registry host ports (e.g., localhost:5000/image).
+            var repo = (lastColon >= 0 && lastColon > lastSlash) ? baseImage[..lastColon] : baseImage;
             spotifyImage = $"{repo}:{version}";
         }
         var internalUrl = (_configuration["ORCHESTRATOR_INTERNAL_URL"] ?? "http://localhost:5000").TrimEnd('/');

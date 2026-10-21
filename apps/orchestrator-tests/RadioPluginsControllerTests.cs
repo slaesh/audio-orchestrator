@@ -135,4 +135,41 @@ public class RadioPluginsControllerTests
 
         Assert.Equal("0.4.0", dto.CurrentVersion);
     }
+
+    [Fact]
+    public async Task UpdatePlugin_CaseSensitiveImageTagChange_UpdatesEffectiveVersion()
+    {
+        using var db = GetDbContext();
+        var existing = new RadioPluginEntity
+        {
+            Id = "case-test",
+            Name = "Case Test",
+            DockerImage = "ghcr.io/slaesh/radio:0.3.1-RC1",
+            CurrentVersion = "0.3.1-RC1"
+        };
+        db.RadioPlugins.Add(existing);
+        await db.SaveChangesAsync();
+
+        var controller = new RadioPluginsController(
+            db,
+            _hubMock.Object,
+            _builderMock.Object,
+            _releaseServiceMock.Object,
+            _containerLifecycleMock.Object,
+            _loggerMock.Object
+        );
+
+        var updateReq = new RadioPluginUpdateRequest(
+            Name: "Case Test",
+            DockerImage: "ghcr.io/slaesh/radio:0.3.1-rc1",
+            UrlPatterns: new List<string>(),
+            Enabled: true
+        );
+
+        var result = await controller.UpdatePlugin("case-test", updateReq);
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        var dto = Assert.IsType<RadioPluginDto>(okResult.Value);
+
+        Assert.Equal("0.3.1-rc1", dto.CurrentVersion);
+    }
 }
