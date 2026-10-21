@@ -81,4 +81,77 @@ public class SpotifyNodeReleaseTests
         };
         Assert.Equal(expected, entity.GetEffectiveVersion());
     }
+
+    [Fact]
+    public async Task ResolveInitialSpotifyVersionAsync_PicksLatestCompatibleFromGitHub()
+    {
+        var json = @"[
+            { ""tag_name"": ""v0.3.2"", ""name"": ""0.3.2"", ""draft"": false, ""prerelease"": false },
+            { ""tag_name"": ""v0.3.1"", ""name"": ""0.3.1"", ""draft"": false, ""prerelease"": false }
+        ]";
+        var service = CreateReleaseService(json);
+
+        var resolved = await service.ResolveInitialSpotifyVersionAsync(new[] { "0.3.0" });
+        Assert.Equal("0.3.2", resolved);
+    }
+
+    [Fact]
+    public async Task ResolveInitialSpotifyVersionAsync_HonorsFleetMinimumWhenOffline()
+    {
+        var service = CreateFailingReleaseService();
+
+        var resolved = await service.ResolveInitialSpotifyVersionAsync(new[] { "0.3.5", "0.3.1" });
+        Assert.Equal("0.3.5", resolved);
+    }
+
+    [Fact]
+    public async Task ResolveInitialSpotifyVersionAsync_IgnoresBreakingVersionsOnGitHub()
+    {
+        var json = @"[
+            { ""tag_name"": ""v0.4.0"", ""name"": ""0.4.0"", ""draft"": false, ""prerelease"": false },
+            { ""tag_name"": ""v0.3.2"", ""name"": ""0.3.2"", ""draft"": false, ""prerelease"": false }
+        ]";
+        var service = CreateReleaseService(json);
+
+        var resolved = await service.ResolveInitialSpotifyVersionAsync(new[] { "0.3.1" });
+        Assert.Equal("0.3.2", resolved);
+    }
+
+    [Fact]
+    public async Task ResolveInitialSpotifyVersionAsync_FallsBackToConstantWhenNoFleetAndOffline()
+    {
+        var service = CreateFailingReleaseService();
+
+        var resolved = await service.ResolveInitialSpotifyVersionAsync(null);
+        Assert.Equal(AudioOrchestrator.Contracts.OrchestratorConstants.SpotifyNodeVersion, resolved);
+    }
+
+    private static NodeReleaseService CreateReleaseService(string githubResponseJson)
+    {
+        var handler = new TestHandler(_ => new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+        {
+            Content = new StringContent(githubResponseJson, System.Text.Encoding.UTF8, "application/json")
+        });
+        var httpClient = new HttpClient(handler);
+        var cache = new MemoryCache(new MemoryCacheOptions());
+        var logger = new Mock<ILogger<NodeReleaseService>>().Object;
+        return new NodeReleaseService(httpClient, cache, logger);
+    }
+
+    private static NodeReleaseService CreateFailingReleaseService()
+    {
+        var handler = new TestHandler(_ => new HttpResponseMessage(System.Net.HttpStatusCode.InternalServerError));
+        var httpClient = new HttpClient(handler);
+        var cache = new MemoryCache(new MemoryCacheOptions());
+        var logger = new Mock<ILogger<NodeReleaseService>>().Object;
+        return new NodeReleaseService(httpClient, cache, logger);
+    }
+
+    private sealed class TestHandler : HttpMessageHandler
+    {
+        private readonly Func<HttpRequestMessage, HttpResponseMessage> _responder;
+        public TestHandler(Func<HttpRequestMessage, HttpResponseMessage> responder) => _responder = responder;
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(_responder(request));
+    }
 }

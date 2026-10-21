@@ -18,7 +18,7 @@ public static class OrchestratorConstants
 
     // Docker Images & Repositories
     public const string SpotifyRepository = "slaesh/librespot-server";
-    public const string SpotifyNodeVersion = "0.3.0";
+    public const string SpotifyNodeVersion = "0.3.1";
     public const string DefaultSpotifyNodeImage = "ghcr.io/slaesh/librespot-server:" + SpotifyNodeVersion;
     public const string DefaultFfmpegImage = "jrottenberg/ffmpeg:4.1-alpine";
     public const string DefaultAudalaxyPluginImage = "ghcr.io/slaesh/radio-node-audalaxy:latest";

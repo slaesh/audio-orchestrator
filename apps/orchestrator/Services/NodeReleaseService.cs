@@ -17,6 +17,7 @@ public interface ISpotifyNodeReleaseService
     Task<IReadOnlyList<SpotifyReleaseDto>> GetReleasesAsync(string? currentVersion = null, bool forceRefresh = false);
     Task<string?> GetLatestCompatibleVersionAsync(string currentVersion);
     Task<IReadOnlyList<SpotifyReleaseDto>> GetReleaseHistoryAsync(string currentVersion, string? targetVersion = null);
+    Task<string> ResolveInitialSpotifyVersionAsync(IEnumerable<string>? existingVersions = null);
 }
 
 public class NodeReleaseService : INodeReleaseService, ISpotifyNodeReleaseService
@@ -49,6 +50,44 @@ public class NodeReleaseService : INodeReleaseService, ISpotifyNodeReleaseServic
     {
         var list = await GetReleaseHistoryAsync(OrchestratorConstants.SpotifyRepository, currentVersion, targetVersion);
         return list.Select(r => new SpotifyReleaseDto(r.TagName, r.Version, r.Name, r.Body, r.PublishedAt, r.IsCompatible, r.Url)).ToList();
+    }
+
+    public async Task<string> ResolveInitialSpotifyVersionAsync(IEnumerable<string>? existingVersions = null)
+    {
+        var parsedBaseline = ParseSemVer(OrchestratorConstants.SpotifyNodeVersion) ?? new SemVer(0, 3, 1, null);
+
+        if (existingVersions != null)
+        {
+            foreach (var vStr in existingVersions)
+            {
+                var parsed = ParseSemVer(vStr);
+                if (parsed != null && parsed.CompareTo(parsedBaseline) > 0)
+                {
+                    parsedBaseline = parsed;
+                }
+            }
+        }
+
+        var baselineStr = parsedBaseline.ToString();
+
+        try
+        {
+            var latestCompatible = await GetLatestCompatibleVersionAsync(OrchestratorConstants.SpotifyRepository, baselineStr);
+            if (!string.IsNullOrWhiteSpace(latestCompatible))
+            {
+                var parsedLatest = ParseSemVer(latestCompatible);
+                if (parsedLatest != null && parsedLatest.CompareTo(parsedBaseline) > 0)
+                {
+                    return latestCompatible;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to query latest compatible version for initial Spotify node. Falling back to fleet baseline {Baseline}", baselineStr);
+        }
+
+        return baselineStr;
     }
 
     // INodeReleaseService implementation

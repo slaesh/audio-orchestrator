@@ -109,7 +109,7 @@ export class SpotifyListComponent {
         type: 'spotify',
         id: source.id,
         name: source.name,
-        currentVersion: source.currentVersion || '0.3.0',
+        currentVersion: source.currentVersion || '0.3.1',
         targetVersion: source.latestCompatibleVersion || 'latest',
         repository: 'slaesh/librespot-server',
       } satisfies NodeUpgradeDialogData,
