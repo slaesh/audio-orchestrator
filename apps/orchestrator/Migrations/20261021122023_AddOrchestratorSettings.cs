@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
@@ -21,6 +21,11 @@ namespace AudioOrchestrator.Migrations
                 {
                     table.PrimaryKey("PK_Settings", x => x.Id);
                 });
+
+            migrationBuilder.InsertData(
+                table: "Settings",
+                columns: new[] { "Id", "VolumeProfile" },
+                values: new object[] { "default", "cubic" });
         }
 
         /// <inheritdoc />
