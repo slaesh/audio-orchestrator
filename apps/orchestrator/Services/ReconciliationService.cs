@@ -112,11 +112,6 @@ public class ReconciliationService : IReconciliationService, IDisposable
             s.ContextUri = null;
             s.ContextName = null;
             s.ErrorMessage = null;
-            if (string.IsNullOrWhiteSpace(s.CurrentVersion))
-            {
-                var baseImage = _configuration?["SPOTIFY_NODE_IMAGE"] ?? OrchestratorConstants.DefaultSpotifyNodeImage;
-                s.CurrentVersion = OrchestratorConstants.ExtractImageTag(baseImage);
-            }
 
             var streamId = $"{OrchestratorConstants.SpotifyPrefix}{s.Id}";
             var fifoPath = $"{OrchestratorConstants.FifoBaseDir}/{streamId}";

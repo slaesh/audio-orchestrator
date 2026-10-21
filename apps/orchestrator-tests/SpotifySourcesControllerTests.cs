@@ -105,7 +105,7 @@ public class SpotifySourcesControllerTests
         var okResult = Assert.IsType<OkObjectResult>(actionResult);
         var entity = Assert.IsType<SpotifySourceEntity>(okResult.Value);
 
-        Assert.Equal("latest", entity.CurrentVersion);
+        Assert.Equal("", entity.CurrentVersion);
 
         // Verify container was spawned with version: null to preserve configured image verbatim
         _containerLifecycleMock.Verify(c => c.SpawnLibreSpotAsync(
@@ -116,6 +116,60 @@ public class SpotifySourcesControllerTests
             null,
             null
         ), Times.Once);
+    }
+
+    [Fact]
+    public async Task CreateSource_ThenUpdate_ThenRestart_PreservesNullVersionAcrossAllLifecycleOperations()
+    {
+        using var db = GetDbContext();
+        _releaseServiceMock
+            .Setup(r => r.ResolveInitialSpotifyVersionAsync(It.IsAny<IEnumerable<string>>()))
+            .ReturnsAsync(new InitialSpotifyVersionResult("0.5.2", null));
+
+        var controller = CreateController(db);
+
+        // 1. Create with configured image fallback
+        var createReq = new CreateSourceRequest { Name = "Persistent Spotify", MaxVolume = 60 };
+        var createResult = await controller.CreateSource(createReq);
+        var createdEntity = Assert.IsType<SpotifySourceEntity>(Assert.IsType<OkObjectResult>(createResult).Value);
+
+        Assert.Equal("", createdEntity.CurrentVersion);
+        _containerLifecycleMock.Verify(c => c.SpawnLibreSpotAsync(
+            createdEntity.Id,
+            createdEntity.Name,
+            It.IsAny<string>(),
+            60,
+            null,
+            null
+        ), Times.Once);
+
+        // 2. Update settings (recreates container)
+        var updateReq = new UpdateSourceRequest { Name = "Persistent Spotify Renamed", MaxVolume = 75 };
+        var updateResult = await controller.UpdateSource(createdEntity.Id, updateReq);
+        Assert.IsType<OkObjectResult>(updateResult);
+
+        // Must still pass version: null so configured image reference (e.g. :v0.5.2) is not switched to :0.5.2
+        _containerLifecycleMock.Verify(c => c.SpawnLibreSpotAsync(
+            createdEntity.Id,
+            "Persistent Spotify Renamed",
+            It.IsAny<string>(),
+            75,
+            null,
+            null
+        ), Times.Once);
+
+        // 3. Restart container
+        var restartResult = await controller.RestartSource(createdEntity.Id);
+        Assert.IsType<OkResult>(restartResult);
+
+        _containerLifecycleMock.Verify(c => c.SpawnLibreSpotAsync(
+            createdEntity.Id,
+            "Persistent Spotify Renamed",
+            It.IsAny<string>(),
+            75,
+            null,
+            null
+        ), Times.Exactly(2)); // Once in Update, once in Restart
     }
 
     [Fact]

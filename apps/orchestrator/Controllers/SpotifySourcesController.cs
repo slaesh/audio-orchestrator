@@ -75,7 +75,7 @@ public class SpotifySourcesController : ControllerBase
         { 
             Name = req.Name, 
             MaxVolume = req.MaxVolume,
-            CurrentVersion = initialVersionResult.Version
+            CurrentVersion = initialVersionResult.ImageTagToSpawn ?? string.Empty
         };
         _db.SpotifySources.Add(source);
         await _db.SaveChangesAsync();
