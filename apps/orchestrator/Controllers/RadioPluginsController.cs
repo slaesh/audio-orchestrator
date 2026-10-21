@@ -151,6 +151,7 @@ public class RadioPluginsController : ControllerBase
             entity.GetUrlPatterns(),
             entity.Enabled,
             entity.CreatedAt,
+            CurrentVersion: entity.GetEffectiveVersion(),
             GitHubRepository: entity.GitHubRepository
         ));
     }
@@ -198,6 +199,7 @@ public class RadioPluginsController : ControllerBase
             entity.GetUrlPatterns(),
             entity.Enabled,
             entity.CreatedAt,
+            CurrentVersion: entity.GetEffectiveVersion(),
             GitHubRepository: entity.GitHubRepository
         ));
     }

@@ -69,13 +69,13 @@ public class SpotifySourcesController : ControllerBase
     public async Task<IActionResult> CreateSource([FromBody] CreateSourceRequest req)
     {
         var existingVersions = await _db.SpotifySources.Select(s => s.CurrentVersion).ToListAsync();
-        var initialVersion = await _releaseService.ResolveInitialSpotifyVersionAsync(existingVersions);
+        var initialVersionResult = await _releaseService.ResolveInitialSpotifyVersionAsync(existingVersions);
 
         var source = new SpotifySourceEntity 
         { 
             Name = req.Name, 
             MaxVolume = req.MaxVolume,
-            CurrentVersion = initialVersion
+            CurrentVersion = initialVersionResult.Version
         };
         _db.SpotifySources.Add(source);
         await _db.SaveChangesAsync();
@@ -85,7 +85,7 @@ public class SpotifySourcesController : ControllerBase
             var streamId = $"{OrchestratorConstants.SpotifyPrefix}{source.Id}";
             var fifoPath = $"{OrchestratorConstants.FifoBaseDir}/{streamId}";
             
-            await _containerLifecycle.SpawnLibreSpotAsync(source.Id, source.Name, fifoPath, source.MaxVolume, version: initialVersion);
+            await _containerLifecycle.SpawnLibreSpotAsync(source.Id, source.Name, fifoPath, source.MaxVolume, version: initialVersionResult.ImageTagToSpawn);
 
             var streamUri = $"pipe://{fifoPath}?name={streamId}&sampleformat=44100:16:2&idle_threshold_ms=5000&chunk_ms=20";
             await _snapcast.AddStreamAsync(streamUri);
@@ -151,7 +151,7 @@ public class SpotifySourcesController : ControllerBase
         // Recreate container to update settings (Connect name, initial volume, etc.)
         var streamId = $"{OrchestratorConstants.SpotifyPrefix}{source.Id}";
         var fifoPath = $"{OrchestratorConstants.FifoBaseDir}/{streamId}";
-        await _containerLifecycle.SpawnLibreSpotAsync(source.Id, source.Name, fifoPath, source.MaxVolume, version: source.CurrentVersion);
+        await _containerLifecycle.SpawnLibreSpotAsync(source.Id, source.Name, fifoPath, source.MaxVolume, version: string.IsNullOrWhiteSpace(source.CurrentVersion) ? null : source.CurrentVersion);
 
         await _hub.Clients.All.OnFullStateUpdate(await _stateBuilder.BuildAsync());
         return Ok(source);
@@ -170,7 +170,7 @@ public class SpotifySourcesController : ControllerBase
         source.ErrorMessage = null;
         await _db.SaveChangesAsync();
 
-        await _containerLifecycle.SpawnLibreSpotAsync(source.Id, source.Name, fifoPath, source.MaxVolume, version: source.CurrentVersion);
+        await _containerLifecycle.SpawnLibreSpotAsync(source.Id, source.Name, fifoPath, source.MaxVolume, version: string.IsNullOrWhiteSpace(source.CurrentVersion) ? null : source.CurrentVersion);
 
         await _hub.Clients.All.OnFullStateUpdate(await _stateBuilder.BuildAsync());
         return Ok();

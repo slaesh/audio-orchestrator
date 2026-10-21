@@ -29,7 +29,7 @@ public static class OrchestratorConstants
         if (lastColon >= 0 && !image[lastColon..].Contains('/'))
         {
             var tag = image[(lastColon + 1)..].Trim().TrimStart('v', 'V');
-            if (!string.Equals(tag, "latest", StringComparison.OrdinalIgnoreCase))
+            if (!string.IsNullOrWhiteSpace(tag))
             {
                 return tag;
             }

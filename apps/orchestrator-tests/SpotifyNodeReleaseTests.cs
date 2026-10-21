@@ -20,6 +20,8 @@ public class SpotifyNodeReleaseTests
     [InlineData("1.0.0", "1.1.0", true)]  // Minor bump in 1.x is non-breaking
     [InlineData("1.0.0", "1.0.1", true)]  // Patch bump in 1.x is non-breaking
     [InlineData("1.0.0", "2.0.0", false)] // Major bump in 1.x is breaking
+    [InlineData("0.3.1", "0.3.3-rc.1", false)] // Prerelease target is excluded when current is stable
+    [InlineData("1.0.0", "1.1.0-alpha.1", false)] // Prerelease target is excluded when current is stable
     public void IsNonBreakingUpgrade_EvaluatesCorrectly(string current, string target, bool expected)
     {
         var result = NodeReleaseService.IsNonBreakingUpgrade(current, target);
@@ -93,7 +95,8 @@ public class SpotifyNodeReleaseTests
         var service = CreateReleaseService(json);
 
         var resolved = await service.ResolveInitialSpotifyVersionAsync(new[] { "0.3.0" });
-        Assert.Equal("0.3.2", resolved);
+        Assert.Equal("0.3.2", resolved.Version);
+        Assert.Equal("0.3.2", resolved.ImageTagToSpawn);
     }
 
     [Fact]
@@ -102,7 +105,8 @@ public class SpotifyNodeReleaseTests
         var service = CreateFailingReleaseService();
 
         var resolved = await service.ResolveInitialSpotifyVersionAsync(new[] { "0.3.5", "0.3.1" });
-        Assert.Equal("0.3.5", resolved);
+        Assert.Equal("0.3.5", resolved.Version);
+        Assert.Equal("0.3.5", resolved.ImageTagToSpawn);
     }
 
     [Fact]
@@ -115,7 +119,39 @@ public class SpotifyNodeReleaseTests
         var service = CreateReleaseService(json);
 
         var resolved = await service.ResolveInitialSpotifyVersionAsync(new[] { "0.3.1" });
-        Assert.Equal("0.3.2", resolved);
+        Assert.Equal("0.3.2", resolved.Version);
+        Assert.Equal("0.3.2", resolved.ImageTagToSpawn);
+    }
+
+    [Fact]
+    public async Task ResolveInitialSpotifyVersionAsync_IgnoresPrereleasesOnGitHub_WhenBaselineIsStable()
+    {
+        var json = @"[
+            { ""tag_name"": ""v0.3.3-rc.1"", ""name"": ""0.3.3-rc.1"", ""draft"": false, ""prerelease"": true },
+            { ""tag_name"": ""v0.3.2"", ""name"": ""0.3.2"", ""draft"": false, ""prerelease"": false }
+        ]";
+        var service = CreateReleaseService(json);
+
+        var resolved = await service.ResolveInitialSpotifyVersionAsync(new[] { "0.3.1" });
+        Assert.Equal("0.3.2", resolved.Version);
+        Assert.Equal("0.3.2", resolved.ImageTagToSpawn);
+    }
+
+    [Fact]
+    public async Task ResolveInitialSpotifyVersionAsync_IgnoresPrereleaseFleetVersions_WhenConfiguredIsStable()
+    {
+        var inMemorySettings = new Dictionary<string, string?>
+        {
+            { "SPOTIFY_NODE_IMAGE", "ghcr.io/slaesh/librespot-server:0.3.0" }
+        };
+        IConfiguration config = new ConfigurationBuilder()
+            .AddInMemoryCollection(inMemorySettings)
+            .Build();
+
+        var service = CreateFailingReleaseService(config);
+        var resolved = await service.ResolveInitialSpotifyVersionAsync(new[] { "0.3.5-rc.1" });
+        Assert.Equal("0.3.0", resolved.Version);
+        Assert.Null(resolved.ImageTagToSpawn);
     }
 
     [Fact]
@@ -125,7 +161,8 @@ public class SpotifyNodeReleaseTests
 
         var resolved = await service.ResolveInitialSpotifyVersionAsync(null);
         var expected = AudioOrchestrator.Contracts.OrchestratorConstants.ExtractImageTag(AudioOrchestrator.Contracts.OrchestratorConstants.DefaultSpotifyNodeImage);
-        Assert.Equal(expected, resolved);
+        Assert.Equal(expected, resolved.Version);
+        Assert.Null(resolved.ImageTagToSpawn);
     }
 
     [Fact]
@@ -141,7 +178,27 @@ public class SpotifyNodeReleaseTests
 
         var service = CreateFailingReleaseService(config);
         var resolved = await service.ResolveInitialSpotifyVersionAsync(null);
-        Assert.Equal("0.5.2", resolved);
+        Assert.Equal("0.5.2", resolved.Version);
+        Assert.Null(resolved.ImageTagToSpawn);
+    }
+
+    [Theory]
+    [InlineData("ghcr.io/slaesh/librespot-server:latest", "latest")]
+    [InlineData("ghcr.io/slaesh/librespot-server:v0.5.2", "0.5.2")]
+    public async Task ResolveInitialSpotifyVersionAsync_PreservesConfiguredImageReferenceVerbatim(string configuredImage, string expectedVersion)
+    {
+        var inMemorySettings = new Dictionary<string, string?>
+        {
+            { "SPOTIFY_NODE_IMAGE", configuredImage }
+        };
+        IConfiguration config = new ConfigurationBuilder()
+            .AddInMemoryCollection(inMemorySettings)
+            .Build();
+
+        var service = CreateFailingReleaseService(config);
+        var resolved = await service.ResolveInitialSpotifyVersionAsync(null);
+        Assert.Equal(expectedVersion, resolved.Version);
+        Assert.Null(resolved.ImageTagToSpawn);
     }
 
     private static NodeReleaseService CreateReleaseService(string githubResponseJson, IConfiguration? config = null)

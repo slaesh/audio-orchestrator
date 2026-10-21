@@ -17,19 +17,20 @@ public class FullStateBuilder
     private readonly INodeReleaseService? _nodeReleaseService;
     private readonly ISpotifyNodeReleaseService? _spotifyReleaseService;
     private readonly IDockerClient? _dockerClient;
+    private readonly IConfiguration? _configuration;
 
     public FullStateBuilder(OrchestratorDbContext db, ISnapcastService snapcast)
-        : this(db, snapcast, null, null, null)
+        : this(db, snapcast, null, null, null, null)
     {
     }
 
     public FullStateBuilder(OrchestratorDbContext db, ISnapcastService snapcast, ISpotifyNodeReleaseService? releaseService)
-        : this(db, snapcast, releaseService as INodeReleaseService, releaseService, null)
+        : this(db, snapcast, releaseService as INodeReleaseService, releaseService, null, null)
     {
     }
 
     public FullStateBuilder(OrchestratorDbContext db, ISnapcastService snapcast, INodeReleaseService? nodeReleaseService)
-        : this(db, snapcast, nodeReleaseService, nodeReleaseService as ISpotifyNodeReleaseService, null)
+        : this(db, snapcast, nodeReleaseService, nodeReleaseService as ISpotifyNodeReleaseService, null, null)
     {
     }
 
@@ -38,13 +39,15 @@ public class FullStateBuilder
         ISnapcastService snapcast, 
         INodeReleaseService? nodeReleaseService, 
         ISpotifyNodeReleaseService? spotifyReleaseService,
-        IDockerClient? dockerClient = null)
+        IDockerClient? dockerClient = null,
+        IConfiguration? configuration = null)
     {
         _db = db;
         _snapcast = snapcast;
         _nodeReleaseService = nodeReleaseService ?? (spotifyReleaseService as INodeReleaseService);
         _spotifyReleaseService = spotifyReleaseService ?? (_nodeReleaseService as ISpotifyNodeReleaseService);
         _dockerClient = dockerClient;
+        _configuration = configuration;
     }
 
     public virtual async Task<FullStateDto> BuildAsync()
@@ -99,7 +102,7 @@ public class FullStateBuilder
             }
 
             var currentVersion = string.IsNullOrWhiteSpace(source.CurrentVersion)
-                ? OrchestratorConstants.ExtractImageTag(OrchestratorConstants.DefaultSpotifyNodeImage)
+                ? OrchestratorConstants.ExtractImageTag(_configuration?["SPOTIFY_NODE_IMAGE"] ?? OrchestratorConstants.DefaultSpotifyNodeImage)
                 : source.CurrentVersion;
 
             string? latestCompatible = null;

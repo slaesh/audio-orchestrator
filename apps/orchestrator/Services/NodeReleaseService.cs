@@ -12,12 +12,14 @@ public interface INodeReleaseService
     Task<IReadOnlyList<NodeReleaseDto>> GetReleaseHistoryAsync(string repository, string currentVersion, string? targetVersion = null);
 }
 
+public record InitialSpotifyVersionResult(string Version, string? ImageTagToSpawn);
+
 public interface ISpotifyNodeReleaseService
 {
     Task<IReadOnlyList<SpotifyReleaseDto>> GetReleasesAsync(string? currentVersion = null, bool forceRefresh = false);
     Task<string?> GetLatestCompatibleVersionAsync(string currentVersion);
     Task<IReadOnlyList<SpotifyReleaseDto>> GetReleaseHistoryAsync(string currentVersion, string? targetVersion = null);
-    Task<string> ResolveInitialSpotifyVersionAsync(IEnumerable<string>? existingVersions = null);
+    Task<InitialSpotifyVersionResult> ResolveInitialSpotifyVersionAsync(IEnumerable<string>? existingVersions = null);
 }
 
 public class NodeReleaseService : INodeReleaseService, ISpotifyNodeReleaseService
@@ -54,44 +56,60 @@ public class NodeReleaseService : INodeReleaseService, ISpotifyNodeReleaseServic
         return list.Select(r => new SpotifyReleaseDto(r.TagName, r.Version, r.Name, r.Body, r.PublishedAt, r.IsCompatible, r.Url)).ToList();
     }
 
-    public async Task<string> ResolveInitialSpotifyVersionAsync(IEnumerable<string>? existingVersions = null)
+    public async Task<InitialSpotifyVersionResult> ResolveInitialSpotifyVersionAsync(IEnumerable<string>? existingVersions = null)
     {
         var baseImage = _configuration?["SPOTIFY_NODE_IMAGE"] ?? OrchestratorConstants.DefaultSpotifyNodeImage;
-        var defaultVersion = OrchestratorConstants.ExtractImageTag(baseImage);
-        var parsedBaseline = ParseSemVer(defaultVersion) ?? new SemVer(0, 0, 0, null);
+        var defaultVersion = OrchestratorConstants.ExtractImageTag(baseImage, defaultVersion: "");
+        var parsedConfigured = ParseSemVer(defaultVersion);
+        var parsedBaseline = parsedConfigured;
 
+        string? highestFleetVersion = null;
         if (existingVersions != null)
         {
             foreach (var vStr in existingVersions)
             {
                 var parsed = ParseSemVer(vStr);
-                if (parsed != null && parsed.CompareTo(parsedBaseline) > 0)
+                if (parsed == null) continue;
+
+                // When configured image is stable (or unversioned), ignore prereleases from fleet baseline
+                if (parsedConfigured?.Prerelease == null && parsed.Prerelease != null) continue;
+
+                if (parsedBaseline == null || parsed.CompareTo(parsedBaseline) > 0)
                 {
                     parsedBaseline = parsed;
+                    highestFleetVersion = parsed.ToString();
                 }
             }
         }
 
-        var baselineStr = parsedBaseline.ToString();
-
-        try
+        if (parsedBaseline != null)
         {
-            var latestCompatible = await GetLatestCompatibleVersionAsync(OrchestratorConstants.SpotifyRepository, baselineStr);
-            if (!string.IsNullOrWhiteSpace(latestCompatible))
+            var baselineStr = parsedBaseline.ToString();
+            try
             {
-                var parsedLatest = ParseSemVer(latestCompatible);
-                if (parsedLatest != null && parsedLatest.CompareTo(parsedBaseline) > 0)
+                var latestCompatible = await GetLatestCompatibleVersionAsync(OrchestratorConstants.SpotifyRepository, baselineStr);
+                if (!string.IsNullOrWhiteSpace(latestCompatible))
                 {
-                    return latestCompatible;
+                    var parsedLatest = ParseSemVer(latestCompatible);
+                    if (parsedLatest != null && parsedLatest.CompareTo(parsedBaseline) > 0)
+                    {
+                        return new InitialSpotifyVersionResult(latestCompatible, latestCompatible);
+                    }
                 }
             }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to query latest compatible version for initial Spotify node. Falling back to fleet baseline {Baseline}", baselineStr);
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to query latest compatible version for initial Spotify node. Falling back to fleet baseline {Baseline}", baselineStr);
+            }
+
+            if (highestFleetVersion != null)
+            {
+                return new InitialSpotifyVersionResult(highestFleetVersion, highestFleetVersion);
+            }
         }
 
-        return baselineStr;
+        var effectiveVersion = parsedConfigured?.ToString() ?? defaultVersion;
+        return new InitialSpotifyVersionResult(effectiveVersion, null);
     }
 
     // INodeReleaseService implementation
@@ -169,6 +187,8 @@ public class NodeReleaseService : INodeReleaseService, ISpotifyNodeReleaseServic
     private static IReadOnlyList<NodeReleaseDto> MapToDtos(IEnumerable<GitHubReleaseRaw> rawReleases, string? currentVersion)
     {
         var list = new List<NodeReleaseDto>();
+        var curSemVer = string.IsNullOrWhiteSpace(currentVersion) ? null : ParseSemVer(currentVersion);
+
         foreach (var r in rawReleases)
         {
             if (r.Draft) continue;
@@ -180,7 +200,15 @@ public class NodeReleaseService : INodeReleaseService, ISpotifyNodeReleaseServic
             bool isCompatible = false;
             if (!string.IsNullOrWhiteSpace(currentVersion))
             {
-                isCompatible = IsNonBreakingUpgrade(currentVersion, cleanVersion);
+                var isTargetPrerelease = r.Prerelease || (ParseSemVer(cleanVersion)?.Prerelease != null);
+                if (curSemVer?.Prerelease == null && isTargetPrerelease)
+                {
+                    isCompatible = false;
+                }
+                else
+                {
+                    isCompatible = IsNonBreakingUpgrade(currentVersion, cleanVersion);
+                }
             }
 
             list.Add(new NodeReleaseDto(
@@ -206,6 +234,9 @@ public class NodeReleaseService : INodeReleaseService, ISpotifyNodeReleaseServic
 
         // Target must be strictly newer
         if (target.CompareTo(current) <= 0) return false;
+
+        // If current is not a prerelease, do not treat prerelease target as a compatible/non-breaking upgrade
+        if (current.Prerelease == null && target.Prerelease != null) return false;
 
         // SemVer 2.0 rules:
         // For Major == 0 (0.x.y): Minor bumps are breaking changes!
