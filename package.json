@@ -1,6 +1,6 @@
 {
   "name": "audio-orchestrator",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "scripts": {
     "generate-api": "dotnet build apps/orchestrator && npx --yes @openapitools/openapi-generator-cli generate && node scripts/postprocess-api.mjs",
     "generate-spotify-node-client": "docker run --rm -v \"$(pwd):/src\" -w /src mcr.microsoft.com/dotnet/sdk:10.0 bash -c 'dotnet tool install --global NSwag.ConsoleCore --version 14.2.0 && /root/.dotnet/tools/nswag openapi2csclient /input:${OPENAPI_SPEC:-https://github.com/slaesh/librespot-server/releases/download/v0.3.0/openapi.json} /output:apps/orchestrator/Services/Generated/SpotifyNodeOpenApiClient.cs /namespace:AudioOrchestrator.Services.Generated /className:SpotifyNodeOpenApiClient /OperationGenerationMode:SingleClientFromOperationId /UseBaseUrl:true /InjectHttpClient:true /GenerateClientInterfaces:true /JsonLibrary:SystemTextJson /GenerateNullableReferenceTypes:true'"
