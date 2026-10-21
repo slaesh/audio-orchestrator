@@ -50,10 +50,6 @@ export class SettingsDialogComponent {
     this.selectedProfile.set(profile);
   }
 
-  toggleShowRaw() {
-    this.showRaw.update((v) => !v);
-  }
-
   async saveAndClose() {
     this.saving.set(true);
     try {

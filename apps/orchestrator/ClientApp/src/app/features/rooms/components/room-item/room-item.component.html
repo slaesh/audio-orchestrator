@@ -75,7 +75,7 @@
       (zSlideIndexChange)="showMix() ? handleMixChange($event) : handleVolumeChange($event)"
     />
     <div 
-      class="flex items-center gap-1 min-w-[32px] justify-end"
+      class="flex items-center gap-1 shrink-0 justify-end"
       [title]="data.showRawVolume() && data.volumeProfile() === 'cubic' ? ('Snapcast Output: ' + room().volumePercent + '%') : ''"
     >
       <span class="text-[10px] font-mono text-muted-foreground text-right">
