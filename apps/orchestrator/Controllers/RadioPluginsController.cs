@@ -135,6 +135,7 @@ public class RadioPluginsController : ControllerBase
             Enabled = request.Enabled,
             CreatedAt = DateTime.UtcNow
         };
+        entity.CurrentVersion = entity.GetEffectiveVersion();
         entity.SetUrlPatterns(request.UrlPatterns ?? new List<string>());
 
         _db.RadioPlugins.Add(entity);
@@ -181,7 +182,13 @@ public class RadioPluginsController : ControllerBase
         }
 
         entity.Name = request.Name.Trim();
+        var imageChanged = !string.Equals(entity.DockerImage, request.DockerImage.Trim(), StringComparison.OrdinalIgnoreCase);
         entity.DockerImage = request.DockerImage.Trim();
+        if (imageChanged)
+        {
+            entity.CurrentVersion = "";
+            entity.CurrentVersion = entity.GetEffectiveVersion();
+        }
         entity.GitHubRepository = string.IsNullOrWhiteSpace(request.GitHubRepository) ? null : request.GitHubRepository.Trim();
         entity.Enabled = request.Enabled;
         entity.SetUrlPatterns(request.UrlPatterns ?? new List<string>());

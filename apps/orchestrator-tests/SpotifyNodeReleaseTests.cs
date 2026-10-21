@@ -201,6 +201,42 @@ public class SpotifyNodeReleaseTests
         Assert.Null(resolved.ImageTagToSpawn);
     }
 
+    [Theory]
+    [InlineData("ghcr.io/slaesh/librespot-server:latest", "latest")]
+    [InlineData("ghcr.io/slaesh/librespot-server:v0.5.2", "0.5.2")]
+    [InlineData("ghcr.io/slaesh/librespot-server:0.3.1", "0.3.1")]
+    [InlineData("ghcr.io/slaesh/librespot-server", "0.0.0")]
+    [InlineData(null, "default")]
+    [InlineData("", "default")]
+    [InlineData("localhost:5000/image:1.2.3", "1.2.3")]
+    public void ExtractImageTag_HandlesAllEdgeCases(string? image, string expected)
+    {
+        var result = AudioOrchestrator.Contracts.OrchestratorConstants.ExtractImageTag(image, defaultVersion: expected == "default" ? "default" : "0.0.0");
+        Assert.Equal(expected, result);
+    }
+
+    [Fact]
+    public async Task GetReleasesAsync_PrereleaseMarkedIncompatible_WhenBaselineIsStable()
+    {
+        var json = @"[
+            { ""tag_name"": ""v0.3.2-rc.1"", ""name"": ""0.3.2-rc.1"", ""draft"": false, ""prerelease"": false },
+            { ""tag_name"": ""v0.3.3"", ""name"": ""0.3.3"", ""draft"": false, ""prerelease"": true },
+            { ""tag_name"": ""v0.3.4"", ""name"": ""0.3.4"", ""draft"": false, ""prerelease"": false }
+        ]";
+        var service = CreateReleaseService(json);
+
+        var releases = await service.GetReleasesAsync("slaesh/librespot-server", currentVersion: "0.3.1");
+
+        var r1 = releases.First(r => r.Version == "0.3.2-rc.1");
+        Assert.False(r1.IsCompatible);
+
+        var r2 = releases.First(r => r.Version == "0.3.3");
+        Assert.False(r2.IsCompatible);
+
+        var r3 = releases.First(r => r.Version == "0.3.4");
+        Assert.True(r3.IsCompatible);
+    }
+
     private static NodeReleaseService CreateReleaseService(string githubResponseJson, IConfiguration? config = null)
     {
         var handler = new TestHandler(_ => new HttpResponseMessage(System.Net.HttpStatusCode.OK)

@@ -18,7 +18,7 @@ public class RadioPluginEntity
 
     public bool Enabled { get; set; } = true;
 
-    public string CurrentVersion { get; set; } = "0.1.0";
+    public string CurrentVersion { get; set; } = "";
 
     public string? GitHubRepository { get; set; }
 
