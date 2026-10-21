@@ -99,6 +99,16 @@ if (!isDesignOrDocumentGen)
         db.RadioPlugins.Add(audalaxyPlugin);
         db.SaveChanges();
     }
+
+    if (!db.Settings.Any())
+    {
+        db.Settings.Add(new AudioOrchestrator.Data.Entities.OrchestratorSettingsEntity
+        {
+            Id = "default",
+            VolumeProfile = AudioOrchestrator.Contracts.VolumeProfile.Cubic
+        });
+        db.SaveChanges();
+    }
 }
 
 app.MapOpenApi();

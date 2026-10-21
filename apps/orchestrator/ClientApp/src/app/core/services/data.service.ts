@@ -16,6 +16,9 @@ import {
   SpotifySourceDto,
   SpotifyReleaseDto,
   NodeReleaseDto,
+  SettingsService,
+  UpdateSettingsRequest,
+  VolumeProfile,
 } from '@api';
 import {
   asyncScheduler,
@@ -50,6 +53,12 @@ export class DataService {
   public radioPlugins = computed<RadioPluginDto[]>(
     () => this.stateSignal()?.radioPlugins || [],
   );
+  public volumeProfile = computed<VolumeProfile>(
+    () => this.stateSignal()?.volumeProfile || 'cubic',
+  );
+  public showRawVolume = signal<boolean>(
+    localStorage.getItem('orch_show_raw_volume') === 'true',
+  );
 
   public allListIds = computed(() => {
     const state = this.stateSignal();
@@ -68,6 +77,7 @@ export class DataService {
   private fullStateApi = inject(FullStateService);
   private spotifyApi = inject(SpotifySourcesService);
   private radioPluginsApi = inject(RadioPluginsService);
+  private settingsApi = inject(SettingsService);
 
   private volumeUpdate$ = new Subject<{
     id: string;
@@ -221,7 +231,7 @@ export class DataService {
 
     const newUnassigned = state.unassignedRooms.map((room) => {
       if (room.id !== roomId) return room;
-      return { ...room, volumePercent: percent, volumeMuted: muted, mixVolume: percent };
+      return { ...room, volumePercent: percent, volumeMuted: muted };
     });
 
     this.stateSignal.set({
@@ -463,8 +473,33 @@ export class DataService {
   }
 
   async setRoomVolume(id: string, percent: number, muted: boolean) {
+    this.patchRoomMix(id, percent);
     this.patchRoomVolume(id, percent, muted);
     this.volumeUpdate$.next({ id, percent, muted });
+  }
+
+  setShowRawVolume(show: boolean) {
+    this.showRawVolume.set(show);
+    try {
+      localStorage.setItem('orch_show_raw_volume', show ? 'true' : 'false');
+    } catch {}
+  }
+
+  async setVolumeProfile(profile: VolumeProfile) {
+    try {
+      await firstValueFrom(
+        this.settingsApi.apiSettingsPut({ volumeProfile: profile }),
+      );
+      const curr = this.stateSignal();
+      if (curr) {
+        this.stateSignal.set({ ...curr, volumeProfile: profile });
+      }
+      this.toast.success(
+        `Lautstärkeprofil auf "${profile === 'cubic' ? 'Kubisch' : 'Linear'}" geändert`,
+      );
+    } catch (e) {
+      this.toast.error('Fehler beim Aktualisieren des Lautstärkeprofils');
+    }
   }
 
   async setGroupVolume(id: string, percent: number, muted: boolean) {

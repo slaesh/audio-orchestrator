@@ -1103,6 +1103,48 @@
         }
       }
     },
+    "/api/Settings": {
+      "get": {
+        "tags": [
+          "Settings"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Settings"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateSettingsRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateSettingsRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateSettingsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
     "/api/SpotifySources": {
       "get": {
         "tags": [
@@ -1674,6 +1716,9 @@
             "items": {
               "$ref": "#/components/schemas/RadioPluginDto"
             }
+          },
+          "volumeProfile": {
+            "$ref": "#/components/schemas/VolumeProfile"
           }
         }
       },
@@ -2331,6 +2376,17 @@
           }
         }
       },
+      "UpdateSettingsRequest": {
+        "required": [
+          "volumeProfile"
+        ],
+        "type": "object",
+        "properties": {
+          "volumeProfile": {
+            "$ref": "#/components/schemas/VolumeProfile"
+          }
+        }
+      },
       "UpdateSourceRequest": {
         "type": "object",
         "properties": {
@@ -2353,6 +2409,13 @@
             ]
           }
         }
+      },
+      "VolumeProfile": {
+        "enum": [
+          "cubic",
+          "linear"
+        ],
+        "default": "cubic"
       },
       "VolumeRequest": {
         "type": "object",
@@ -2479,6 +2542,9 @@
     },
     {
       "name": "Rooms"
+    },
+    {
+      "name": "Settings"
     },
     {
       "name": "SpotifySources"

@@ -2,6 +2,9 @@
 /* eslint-disable */
 /* tslint:disable */
 
+/** Transpiled from AudioOrchestrator.Contracts.VolumeProfile */
+export type VolumeProfile = "cubic" | "linear";
+
 /** Transpiled from AudioOrchestrator.Contracts.RoomDto */
 export type RoomDto = {
     /** Transpiled from string */
@@ -94,6 +97,12 @@ export type SpotifyReleaseDto = {
     isCompatible: boolean;
     /** Transpiled from string? */
     url?: string;
+}
+
+/** Transpiled from AudioOrchestrator.Contracts.UpdateSettingsRequest */
+export type UpdateSettingsRequest = {
+    /** Transpiled from AudioOrchestrator.Contracts.VolumeProfile */
+    volumeProfile: VolumeProfile;
 }
 
 /** Transpiled from AudioOrchestrator.Contracts.NodeUpgradeRequest */
@@ -258,6 +267,8 @@ export type FullStateDto = {
     snapcastStreams: StreamDto[];
     /** Transpiled from System.Collections.Generic.List<AudioOrchestrator.Contracts.RadioPluginDto>? */
     radioPlugins?: RadioPluginDto[];
+    /** Transpiled from AudioOrchestrator.Contracts.VolumeProfile */
+    volumeProfile: VolumeProfile;
 }
 
 /** Transpiled from AudioOrchestrator.Contracts.SpotifyMetadataDto */

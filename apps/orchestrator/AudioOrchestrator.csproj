@@ -37,7 +37,7 @@
   </ItemGroup>
 
   <Target Name="GenerateTypeScript" AfterTargets="Build" Condition="'$(DOTNET_RUNNING_IN_CONTAINER)' != 'true'">
-    <Exec Command="dotnet dotnet-tsrts --project $(MSBuildProjectFullPath) --output ClientApp/src/app/core/signalr/ --asm true --attr true --enum Name"/>
+    <Exec Command="dotnet dotnet-tsrts --project $(MSBuildProjectFullPath) --output ClientApp/src/app/core/signalr/ --asm true --attr true --enum UnionCamel"/>
   </Target>
 
 </Project>

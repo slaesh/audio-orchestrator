@@ -43,6 +43,20 @@ namespace AudioOrchestrator.Migrations
                     b.ToTable("Groups");
                 });
 
+            modelBuilder.Entity("AudioOrchestrator.Data.Entities.OrchestratorSettingsEntity", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("VolumeProfile")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("Settings");
+                });
+
             modelBuilder.Entity("AudioOrchestrator.Data.Entities.RadioPluginEntity", b =>
                 {
                     b.Property<string>("Id")

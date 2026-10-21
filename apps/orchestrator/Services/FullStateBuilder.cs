@@ -283,7 +283,10 @@ public class FullStateBuilder
                 }
             }
         }
-        return new FullStateDto(groupDtos, unassignedRooms, radioDtos, spotifySourceDtos, snapcastStreamDtos, pluginDtos);
+        var settings = await _db.Settings.FirstOrDefaultAsync();
+        var volumeProfile = settings?.VolumeProfile ?? VolumeProfile.Cubic;
+
+        return new FullStateDto(groupDtos, unassignedRooms, radioDtos, spotifySourceDtos, snapcastStreamDtos, pluginDtos, volumeProfile);
     }
 
     private RoomDto? BuildRoomDto(JsonNode? clientNode, List<RoomEntity> rooms)

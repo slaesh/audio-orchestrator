@@ -95,8 +95,12 @@ public class RoomsController : ControllerBase
             room.MixVolume = req.Percent;
             await _db.SaveChangesAsync();
 
-            await _snapcast.SetClientVolumeAsync(id, req.Percent, req.Muted);
-            await _hub.Clients.All.OnRoomVolumeChanged(id, req.Percent, req.Muted);
+            var settings = await _db.Settings.FirstOrDefaultAsync();
+            var profile = settings?.VolumeProfile ?? AudioOrchestrator.Contracts.VolumeProfile.Cubic;
+            int snapcastVolume = VolumeOrchestratorService.CalculateSnapcastVolume(req.Percent, 100, profile);
+
+            await _snapcast.SetClientVolumeAsync(id, snapcastVolume, req.Muted);
+            await _hub.Clients.All.OnRoomVolumeChanged(id, snapcastVolume, req.Muted);
         }
         else
         {
