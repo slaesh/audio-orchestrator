@@ -221,7 +221,7 @@ export class DataService {
 
     const newUnassigned = state.unassignedRooms.map((room) => {
       if (room.id !== roomId) return room;
-      return { ...room, volumePercent: percent, volumeMuted: muted };
+      return { ...room, volumePercent: percent, volumeMuted: muted, mixVolume: percent };
     });
 
     this.stateSignal.set({

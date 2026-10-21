@@ -304,7 +304,7 @@ public class FullStateBuilder
 
         var connected = clientNode["connected"]?.GetValue<bool>() ?? false;
         var volumePercent = clientNode["config"]?["volume"]?["percent"]?.GetValue<int>() ?? 0;
-        var volumeMuted = clientNode["config"]?["volume"]?["muted"]?.GetValue<bool>() ?? false;
+        var volumeMuted = (roomEntity?.IsMuted ?? false) || (clientNode["config"]?["volume"]?["muted"]?.GetValue<bool>() ?? false);
         var mixVolume = roomEntity?.MixVolume ?? 100;
 
         return new RoomDto(id, name, friendlyName, hostName, connected, volumePercent, volumeMuted, mixVolume);

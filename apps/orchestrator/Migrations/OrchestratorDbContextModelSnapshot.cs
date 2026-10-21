@@ -117,6 +117,9 @@ namespace AudioOrchestrator.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("IsMuted")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("MixVolume")
                         .HasColumnType("INTEGER");
 

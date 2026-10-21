@@ -68,8 +68,43 @@ public class RoomsController : ControllerBase
     [HttpPut("{id}/volume")]
     public async Task<IActionResult> SetVolume(string id, [FromBody] VolumeRequest req)
     {
-        await _snapcast.SetClientVolumeAsync(id, req.Percent, req.Muted);
-        await _hub.Clients.All.OnRoomVolumeChanged(id, req.Percent, req.Muted);
+        var room = await _db.Rooms.FindAsync(id);
+        if (room == null)
+        {
+            room = new RoomEntity { MacAddress = id, FriendlyName = id, MixVolume = req.Percent, IsMuted = req.Muted };
+            _db.Rooms.Add(room);
+        }
+        else
+        {
+            room.IsMuted = req.Muted;
+        }
+
+        // Check if room belongs to an orchestrated group
+        var status = await _snapcast.GetStatusAsync();
+        var snapGroups = status?["server"]?["groups"]?.AsArray();
+        var currentSnapGroup = snapGroups?.FirstOrDefault(g => 
+            g?["clients"]?.AsArray()?.Any(c => c?["id"]?.GetValue<string>() == id) ?? false);
+        var snapGroupId = currentSnapGroup?["id"]?.GetValue<string>();
+        var dbGroup = !string.IsNullOrEmpty(snapGroupId) 
+            ? await _db.Groups.FirstOrDefaultAsync(g => g.SnapcastGroupId == snapGroupId) 
+            : null;
+
+        if (dbGroup == null)
+        {
+            // Unassigned room: mix volume is 1:1 with volume
+            room.MixVolume = req.Percent;
+            await _db.SaveChangesAsync();
+
+            await _snapcast.SetClientVolumeAsync(id, req.Percent, req.Muted);
+            await _hub.Clients.All.OnRoomVolumeChanged(id, req.Percent, req.Muted);
+        }
+        else
+        {
+            await _db.SaveChangesAsync();
+            // In an orchestrated group, recalculate to combine room.IsMuted with group.IsMuted
+            await _volumeOrchestrator.RecalculateAndPushGroupAsync(dbGroup.Id);
+        }
+
         return Ok();
     }
 

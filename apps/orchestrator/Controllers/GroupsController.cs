@@ -226,6 +226,13 @@ public class GroupsController : ControllerBase
                     _logger.LogWarning($"Failure setting stream for {snapcastGroupId}: {ex.Message}. It will be auto-corrected by background reconciliation.");
                 }
             }
+
+            // 6. VOLUME PHASE: Recalculate and push group volume to the newly assigned clients
+            try {
+                await _volumeOrchestrator.RecalculateAndPushGroupAsync(group.Id);
+            } catch (Exception ex) {
+                _logger.LogWarning($"Failure recalculating group volume for {group.Id}: {ex.Message}");
+            }
         } catch (Exception ex) {
             _logger.LogWarning($"Assignment confirmation check failed: {ex.Message}. The room likely moved successfully; background reconciliation will verify.");
         }

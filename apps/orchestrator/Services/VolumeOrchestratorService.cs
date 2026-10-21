@@ -120,9 +120,9 @@ public class VolumeOrchestratorService
             }
         }
 
-        // If not in a group, just push absolute volume (1:1 with mix)
-        await _snapcast.SetClientVolumeAsync(roomMac, mixVolume, false);
-        await _hub.Clients.All.OnRoomVolumeChanged(roomMac, mixVolume, false);
+        // If not in a group, just push absolute volume (1:1 with mix) and preserve room mute
+        await _snapcast.SetClientVolumeAsync(roomMac, mixVolume, room.IsMuted);
+        await _hub.Clients.All.OnRoomVolumeChanged(roomMac, mixVolume, room.IsMuted);
     }
 
     public virtual async Task RecalculateAndPushGroupAsync(string groupId)
@@ -148,6 +148,10 @@ public class VolumeOrchestratorService
 
             var roomEntity = roomsFromDb.FirstOrDefault(r => r.MacAddress == mac);
             var mixVolume = roomEntity?.MixVolume ?? 100;
+            var isRoomMuted = roomEntity?.IsMuted ?? false;
+
+            // Effective mute: Group mute OR individual room mute
+            bool effectiveMuted = group.IsMuted || isRoomMuted;
 
             // ActualSnapcastVolume = (MixVolume / 100) * (MasterVolume / 100) * 100
             double calculated = (mixVolume / 100.0) * (group.MasterVolume / 100.0) * 100.0;
@@ -156,8 +160,8 @@ public class VolumeOrchestratorService
             // Cap at 0-100
             finalVolume = Math.Clamp(finalVolume, 0, 100);
 
-            await _snapcast.SetClientVolumeAsync(mac, finalVolume, group.IsMuted);
-            await _hub.Clients.All.OnRoomVolumeChanged(mac, finalVolume, group.IsMuted);
+            await _snapcast.SetClientVolumeAsync(mac, finalVolume, effectiveMuted);
+            await _hub.Clients.All.OnRoomVolumeChanged(mac, finalVolume, effectiveMuted);
         }
     }
 }
