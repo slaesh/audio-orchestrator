@@ -83,7 +83,7 @@ public class FullStateBuilder
         foreach (var source in spotifySources)
         {
             var ss = snapStreams?.FirstOrDefault(s => s?["id"]?.GetValue<string>() == $"{OrchestratorConstants.SpotifyPrefix}{source.Id}");
-            var st = ss?["status"]?.GetValue<string>() ?? "idle";
+            var st = ParseStreamStatus(ss?["status"]?.GetValue<string>());
             
             List<SpotifyRecentContextDto>? recents = null;
             if (!string.IsNullOrEmpty(source.RecentContextsJson))
@@ -176,7 +176,7 @@ public class FullStateBuilder
         {
             // We find the corresponding snapcast stream for status
             var ss = snapStreams?.FirstOrDefault(s => s?["id"]?.GetValue<string>() == $"{OrchestratorConstants.RadioPrefix}{radio.Id}");
-            var st = ss?["status"]?.GetValue<string>() ?? "idle";
+            var st = ParseStreamStatus(ss?["status"]?.GetValue<string>());
 
             var matchedPlugin = pluginsFromDb.FirstOrDefault(p => p.Enabled && p.GetUrlPatterns().Any(pattern =>
             {
@@ -233,7 +233,7 @@ public class FullStateBuilder
             foreach (var stream in snapStreams)
             {
                 var id = stream?["id"]?.GetValue<string>() ?? "";
-                var st = stream?["status"]?.GetValue<string>() ?? "idle";
+                var st = ParseStreamStatus(stream?["status"]?.GetValue<string>());
                 snapcastStreamDtos.Add(new StreamDto(id, id, st, null));
             }
         }
@@ -311,5 +311,12 @@ public class FullStateBuilder
         var mixVolume = roomEntity?.MixVolume ?? 100;
 
         return new RoomDto(id, name, friendlyName, hostName, connected, volumePercent, volumeMuted, mixVolume);
+    }
+
+    private static StreamStatus ParseStreamStatus(string? status)
+    {
+        return string.Equals(status, "playing", StringComparison.OrdinalIgnoreCase)
+            ? StreamStatus.Playing
+            : StreamStatus.Idle;
     }
 }

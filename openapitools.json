@@ -27,7 +27,15 @@
           "RadioPluginUpdateRequest": "RadioPluginUpdateRequest",
           "RadioEventPayload": "RadioEventPayload",
           "VolumeProfile": "VolumeProfile",
-          "UpdateSettingsRequest": "UpdateSettingsRequest"
+          "UpdateSettingsRequest": "UpdateSettingsRequest",
+          "StreamStatus": "StreamStatus",
+          "NodeType": "NodeType",
+          "UpgradePhase": "UpgradePhase",
+          "SpotifyReleaseDto": "SpotifyReleaseDto",
+          "NodeReleaseDto": "NodeReleaseDto",
+          "SpotifyRecentContextDto": "SpotifyRecentContextDto",
+          "NodeUpgradeRequest": "NodeUpgradeRequest",
+          "UpgradeSpotifySourceRequest": "UpgradeSpotifySourceRequest"
         },
         "importMappings": {
           "FullStateDto": "@contracts",
@@ -42,7 +50,15 @@
           "RadioPluginUpdateRequest": "@contracts",
           "RadioEventPayload": "@contracts",
           "VolumeProfile": "@contracts",
-          "UpdateSettingsRequest": "@contracts"
+          "UpdateSettingsRequest": "@contracts",
+          "StreamStatus": "@contracts",
+          "NodeType": "@contracts",
+          "UpgradePhase": "@contracts",
+          "SpotifyReleaseDto": "@contracts",
+          "NodeReleaseDto": "@contracts",
+          "SpotifyRecentContextDto": "@contracts",
+          "NodeUpgradeRequest": "@contracts",
+          "UpgradeSpotifySourceRequest": "@contracts"
         }
       }
     }

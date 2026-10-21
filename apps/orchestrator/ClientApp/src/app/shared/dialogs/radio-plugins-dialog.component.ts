@@ -389,7 +389,7 @@ export class RadioPluginsDialogComponent {
 
     this.dialog.open(NodeUpgradeDialogComponent, {
       data: {
-        type: 'radio-plugin',
+        type: 'radioPlugin',
         id: plugin.id,
         name: plugin.name,
         currentVersion: plugin.currentVersion || '0.1.0',

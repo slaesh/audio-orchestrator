@@ -2197,7 +2197,7 @@
             "type": "boolean"
           },
           "status": {
-            "type": "string"
+            "$ref": "#/components/schemas/StreamStatus"
           },
           "masterVolume": {
             "type": "integer",
@@ -2316,7 +2316,7 @@
             "type": "string"
           },
           "status": {
-            "type": "string"
+            "$ref": "#/components/schemas/StreamStatus"
           },
           "url": {
             "type": [
@@ -2375,6 +2375,12 @@
             "default": true
           }
         }
+      },
+      "StreamStatus": {
+        "enum": [
+          "idle",
+          "playing"
+        ]
       },
       "UpdateSettingsRequest": {
         "required": [
