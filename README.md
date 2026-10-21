@@ -5,6 +5,8 @@
 
 Synchronized multi-room audio orchestration system powered by [Snapcast](https://github.com/badaix/snapcast), dynamic [librespot-server](https://github.com/slaesh/librespot-server) containers, and a .NET 10 ASP.NET Core API with an Angular 21 dashboard and kiosk widgets.
 
+![Audio Orchestrator Dashboard](docs/screenshots/20261019_144924_dashboard.png)
+
 ---
 
 ## Architecture Overview
