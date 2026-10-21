@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.0](https://github.com/slaesh/audio-orchestrator/compare/v0.3.0...v0.4.0) (2026-10-21)
+
+
+### Features
+
+* **volume:** selectable cubic and linear volume profiles ([#4](https://github.com/slaesh/audio-orchestrator/issues/4)) ([bf77472](https://github.com/slaesh/audio-orchestrator/commit/bf77472b2c8dab56c0d5307844745409dc6438ac))
+
+
+### Bug Fixes
+
+* **volume:** preserve room mix volume on assignment and persist individual mute states ([47a29db](https://github.com/slaesh/audio-orchestrator/commit/47a29dbe066d56933541475f762d85e8150d7722))
+
 ## [0.3.0](https://github.com/slaesh/audio-orchestrator/compare/v0.2.0...v0.3.0) (2026-10-19)
 
 
