@@ -1,0 +1,154 @@
+<div
+  class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm animate-in fade-in duration-200"
+  (click)="close()"
+>
+  <div
+    class="relative w-full max-w-lg overflow-hidden rounded-2xl border border-border bg-card p-6 shadow-2xl animate-in zoom-in-95 duration-200"
+    (click)="$event.stopPropagation()"
+  >
+    <!-- Header -->
+    <div class="flex items-center justify-between mb-6">
+      <div class="flex items-center gap-3">
+        <div class="size-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
+          <ng-icon name="lucideSettings" size="1.25rem" />
+        </div>
+        <div>
+          <h2 class="text-xl font-bold tracking-tight">Einstellungen</h2>
+          <p class="text-xs text-muted-foreground uppercase tracking-widest font-bold opacity-60">
+            Audio Orchestrator
+          </p>
+        </div>
+      </div>
+      <button
+        type="button"
+        (click)="close()"
+        class="p-1 rounded-md hover:bg-muted transition-colors opacity-50 hover:opacity-100 cursor-pointer"
+        aria-label="Schließen"
+      >
+        <ng-icon name="lucideX" />
+      </button>
+    </div>
+
+    <!-- Content -->
+    <div class="space-y-6">
+      <!-- Volume Profile Selection -->
+      <div>
+        <div class="flex items-center justify-between mb-2">
+          <label class="text-[0.7rem] uppercase font-bold tracking-wider text-muted-foreground/80 flex items-center gap-1.5">
+            <ng-icon name="lucideSlidersHorizontal" size="0.85rem" />
+            Lautstärkeprofil
+          </label>
+        </div>
+        <p class="text-xs text-muted-foreground mb-3">
+          Bestimmt die mathematische Kurve bei der Ansteuerung der Snapcast-Hardware.
+        </p>
+
+        <div class="grid grid-cols-1 gap-2.5">
+          <!-- Cubic Option -->
+          <div
+            (click)="selectProfile('cubic')"
+            class="profile-card relative p-3.5 rounded-xl border transition-all cursor-pointer flex flex-col gap-1.5"
+            [class.border-primary]="selectedProfile() === 'cubic'"
+            [class.bg-primary/5]="selectedProfile() === 'cubic'"
+            [class.border-border]="selectedProfile() !== 'cubic'"
+            [class.hover:border-primary/40]="selectedProfile() !== 'cubic'"
+          >
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <span class="text-sm font-semibold">Kubisch (Natürlich)</span>
+                <span class="text-[10px] px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium flex items-center gap-1">
+                  <ng-icon name="lucideSparkles" size="0.65rem" />
+                  Empfohlen
+                </span>
+              </div>
+              @if (selectedProfile() === 'cubic') {
+                <div class="size-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center">
+                  <ng-icon name="lucideCheck" size="0.75rem" />
+                </div>
+              }
+            </div>
+            <p class="text-xs text-muted-foreground leading-relaxed">
+              Kompensiert die logarithmische Wahrnehmung des menschlichen Gehörs (Stevens’sches Potenzgesetz, \(x^3\)).
+              Ermöglicht eine feinfühlige Regelung im leisen und mittleren Bereich.
+            </p>
+            <div class="text-[11px] font-mono text-muted-foreground/70 flex items-center gap-2 pt-1 border-t border-border/40">
+              <span>Kurve: f(x) = x³</span>
+              <span>•</span>
+              <span>50% Slider &rarr; 13% Hardware (-18 dB)</span>
+            </div>
+          </div>
+
+          <!-- Linear Option -->
+          <div
+            (click)="selectProfile('linear')"
+            class="profile-card relative p-3.5 rounded-xl border transition-all cursor-pointer flex flex-col gap-1.5"
+            [class.border-primary]="selectedProfile() === 'linear'"
+            [class.bg-primary/5]="selectedProfile() === 'linear'"
+            [class.border-border]="selectedProfile() !== 'linear'"
+            [class.hover:border-primary/40]="selectedProfile() !== 'linear'"
+          >
+            <div class="flex items-center justify-between">
+              <span class="text-sm font-semibold">Linear (Rohwerte)</span>
+              @if (selectedProfile() === 'linear') {
+                <div class="size-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center">
+                  <ng-icon name="lucideCheck" size="0.75rem" />
+                </div>
+              }
+            </div>
+            <p class="text-xs text-muted-foreground leading-relaxed">
+              Gibt den Reglerwert 1:1 direkt an Snapcast weiter. Klassisches Verhalten für Rohpegel oder externe Vorverstärker.
+            </p>
+            <div class="text-[11px] font-mono text-muted-foreground/70 flex items-center gap-2 pt-1 border-t border-border/40">
+              <span>Kurve: f(x) = x</span>
+              <span>•</span>
+              <span>50% Slider &rarr; 50% Hardware (-6 dB)</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Debug Option -->
+      <div class="pt-4 border-t border-border/50">
+        <label class="text-[0.7rem] uppercase font-bold tracking-wider text-muted-foreground/80 flex items-center gap-1.5 mb-2">
+          <ng-icon name="lucideActivity" size="0.85rem" />
+          Entwickler & Diagnose
+        </label>
+        <div
+          (click)="toggleShowRaw()"
+          class="flex items-start gap-3 p-3 rounded-xl border border-border/60 hover:border-primary/40 bg-muted/20 cursor-pointer transition-colors"
+        >
+          <input
+            type="checkbox"
+            id="showRawCheckbox"
+            [checked]="showRaw()"
+            (click)="$event.stopPropagation(); toggleShowRaw()"
+            class="mt-0.5 rounded border-input text-primary focus:ring-primary size-4 cursor-pointer"
+          />
+          <div class="flex flex-col gap-0.5">
+            <label for="showRawCheckbox" class="text-xs font-semibold cursor-pointer">
+              Reale Snapcast-Hardwarelautstärke anzeigen (Debug)
+            </label>
+            <p class="text-[11px] text-muted-foreground leading-snug">
+              Zeigt bei kubischem Profil neben dem Reglerwert auch den tatsächlichen Hardware-Wert in Klammern an (wird lokal im Browser gespeichert).
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer Actions -->
+    <div class="flex flex-col-reverse sm:flex-row sm:justify-end gap-3 mt-8 pt-4 border-t border-border/40">
+      <z-button zType="outline" (click)="close()" class="sm:px-6">
+        Abbrechen
+      </z-button>
+      <z-button
+        zType="default"
+        (click)="saveAndClose()"
+        [zLoading]="saving()"
+        class="sm:px-6"
+      >
+        Speichern
+      </z-button>
+    </div>
+  </div>
+</div>

@@ -48,6 +48,9 @@ public record SpotifyReleaseDto(
 );
 
 [TranspilationSource]
+public record UpdateSettingsRequest(string VolumeProfile);
+
+[TranspilationSource]
 public record NodeUpgradeRequest(string? TargetVersion = null);
 
 [TranspilationSource]
@@ -133,7 +136,8 @@ public record FullStateDto(
     List<StreamDto> RadioStreams, 
     List<SpotifySourceDto> SpotifySources,
     List<StreamDto> SnapcastStreams,
-    List<RadioPluginDto>? RadioPlugins = null);
+    List<RadioPluginDto>? RadioPlugins = null,
+    string VolumeProfile = "cubic");
 
 [TranspilationSource]
 public record SpotifyMetadataDto(

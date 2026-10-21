@@ -96,6 +96,12 @@ export type SpotifyReleaseDto = {
     url?: string;
 }
 
+/** Transpiled from AudioOrchestrator.Contracts.UpdateSettingsRequest */
+export type UpdateSettingsRequest = {
+    /** Transpiled from string */
+    volumeProfile: string;
+}
+
 /** Transpiled from AudioOrchestrator.Contracts.NodeUpgradeRequest */
 export type NodeUpgradeRequest = {
     /** Transpiled from string? */
@@ -258,6 +264,8 @@ export type FullStateDto = {
     snapcastStreams: StreamDto[];
     /** Transpiled from System.Collections.Generic.List<AudioOrchestrator.Contracts.RadioPluginDto>? */
     radioPlugins?: RadioPluginDto[];
+    /** Transpiled from string */
+    volumeProfile: string;
 }
 
 /** Transpiled from AudioOrchestrator.Contracts.SpotifyMetadataDto */

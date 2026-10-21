@@ -12,6 +12,7 @@ public class OrchestratorDbContext : DbContext
     public DbSet<AudioOrchestrator.Data.Entities.SpotifySourceEntity> SpotifySources { get; set; } = default!;
     public DbSet<AudioOrchestrator.Data.Entities.SpotifyMetadataEntity> SpotifyMetadata { get; set; } = default!;
     public DbSet<AudioOrchestrator.Data.Entities.RadioPluginEntity> RadioPlugins { get; set; } = default!;
+    public DbSet<AudioOrchestrator.Data.Entities.OrchestratorSettingsEntity> Settings { get; set; } = default!;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

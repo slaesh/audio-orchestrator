@@ -121,8 +121,82 @@ public class VolumeOrchestratorService
         }
 
         // If not in a group, just push absolute volume (1:1 with mix) and preserve room mute
-        await _snapcast.SetClientVolumeAsync(roomMac, mixVolume, room.IsMuted);
-        await _hub.Clients.All.OnRoomVolumeChanged(roomMac, mixVolume, room.IsMuted);
+        var settings = await _db.Settings.FirstOrDefaultAsync();
+        var profile = settings?.VolumeProfile ?? "cubic";
+        int snapcastVolume = CalculateSnapcastVolume(100, mixVolume, profile);
+
+        await _snapcast.SetClientVolumeAsync(roomMac, snapcastVolume, room.IsMuted);
+        await _hub.Clients.All.OnRoomVolumeChanged(roomMac, snapcastVolume, room.IsMuted);
+    }
+
+    public static double CalculateAudioGain(double normalizedValue, string profile)
+    {
+        double x = Math.Clamp(normalizedValue, 0.0, 1.0);
+        return profile switch
+        {
+            "linear" => x,
+            _ => x * x * x // Default: "cubic" (f(x) = x³)
+        };
+    }
+
+    public static int CalculateSnapcastVolume(int groupMasterPercent, int roomMixPercent, string profile)
+    {
+        double groupSlider = Math.Clamp(groupMasterPercent, 0, 100) / 100.0;
+        double roomSlider = Math.Clamp(roomMixPercent, 0, 100) / 100.0;
+
+        // 1. Calculate effective normalized UI slider mix value (0.0 to 1.0)
+        double effectiveSlider = groupSlider * roomSlider;
+
+        // 2. Obtain audio gain
+        double finalGain = CalculateAudioGain(effectiveSlider, profile);
+
+        // 3. Convert to Snapcast percentage (0 - 100), with midpoint rounding away from zero
+        int snapcastVolume = (int)Math.Round(finalGain * 100.0, MidpointRounding.AwayFromZero);
+        return Math.Clamp(snapcastVolume, 0, 100);
+    }
+
+    public virtual async Task RecalculateAllAsync()
+    {
+        var settings = await _db.Settings.FirstOrDefaultAsync();
+        var profile = settings?.VolumeProfile ?? "cubic";
+
+        // 1. Recalculate all orchestrated groups
+        var groups = await _db.Groups.Where(g => !string.IsNullOrEmpty(g.SnapcastGroupId)).ToListAsync();
+        foreach (var group in groups)
+        {
+            await RecalculateAndPushGroupAsync(group.Id);
+        }
+
+        // 2. Recalculate unassigned rooms
+        var status = await _snapcast.GetStatusAsync();
+        var snapGroups = status?["server"]?["groups"]?.AsArray();
+        if (snapGroups == null) return;
+
+        var orchestratedSnapIds = groups.Select(g => g.SnapcastGroupId).ToHashSet();
+        var roomsFromDb = await _db.Rooms.ToListAsync();
+
+        foreach (var sg in snapGroups)
+        {
+            var sid = sg?["id"]?.GetValue<string>();
+            if (sid != null && orchestratedSnapIds.Contains(sid)) continue;
+
+            var clients = sg?["clients"]?.AsArray();
+            if (clients == null) continue;
+
+            foreach (var client in clients)
+            {
+                var mac = client?["id"]?.GetValue<string>();
+                if (string.IsNullOrEmpty(mac)) continue;
+
+                var roomEntity = roomsFromDb.FirstOrDefault(r => r.MacAddress == mac);
+                var mixVolume = roomEntity?.MixVolume ?? 100;
+                var isMuted = roomEntity?.IsMuted ?? false;
+
+                int snapcastVolume = CalculateSnapcastVolume(100, mixVolume, profile);
+                await _snapcast.SetClientVolumeAsync(mac, snapcastVolume, isMuted);
+                await _hub.Clients.All.OnRoomVolumeChanged(mac, snapcastVolume, isMuted);
+            }
+        }
     }
 
     public virtual async Task RecalculateAndPushGroupAsync(string groupId)
@@ -139,6 +213,8 @@ public class VolumeOrchestratorService
         var clients = snapGroup["clients"]?.AsArray();
         if (clients == null) return;
 
+        var settings = await _db.Settings.FirstOrDefaultAsync();
+        var profile = settings?.VolumeProfile ?? "cubic";
         var roomsFromDb = await _db.Rooms.ToListAsync();
 
         foreach (var client in clients)
@@ -153,12 +229,7 @@ public class VolumeOrchestratorService
             // Effective mute: Group mute OR individual room mute
             bool effectiveMuted = group.IsMuted || isRoomMuted;
 
-            // ActualSnapcastVolume = (MixVolume / 100) * (MasterVolume / 100) * 100
-            double calculated = (mixVolume / 100.0) * (group.MasterVolume / 100.0) * 100.0;
-            int finalVolume = (int)Math.Round(calculated);
-
-            // Cap at 0-100
-            finalVolume = Math.Clamp(finalVolume, 0, 100);
+            int finalVolume = CalculateSnapcastVolume(group.MasterVolume, mixVolume, profile);
 
             await _snapcast.SetClientVolumeAsync(mac, finalVolume, effectiveMuted);
             await _hub.Clients.All.OnRoomVolumeChanged(mac, finalVolume, effectiveMuted);

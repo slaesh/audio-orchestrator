@@ -11,6 +11,7 @@ api/radioEvents.service.ts
 api/radioPlugins.service.ts
 api/radioStreams.service.ts
 api/rooms.service.ts
+api/settings.service.ts
 api/spotifySources.service.ts
 configuration.ts
 encoder.ts
@@ -41,6 +42,7 @@ model/setStreamRequest.ts
 model/setVolumeRequest.ts
 model/spotifyRecentContextDto.ts
 model/spotifyReleaseDto.ts
+model/updateSettingsRequest.ts
 model/updateSourceRequest.ts
 model/upgradeSpotifySourceRequest.ts
 model/volumeRequest.ts
