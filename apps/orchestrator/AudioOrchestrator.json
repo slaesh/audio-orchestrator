@@ -1926,7 +1926,7 @@
           },
           "currentVersion": {
             "type": "string",
-            "default": "0.1.0"
+            "default": ""
           },
           "latestCompatibleVersion": {
             "type": [
@@ -2282,7 +2282,7 @@
           },
           "currentVersion": {
             "type": "string",
-            "default": "0.3.1"
+            "default": ""
           },
           "latestCompatibleVersion": {
             "type": [

@@ -111,7 +111,7 @@ public class ReconciliationService : IReconciliationService, IDisposable
             s.ErrorMessage = null;
             if (string.IsNullOrWhiteSpace(s.CurrentVersion))
             {
-                s.CurrentVersion = OrchestratorConstants.SpotifyNodeVersion;
+                s.CurrentVersion = OrchestratorConstants.ExtractImageTag(OrchestratorConstants.DefaultSpotifyNodeImage);
             }
 
             var streamId = $"{OrchestratorConstants.SpotifyPrefix}{s.Id}";

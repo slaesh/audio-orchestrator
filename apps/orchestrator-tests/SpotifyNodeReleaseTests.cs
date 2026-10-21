@@ -1,6 +1,7 @@
 using Xunit;
 using AudioOrchestrator.Services;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Moq;
 
@@ -118,15 +119,32 @@ public class SpotifyNodeReleaseTests
     }
 
     [Fact]
-    public async Task ResolveInitialSpotifyVersionAsync_FallsBackToConstantWhenNoFleetAndOffline()
+    public async Task ResolveInitialSpotifyVersionAsync_FallsBackToConfiguredImageTagWhenNoFleetAndOffline()
     {
         var service = CreateFailingReleaseService();
 
         var resolved = await service.ResolveInitialSpotifyVersionAsync(null);
-        Assert.Equal(AudioOrchestrator.Contracts.OrchestratorConstants.SpotifyNodeVersion, resolved);
+        var expected = AudioOrchestrator.Contracts.OrchestratorConstants.ExtractImageTag(AudioOrchestrator.Contracts.OrchestratorConstants.DefaultSpotifyNodeImage);
+        Assert.Equal(expected, resolved);
     }
 
-    private static NodeReleaseService CreateReleaseService(string githubResponseJson)
+    [Fact]
+    public async Task ResolveInitialSpotifyVersionAsync_DerivesBaselineFromConfiguredSpotifyNodeImage()
+    {
+        var inMemorySettings = new Dictionary<string, string?>
+        {
+            { "SPOTIFY_NODE_IMAGE", "ghcr.io/slaesh/librespot-server:0.5.2" }
+        };
+        IConfiguration config = new ConfigurationBuilder()
+            .AddInMemoryCollection(inMemorySettings)
+            .Build();
+
+        var service = CreateFailingReleaseService(config);
+        var resolved = await service.ResolveInitialSpotifyVersionAsync(null);
+        Assert.Equal("0.5.2", resolved);
+    }
+
+    private static NodeReleaseService CreateReleaseService(string githubResponseJson, IConfiguration? config = null)
     {
         var handler = new TestHandler(_ => new HttpResponseMessage(System.Net.HttpStatusCode.OK)
         {
@@ -135,16 +153,16 @@ public class SpotifyNodeReleaseTests
         var httpClient = new HttpClient(handler);
         var cache = new MemoryCache(new MemoryCacheOptions());
         var logger = new Mock<ILogger<NodeReleaseService>>().Object;
-        return new NodeReleaseService(httpClient, cache, logger);
+        return new NodeReleaseService(httpClient, cache, logger, config);
     }
 
-    private static NodeReleaseService CreateFailingReleaseService()
+    private static NodeReleaseService CreateFailingReleaseService(IConfiguration? config = null)
     {
         var handler = new TestHandler(_ => new HttpResponseMessage(System.Net.HttpStatusCode.InternalServerError));
         var httpClient = new HttpClient(handler);
         var cache = new MemoryCache(new MemoryCacheOptions());
         var logger = new Mock<ILogger<NodeReleaseService>>().Object;
-        return new NodeReleaseService(httpClient, cache, logger);
+        return new NodeReleaseService(httpClient, cache, logger, config);
     }
 
     private sealed class TestHandler : HttpMessageHandler

@@ -18,7 +18,7 @@ public class SpotifySourceEntity
 
     public int MaxVolume { get; set; } = 30;
 
-    public string CurrentVersion { get; set; } = OrchestratorConstants.SpotifyNodeVersion;
+    public string CurrentVersion { get; set; } = string.Empty;
 
     // Metadata
     public string? CurrentTrackId { get; set; }

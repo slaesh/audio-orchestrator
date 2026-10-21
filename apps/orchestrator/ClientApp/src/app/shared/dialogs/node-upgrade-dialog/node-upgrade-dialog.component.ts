@@ -71,7 +71,7 @@ export class NodeUpgradeDialogComponent implements OnInit {
   }
 
   public get currentVersion(): string {
-    return this.node.currentVersion || '0.1.0';
+    return this.node.currentVersion;
   }
 
   public get targetVersion(): string {

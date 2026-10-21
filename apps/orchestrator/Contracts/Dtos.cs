@@ -125,7 +125,7 @@ public record SpotifySourceDto(
     string? ContextUri = null,
     string? ContextName = null,
     IReadOnlyList<SpotifyRecentContextDto>? RecentContexts = null,
-    string CurrentVersion = OrchestratorConstants.SpotifyNodeVersion,
+    string CurrentVersion = "",
     string? LatestCompatibleVersion = null,
     bool HasUpdate = false,
     bool ContainerRunning = true
@@ -142,7 +142,7 @@ public record RadioPluginDto(
     List<string> UrlPatterns,
     bool Enabled,
     DateTime CreatedAt,
-    string CurrentVersion = "0.1.0",
+    string CurrentVersion = "",
     string? LatestCompatibleVersion = null,
     bool HasUpdate = false,
     string? GitHubRepository = null

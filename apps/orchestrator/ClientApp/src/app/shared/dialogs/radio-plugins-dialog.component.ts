@@ -84,7 +84,7 @@ import { NodeUpgradeDialogComponent, NodeUpgradeDialogData } from './node-upgrad
                           {{ plugin.enabled ? 'Active' : 'Disabled' }}
                         </z-badge>
                         <z-badge zType="secondary" class="text-[9px] py-0 px-1.5 opacity-60 font-mono" title="Plugin Version">
-                          v{{ plugin.currentVersion || '0.1.0' }}
+                          v{{ plugin.currentVersion }}
                         </z-badge>
                         @if (plugin.hasUpdate) {
                           <button 
@@ -392,7 +392,7 @@ export class RadioPluginsDialogComponent {
         type: 'radioPlugin',
         id: plugin.id,
         name: plugin.name,
-        currentVersion: plugin.currentVersion || '0.1.0',
+        currentVersion: plugin.currentVersion,
         targetVersion: plugin.latestCompatibleVersion || 'latest',
         repository: repo,
       } satisfies NodeUpgradeDialogData,

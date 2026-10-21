@@ -99,7 +99,7 @@ public class FullStateBuilder
             }
 
             var currentVersion = string.IsNullOrWhiteSpace(source.CurrentVersion)
-                ? OrchestratorConstants.SpotifyNodeVersion
+                ? OrchestratorConstants.ExtractImageTag(OrchestratorConstants.DefaultSpotifyNodeImage)
                 : source.CurrentVersion;
 
             string? latestCompatible = null;

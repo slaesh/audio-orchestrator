@@ -25,13 +25,15 @@ public class NodeReleaseService : INodeReleaseService, ISpotifyNodeReleaseServic
     private readonly HttpClient _httpClient;
     private readonly IMemoryCache _cache;
     private readonly ILogger<NodeReleaseService> _logger;
+    private readonly IConfiguration? _configuration;
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
 
-    public NodeReleaseService(HttpClient httpClient, IMemoryCache cache, ILogger<NodeReleaseService> logger)
+    public NodeReleaseService(HttpClient httpClient, IMemoryCache cache, ILogger<NodeReleaseService> logger, IConfiguration? configuration = null)
     {
         _httpClient = httpClient;
         _cache = cache;
         _logger = logger;
+        _configuration = configuration;
     }
 
     // ISpotifyNodeReleaseService backward compatibility
@@ -54,7 +56,9 @@ public class NodeReleaseService : INodeReleaseService, ISpotifyNodeReleaseServic
 
     public async Task<string> ResolveInitialSpotifyVersionAsync(IEnumerable<string>? existingVersions = null)
     {
-        var parsedBaseline = ParseSemVer(OrchestratorConstants.SpotifyNodeVersion) ?? new SemVer(0, 3, 1, null);
+        var baseImage = _configuration?["SPOTIFY_NODE_IMAGE"] ?? OrchestratorConstants.DefaultSpotifyNodeImage;
+        var defaultVersion = OrchestratorConstants.ExtractImageTag(baseImage);
+        var parsedBaseline = ParseSemVer(defaultVersion) ?? new SemVer(0, 0, 0, null);
 
         if (existingVersions != null)
         {
