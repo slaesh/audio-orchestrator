@@ -17,7 +17,7 @@ import { Observable }                                        from 'rxjs';
 import { OpenApiHttpParams, QueryParamStyle } from '../query.params';
 
 // @ts-ignore
-import { RadioPluginDto, RadioPluginCreateRequest, RadioPluginUpdateRequest, NodeReleaseDto, NodeUpgradeRequest } from '@contracts';
+import { NodeReleaseDto, NodeUpgradeRequest, RadioPluginCreateRequest, RadioPluginDto, RadioPluginUpdateRequest } from '@contracts';
 
 // @ts-ignore
 import { BASE_PATH, COLLECTION_FORMATS }                     from '../variables';
