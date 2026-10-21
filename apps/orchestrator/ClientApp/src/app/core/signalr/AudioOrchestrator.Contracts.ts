@@ -5,6 +5,15 @@
 /** Transpiled from AudioOrchestrator.Contracts.VolumeProfile */
 export type VolumeProfile = "cubic" | "linear";
 
+/** Transpiled from AudioOrchestrator.Contracts.StreamStatus */
+export type StreamStatus = "idle" | "playing";
+
+/** Transpiled from AudioOrchestrator.Contracts.NodeType */
+export type NodeType = "spotify" | "radioPlugin";
+
+/** Transpiled from AudioOrchestrator.Contracts.UpgradePhase */
+export type UpgradePhase = "idle" | "pulling" | "restarting" | "success" | "failed";
+
 /** Transpiled from AudioOrchestrator.Contracts.RoomDto */
 export type RoomDto = {
     /** Transpiled from string */
@@ -31,8 +40,8 @@ export type StreamDto = {
     id: string;
     /** Transpiled from string */
     name: string;
-    /** Transpiled from string */
-    status: string;
+    /** Transpiled from AudioOrchestrator.Contracts.StreamStatus */
+    status: StreamStatus;
     /** Transpiled from string? */
     url?: string;
     /** Transpiled from string? */
@@ -127,8 +136,8 @@ export type SpotifySourceDto = {
     isActive: boolean;
     /** Transpiled from bool */
     isConnected: boolean;
-    /** Transpiled from string */
-    status: string;
+    /** Transpiled from AudioOrchestrator.Contracts.StreamStatus */
+    status: StreamStatus;
     /** Transpiled from int */
     masterVolume: number;
     /** Transpiled from int */

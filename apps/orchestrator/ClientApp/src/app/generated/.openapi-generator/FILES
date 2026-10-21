@@ -21,8 +21,6 @@ model/createGroupRequest.ts
 model/createRadioStreamRequest.ts
 model/createSourceRequest.ts
 model/models.ts
-model/nodeReleaseDto.ts
-model/nodeUpgradeRequest.ts
 model/playContextRequest.ts
 model/renameGroupRequest.ts
 model/renameRoomRequest.ts
@@ -30,10 +28,7 @@ model/setMixRequest.ts
 model/setMuteRequest.ts
 model/setStreamRequest.ts
 model/setVolumeRequest.ts
-model/spotifyRecentContextDto.ts
-model/spotifyReleaseDto.ts
 model/updateSourceRequest.ts
-model/upgradeSpotifySourceRequest.ts
 model/volumeRequest.ts
 model/webhookEventPayload.ts
 param.ts

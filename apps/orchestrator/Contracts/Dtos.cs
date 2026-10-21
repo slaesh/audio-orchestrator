@@ -14,13 +14,49 @@ public enum VolumeProfile
 }
 
 [TranspilationSource]
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum StreamStatus
+{
+    [JsonStringEnumMemberName("idle")]
+    Idle,
+    [JsonStringEnumMemberName("playing")]
+    Playing
+}
+
+[TranspilationSource]
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum NodeType
+{
+    [JsonStringEnumMemberName("spotify")]
+    Spotify,
+    [JsonStringEnumMemberName("radioPlugin")]
+    RadioPlugin
+}
+
+[TranspilationSource]
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum UpgradePhase
+{
+    [JsonStringEnumMemberName("idle")]
+    Idle,
+    [JsonStringEnumMemberName("pulling")]
+    Pulling,
+    [JsonStringEnumMemberName("restarting")]
+    Restarting,
+    [JsonStringEnumMemberName("success")]
+    Success,
+    [JsonStringEnumMemberName("failed")]
+    Failed
+}
+
+[TranspilationSource]
 public record RoomDto(string Id, string Name, string? FriendlyName, string? HostName, bool Connected, int VolumePercent, bool VolumeMuted, int MixVolume);
 
 [TranspilationSource]
 public record StreamDto(
     string Id, 
     string Name, 
-    string Status, 
+    StreamStatus Status, 
     string? Url,
     string? CurrentTitle = null,
     string? CurrentArtist = null,
@@ -73,7 +109,7 @@ public record SpotifySourceDto(
     string Name, 
     bool IsActive, 
     bool IsConnected,
-    string Status, 
+    StreamStatus Status, 
     int MasterVolume, 
     int MaxVolume,
     string? CurrentTrackId = null,

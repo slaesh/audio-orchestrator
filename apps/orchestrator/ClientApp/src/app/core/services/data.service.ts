@@ -413,9 +413,9 @@ export class DataService {
     targetVersion?: string,
   ): Promise<SpotifyReleaseDto[]> {
     try {
-      return (await firstValueFrom(
+      return await firstValueFrom(
         this.spotifyApi.apiSpotifySourcesIdReleasesGet(id, targetVersion),
-      )) as SpotifyReleaseDto[];
+      );
     } catch {
       this.toast.error('Failed to fetch release information');
       return [];
@@ -615,9 +615,9 @@ export class DataService {
     targetVersion?: string,
   ): Promise<NodeReleaseDto[]> {
     try {
-      return (await firstValueFrom(
+      return await firstValueFrom(
         this.radioPluginsApi.apiRadioPluginsIdReleasesGet(id, targetVersion),
-      )) as NodeReleaseDto[];
+      );
     } catch {
       this.toast.error('Failed to fetch release information');
       return [];
