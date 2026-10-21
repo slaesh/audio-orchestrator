@@ -48,6 +48,7 @@ For an optimal local developer experience (hot-reloading for both backend and fr
 
 ## Troubleshooting
 
+- **Snapclients not discovering Snapserver**: Ensure `avahi-daemon` is running on the host (required for mDNS discovery via `/var/run/dbus/system_bus_socket`). Verify with `docker compose logs snapserver | grep -i avahi`. Note that when migrating servers or changing host IPs, existing `snapclient` services cache the old IP and must be restarted (`sudo systemctl restart snapclient`). Ensure firewall allows UDP 5353 and TCP 1704/1705.
 - **LibreSpot streams not switching**: Check Webhook logs on Orchestrator via `docker logs orchestrator`.
 - **Snapclient connection issues**: Verify host IP bindings. The Orchestrator natively discovers `localhost:1780`.
 - **SELinux / Fedora Permission Denied**: Ensure `security_opt: [label:disable]` is set in `docker-compose.yml` and `chown -R 1000:1000 storage` has been run on the host (`/tmp/audio_fifos` is managed automatically by the Orchestrator).

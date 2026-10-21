@@ -69,6 +69,7 @@ flowchart TD
 ### Prerequisites
 - Docker Engine & Docker Compose
 - Host `/var/run/docker.sock` accessible to the container
+- `avahi-daemon` on the host (required for automatic Snapclient mDNS auto-discovery via `/var/run/dbus/system_bus_socket`)
 
 ### 1. Initialize Persistent Storage
 
@@ -160,6 +161,26 @@ For rapid backend and frontend hot-reloading:
 ### Code Generation Scripts
 - **Angular API Client**: `npm run generate-api` (regenerates Angular OpenAPI client from build-time spec and maintains Tapper DTO consistency).
 - **Spotify Node C# Client**: `npm run generate-spotify-node-client` (updates `SpotifyNodeOpenApiClient.cs` from official `librespot-server` releases).
+
+---
+
+## Troubleshooting
+
+- **Snapclients not discovering Snapserver**:
+  - Ensure `avahi-daemon` is installed and running on the host system:
+    ```bash
+    sudo apt install -y avahi-daemon && sudo systemctl enable --now avahi-daemon
+    ```
+    Then restart the Snapserver container (`docker compose restart snapserver`).
+  - Verify mDNS advertisements in the Snapserver logs:
+    ```bash
+    docker compose logs snapserver | grep -i avahi
+    ```
+    It should output `Avahi: Service 'Snapcast' successfully established`.
+  - **Server Migration / IP Change**: If you moved the Snapserver to another host/IP, existing Snapclients will keep reconnecting to the previous IP until their service is restarted (`sudo systemctl restart snapclient`).
+  - Ensure the host firewall allows **UDP 5353** (mDNS) as well as **TCP 1704** (audio streaming) and **TCP 1705** (control).
+- **LibreSpot streams not switching**: Check webhook logs on Orchestrator via `docker compose logs orchestrator`.
+- **SELinux / Fedora Permission Denied**: Ensure `security_opt: [label:disable]` is set in `docker-compose.yml` and `chown -R 1000:1000 storage` has been run on the host.
 
 ---
 
