@@ -22,7 +22,7 @@ public static class OrchestratorConstants
     public const string DefaultFfmpegImage = "jrottenberg/ffmpeg:4.1-alpine";
     public const string DefaultAudalaxyPluginImage = "ghcr.io/slaesh/radio-node-audalaxy:latest";
 
-    public static string ExtractImageTag(string? image, string defaultVersion = "0.0.0")
+    public static string ExtractImageTag(string? image, string defaultVersion = "")
     {
         if (string.IsNullOrWhiteSpace(image)) return defaultVersion;
         var lastColon = image.LastIndexOf(':');

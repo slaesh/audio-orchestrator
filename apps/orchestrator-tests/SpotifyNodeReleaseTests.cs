@@ -185,6 +185,7 @@ public class SpotifyNodeReleaseTests
     [Theory]
     [InlineData("ghcr.io/slaesh/librespot-server:latest", "latest")]
     [InlineData("ghcr.io/slaesh/librespot-server:v0.5.2", "0.5.2")]
+    [InlineData("ghcr.io/slaesh/librespot-server", "")]
     public async Task ResolveInitialSpotifyVersionAsync_PreservesConfiguredImageReferenceVerbatim(string configuredImage, string expectedVersion)
     {
         var inMemorySettings = new Dictionary<string, string?>
@@ -205,14 +206,21 @@ public class SpotifyNodeReleaseTests
     [InlineData("ghcr.io/slaesh/librespot-server:latest", "latest")]
     [InlineData("ghcr.io/slaesh/librespot-server:v0.5.2", "0.5.2")]
     [InlineData("ghcr.io/slaesh/librespot-server:0.3.1", "0.3.1")]
-    [InlineData("ghcr.io/slaesh/librespot-server", "0.0.0")]
-    [InlineData(null, "default")]
-    [InlineData("", "default")]
+    [InlineData("ghcr.io/slaesh/librespot-server", "")]
+    [InlineData(null, "")]
+    [InlineData("", "")]
     [InlineData("localhost:5000/image:1.2.3", "1.2.3")]
     public void ExtractImageTag_HandlesAllEdgeCases(string? image, string expected)
     {
-        var result = AudioOrchestrator.Contracts.OrchestratorConstants.ExtractImageTag(image, defaultVersion: expected == "default" ? "default" : "0.0.0");
+        var result = AudioOrchestrator.Contracts.OrchestratorConstants.ExtractImageTag(image);
         Assert.Equal(expected, result);
+    }
+
+    [Fact]
+    public void ExtractImageTag_UsesCustomDefault_WhenSpecified()
+    {
+        Assert.Equal("fallback", AudioOrchestrator.Contracts.OrchestratorConstants.ExtractImageTag(null, "fallback"));
+        Assert.Equal("fallback", AudioOrchestrator.Contracts.OrchestratorConstants.ExtractImageTag("ghcr.io/slaesh/librespot-server", "fallback"));
     }
 
     [Fact]
