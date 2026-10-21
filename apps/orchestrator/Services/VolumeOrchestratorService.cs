@@ -123,7 +123,7 @@ public class VolumeOrchestratorService
         // If not in a group, just push absolute volume (1:1 with mix) and preserve room mute
         var settings = await _db.Settings.FirstOrDefaultAsync();
         var profile = settings?.VolumeProfile ?? VolumeProfile.Cubic;
-        int snapcastVolume = CalculateSnapcastVolume(100, mixVolume, profile);
+        int snapcastVolume = CalculateSnapcastVolume(mixVolume, 100, profile);
 
         await _snapcast.SetClientVolumeAsync(roomMac, snapcastVolume, room.IsMuted);
         await _hub.Clients.All.OnRoomVolumeChanged(roomMac, snapcastVolume, room.IsMuted);
@@ -135,24 +135,28 @@ public class VolumeOrchestratorService
         return profile switch
         {
             VolumeProfile.Linear => x,
-            _ => x * x * x // Default: VolumeProfile.Cubic (f(x) = x³)
+            _ => x * x // Default: Natural / Quadratic (f(x) = x²)
         };
     }
 
     public static int CalculateSnapcastVolume(int groupMasterPercent, int roomMixPercent, VolumeProfile profile)
     {
+        if (groupMasterPercent <= 0 || roomMixPercent <= 0) return 0;
+
         double groupSlider = Math.Clamp(groupMasterPercent, 0, 100) / 100.0;
         double roomSlider = Math.Clamp(roomMixPercent, 0, 100) / 100.0;
 
-        // 1. Calculate effective normalized UI slider mix value (0.0 to 1.0)
-        double effectiveSlider = groupSlider * roomSlider;
+        // 1. Group master slider applies the psychoacoustic curve (x² or linear)
+        double groupGain = CalculateAudioGain(groupSlider, profile);
 
-        // 2. Obtain audio gain
-        double finalGain = CalculateAudioGain(effectiveSlider, profile);
+        // 2. Room mix slider distributes proportionally (linear trim of the group gain)
+        double finalGain = groupGain * roomSlider;
 
         // 3. Convert to Snapcast percentage (0 - 100), with midpoint rounding away from zero
         int snapcastVolume = (int)Math.Round(finalGain * 100.0, MidpointRounding.AwayFromZero);
-        return Math.Clamp(snapcastVolume, 0, 100);
+
+        // 4. Never-0 protection: only true 0 when a slider is 0
+        return Math.Clamp(Math.Max(1, snapcastVolume), 0, 100);
     }
 
     public virtual async Task RecalculateAllAsync()
@@ -192,7 +196,7 @@ public class VolumeOrchestratorService
                 var mixVolume = roomEntity?.MixVolume ?? 100;
                 var isMuted = roomEntity?.IsMuted ?? false;
 
-                int snapcastVolume = CalculateSnapcastVolume(100, mixVolume, profile);
+                int snapcastVolume = CalculateSnapcastVolume(mixVolume, 100, profile);
                 await _snapcast.SetClientVolumeAsync(mac, snapcastVolume, isMuted);
                 await _hub.Clients.All.OnRoomVolumeChanged(mac, snapcastVolume, isMuted);
             }

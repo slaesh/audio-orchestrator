@@ -97,7 +97,7 @@ public class RoomsController : ControllerBase
 
             var settings = await _db.Settings.FirstOrDefaultAsync();
             var profile = settings?.VolumeProfile ?? AudioOrchestrator.Contracts.VolumeProfile.Cubic;
-            int snapcastVolume = VolumeOrchestratorService.CalculateSnapcastVolume(100, req.Percent, profile);
+            int snapcastVolume = VolumeOrchestratorService.CalculateSnapcastVolume(req.Percent, 100, profile);
 
             await _snapcast.SetClientVolumeAsync(id, snapcastVolume, req.Muted);
             await _hub.Clients.All.OnRoomVolumeChanged(id, snapcastVolume, req.Muted);

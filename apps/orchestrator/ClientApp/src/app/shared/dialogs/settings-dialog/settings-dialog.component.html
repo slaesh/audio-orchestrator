@@ -44,7 +44,7 @@
         </p>
 
         <div class="grid grid-cols-1 gap-2.5">
-          <!-- Cubic Option -->
+          <!-- Natural / Quadratic Option -->
           <div
             (click)="selectProfile('cubic')"
             class="profile-card relative p-3.5 rounded-xl border transition-all cursor-pointer flex flex-col gap-1.5"
@@ -55,7 +55,7 @@
           >
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-2">
-                <span class="text-sm font-semibold">Kubisch (Natürlich)</span>
+                <span class="text-sm font-semibold">Natürlich (Quadratisch)</span>
                 <span class="text-[10px] px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium flex items-center gap-1">
                   <ng-icon name="lucideSparkles" size="0.65rem" />
                   Empfohlen
@@ -68,13 +68,12 @@
               }
             </div>
             <p class="text-xs text-muted-foreground leading-relaxed">
-              Kompensiert die logarithmische Wahrnehmung des menschlichen Gehörs (Stevens’sches Potenzgesetz, \(x^3\)).
-              Ermöglicht eine feinfühlige Regelung im leisen und mittleren Bereich.
+              Gehörrichtige psychoakustische Lautstärkekurve (\(x^2\)). Ermöglicht eine feinfühlige Regelung bei Zimmerlautstärke, ohne im unteren Bereich abzusaufen.
             </p>
             <div class="text-[11px] font-mono text-muted-foreground/70 flex items-center gap-2 pt-1 border-t border-border/40">
-              <span>Kurve: f(x) = x³</span>
+              <span>Kurve: f(x) = x²</span>
               <span>•</span>
-              <span>50% Slider &rarr; 13% Hardware (-18 dB)</span>
+              <span>50% Slider &rarr; 25% Hardware (-12 dB)</span>
             </div>
           </div>
 
@@ -128,7 +127,7 @@
               Reale Snapcast-Hardwarelautstärke anzeigen (Debug)
             </span>
             <p class="text-[11px] text-muted-foreground leading-snug">
-              Zeigt bei kubischem Profil neben dem Reglerwert auch den tatsächlichen Hardware-Wert in Klammern an (wird lokal im Browser gespeichert).
+              Zeigt bei natürlichem Profil neben dem Reglerwert auch den tatsächlichen Hardware-Wert in Klammern an (wird lokal im Browser gespeichert).
             </p>
           </div>
         </label>
