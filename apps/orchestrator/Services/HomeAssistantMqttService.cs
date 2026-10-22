@@ -384,8 +384,18 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
 
             // Source mapping with disambiguation for duplicate source names
             var sourceMapping = BuildSourceMapping(
-                state.RadioStreams.Select(r => (r.Id, r.Name)),
-                state.SpotifySources.Select(s => (s.Id, s.Name))
+                state.RadioStreams.Select(r => (
+                    r.Id.StartsWith(OrchestratorConstants.RadioPrefix, StringComparison.OrdinalIgnoreCase)
+                        ? r.Id[OrchestratorConstants.RadioPrefix.Length..]
+                        : r.Id,
+                    r.Name
+                )),
+                state.SpotifySources.Select(s => (
+                    s.Id.StartsWith(OrchestratorConstants.SpotifyPrefix, StringComparison.OrdinalIgnoreCase)
+                        ? s.Id[OrchestratorConstants.SpotifyPrefix.Length..]
+                        : s.Id,
+                    s.Name
+                ))
             );
             var sourceList = sourceMapping.SourceList;
 
@@ -891,22 +901,30 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
 
         foreach (var r in radioList)
         {
+            var rawId = r.Id.StartsWith(OrchestratorConstants.RadioPrefix, StringComparison.OrdinalIgnoreCase)
+                ? r.Id[OrchestratorConstants.RadioPrefix.Length..]
+                : r.Id;
             var isDup = duplicateRadioNames.Contains(r.Name);
-            var label = isDup ? $"Radio: {r.Name} ({r.Id})" : $"Radio: {r.Name}";
-            var streamId = $"{OrchestratorConstants.RadioPrefix}{r.Id}";
+            var label = isDup ? $"Radio: {r.Name} ({rawId})" : $"Radio: {r.Name}";
+            var streamId = $"{OrchestratorConstants.RadioPrefix}{rawId}";
             sourceList.Add(label);
             idToLabel[streamId] = label;
+            idToLabel[rawId] = label;
             idToLabel[r.Id] = label;
             labelToId[label] = streamId;
         }
 
         foreach (var s in spotList)
         {
+            var rawId = s.Id.StartsWith(OrchestratorConstants.SpotifyPrefix, StringComparison.OrdinalIgnoreCase)
+                ? s.Id[OrchestratorConstants.SpotifyPrefix.Length..]
+                : s.Id;
             var isDup = duplicateSpotNames.Contains(s.Name);
-            var label = isDup ? $"Spotify: {s.Name} ({s.Id})" : $"Spotify: {s.Name}";
-            var streamId = $"{OrchestratorConstants.SpotifyPrefix}{s.Id}";
+            var label = isDup ? $"Spotify: {s.Name} ({rawId})" : $"Spotify: {s.Name}";
+            var streamId = $"{OrchestratorConstants.SpotifyPrefix}{rawId}";
             sourceList.Add(label);
             idToLabel[streamId] = label;
+            idToLabel[rawId] = label;
             idToLabel[s.Id] = label;
             labelToId[label] = streamId;
         }
@@ -946,9 +964,21 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         {
             var clean = sourceInput.Substring("Radio: ".Length).Trim();
             var radioList = radios.ToList();
-            var radio = radioList.FirstOrDefault(r => r.Id.Equals(clean, StringComparison.OrdinalIgnoreCase)
-                                                   || r.Name.Equals(clean, StringComparison.OrdinalIgnoreCase));
-            if (!string.IsNullOrEmpty(radio.Id)) return $"{OrchestratorConstants.RadioPrefix}{radio.Id}";
+            var radio = radioList.FirstOrDefault(r => {
+                var rawId = r.Id.StartsWith(OrchestratorConstants.RadioPrefix, StringComparison.OrdinalIgnoreCase)
+                    ? r.Id[OrchestratorConstants.RadioPrefix.Length..]
+                    : r.Id;
+                return rawId.Equals(clean, StringComparison.OrdinalIgnoreCase)
+                    || r.Id.Equals(clean, StringComparison.OrdinalIgnoreCase)
+                    || r.Name.Equals(clean, StringComparison.OrdinalIgnoreCase);
+            });
+            if (!string.IsNullOrEmpty(radio.Id))
+            {
+                var rawId = radio.Id.StartsWith(OrchestratorConstants.RadioPrefix, StringComparison.OrdinalIgnoreCase)
+                    ? radio.Id[OrchestratorConstants.RadioPrefix.Length..]
+                    : radio.Id;
+                return $"{OrchestratorConstants.RadioPrefix}{rawId}";
+            }
             return "default";
         }
 
@@ -956,9 +986,21 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         {
             var clean = sourceInput.Substring("Spotify: ".Length).Trim();
             var spotList = spotifies.ToList();
-            var spot = spotList.FirstOrDefault(s => s.Id.Equals(clean, StringComparison.OrdinalIgnoreCase)
-                                                || s.Name.Equals(clean, StringComparison.OrdinalIgnoreCase));
-            if (!string.IsNullOrEmpty(spot.Id)) return $"{OrchestratorConstants.SpotifyPrefix}{spot.Id}";
+            var spot = spotList.FirstOrDefault(s => {
+                var rawId = s.Id.StartsWith(OrchestratorConstants.SpotifyPrefix, StringComparison.OrdinalIgnoreCase)
+                    ? s.Id[OrchestratorConstants.SpotifyPrefix.Length..]
+                    : s.Id;
+                return rawId.Equals(clean, StringComparison.OrdinalIgnoreCase)
+                    || s.Id.Equals(clean, StringComparison.OrdinalIgnoreCase)
+                    || s.Name.Equals(clean, StringComparison.OrdinalIgnoreCase);
+            });
+            if (!string.IsNullOrEmpty(spot.Id))
+            {
+                var rawId = spot.Id.StartsWith(OrchestratorConstants.SpotifyPrefix, StringComparison.OrdinalIgnoreCase)
+                    ? spot.Id[OrchestratorConstants.SpotifyPrefix.Length..]
+                    : spot.Id;
+                return $"{OrchestratorConstants.SpotifyPrefix}{rawId}";
+            }
             return "default";
         }
 

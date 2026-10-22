@@ -3,7 +3,7 @@
   (click)="close()"
 >
   <div
-    class="relative w-full max-w-lg overflow-hidden rounded-2xl border border-border bg-card p-6 shadow-2xl animate-in zoom-in-95 duration-200"
+    class="relative w-full max-w-2xl overflow-hidden rounded-2xl border border-border bg-card p-6 shadow-2xl animate-in zoom-in-95 duration-200"
     (click)="$event.stopPropagation()"
   >
     <!-- Header -->
@@ -175,6 +175,8 @@
                 <input
                   type="number"
                   id="mqttPort"
+                  min="1"
+                  max="65535"
                   placeholder="1883"
                   [ngModel]="haPort()"
                   (ngModelChange)="haPort.set($event)"
@@ -198,15 +200,15 @@
                 />
               </div>
               <div>
-                <div class="flex items-center justify-between mb-1">
-                  <label for="mqttPassword" class="block text-[11px] font-medium text-muted-foreground">
+                <div class="flex items-center justify-between gap-2 mb-1">
+                  <label for="mqttPassword" class="block text-[11px] font-medium text-muted-foreground whitespace-nowrap">
                     Passwort (optional)
                   </label>
-                  @if (haHasPassword()) {
+                  @if (haHasPassword() && !haPassword()) {
                     <button
                       type="button"
                       (click)="clearPassword()"
-                      class="text-[10px] text-destructive hover:underline font-normal cursor-pointer"
+                      class="text-[10px] text-destructive hover:underline font-normal cursor-pointer whitespace-nowrap"
                     >
                       Gespeichertes Passwort entfernen
                     </button>
@@ -215,9 +217,38 @@
                 <input
                   type="password"
                   id="mqttPassword"
-                  [placeholder]="haHasPassword() ? '•••••••• (gespeichert)' : '••••••••'"
+                  [placeholder]="haHasPassword() && !haPassword() ? '•••••••• (gespeichert)' : '••••••••'"
                   [ngModel]="haPassword()"
                   (ngModelChange)="onPasswordChange($event)"
+                  class="w-full text-xs px-3 py-2 rounded-lg border border-input bg-background focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 border-t border-border/40">
+              <div>
+                <label for="mqttDiscoveryPrefix" class="block text-[11px] font-medium text-muted-foreground mb-1">
+                  Discovery-Präfix
+                </label>
+                <input
+                  type="text"
+                  id="mqttDiscoveryPrefix"
+                  placeholder="homeassistant"
+                  [ngModel]="haDiscoveryPrefix()"
+                  (ngModelChange)="haDiscoveryPrefix.set($event)"
+                  class="w-full text-xs px-3 py-2 rounded-lg border border-input bg-background focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+              <div>
+                <label for="mqttBaseTopic" class="block text-[11px] font-medium text-muted-foreground mb-1">
+                  Basis-Topic
+                </label>
+                <input
+                  type="text"
+                  id="mqttBaseTopic"
+                  placeholder="audio_orchestrator"
+                  [ngModel]="haBaseTopic()"
+                  (ngModelChange)="haBaseTopic.set($event)"
                   class="w-full text-xs px-3 py-2 rounded-lg border border-input bg-background focus:outline-none focus:ring-1 focus:ring-primary"
                 />
               </div>

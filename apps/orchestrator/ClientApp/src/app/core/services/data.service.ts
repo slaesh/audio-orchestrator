@@ -17,6 +17,7 @@ import {
   SpotifyReleaseDto,
   NodeReleaseDto,
   SettingsService,
+  TestMqttConnectionRequest,
   UpdateSettingsRequest,
   VolumeProfile,
 } from '@api';
@@ -515,15 +516,8 @@ export class DataService {
     return res;
   }
 
-  async testMqttConnection(req: { host: string; port: number; username?: string | null; password?: string | null; useTls: boolean }) {
-    const payload = {
-      host: req.host,
-      port: req.port,
-      username: req.username ?? null,
-      password: req.password ?? null,
-      useTls: req.useTls,
-    };
-    return await firstValueFrom(this.settingsApi.apiSettingsMqttTestPost(payload));
+  async testMqttConnection(req: TestMqttConnectionRequest) {
+    return await firstValueFrom(this.settingsApi.apiSettingsMqttTestPost(req));
   }
 
   async setGroupVolume(id: string, percent: number, muted: boolean) {

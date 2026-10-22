@@ -133,6 +133,12 @@ export class SettingsDialogComponent implements OnInit {
       return;
     }
 
+    const port = this.haPort() || 1883;
+    if (port < 1 || port > 65535) {
+      this.toast.error('Ungültiger Port (1-65535)');
+      return;
+    }
+
     this.testingMqtt.set(true);
     this.testResult.set(null);
 
@@ -165,6 +171,14 @@ export class SettingsDialogComponent implements OnInit {
   async saveAndClose() {
     if (this.loading() || this.loadFailed()) {
       return;
+    }
+
+    if (this.haEnabled()) {
+      const port = this.haPort() || 1883;
+      if (port < 1 || port > 65535) {
+        this.toast.error('Ungültiger Port (1-65535)');
+        return;
+      }
     }
 
     this.saving.set(true);

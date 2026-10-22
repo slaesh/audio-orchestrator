@@ -67,6 +67,13 @@ if (fs.existsSync(apiDir)) {
     let content = fs.readFileSync(filePath, 'utf-8');
 
     // Strip existing @contracts import and optional preceding @ts-ignore
+    // Also strip any '../model/...' imports for types that exist in @contracts
+    const localModelContractImportRegex = new RegExp(
+      `(?:\\/\\/\\s*@ts-ignore\\s*\\n)?import\\s+{\\s*(${[...contractTypes].join('|')})\\s*}\\s+from\\s+['"]\\.\\.\\/model\\/[^'"]+['"];?\\n?`,
+      'g'
+    );
+    content = content.replace(localModelContractImportRegex, '');
+
     const cleanContent = content.replace(
       /(?:\/\/\s*@ts-ignore\s*\n)?import\s+{[^}]*}\s+from\s+['"]@contracts['"];?\n?/g,
       ''

@@ -17,12 +17,6 @@ import { Observable }                                        from 'rxjs';
 import { OpenApiHttpParams, QueryParamStyle } from '../query.params';
 
 // @ts-ignore
-import { SettingsDto } from '../model/settingsDto';
-// @ts-ignore
-import { TestMqttConnectionRequest } from '../model/testMqttConnectionRequest';
-// @ts-ignore
-import { TestMqttConnectionResponse } from '../model/testMqttConnectionResponse';
-// @ts-ignore
 import { SettingsDto, TestMqttConnectionRequest, TestMqttConnectionResponse, UpdateSettingsRequest } from '@contracts';
 
 // @ts-ignore

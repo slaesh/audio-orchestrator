@@ -71,9 +71,15 @@ public class SettingsController : ControllerBase
 
         if (req.HomeAssistant != null)
         {
+            var port = req.HomeAssistant.Port == 0 ? 1883 : req.HomeAssistant.Port;
+            if (port is < 1 or > 65535)
+            {
+                return BadRequest("Ungültiger Port (1-65535).");
+            }
+
             settings.HomeAssistantEnabled = req.HomeAssistant.Enabled;
             settings.MqttHost = req.HomeAssistant.Host;
-            settings.MqttPort = req.HomeAssistant.Port > 0 ? req.HomeAssistant.Port : 1883;
+            settings.MqttPort = port;
             settings.MqttUsername = req.HomeAssistant.Username;
             if (req.HomeAssistant.Password != null)
             {

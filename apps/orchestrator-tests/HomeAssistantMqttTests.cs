@@ -222,4 +222,68 @@ public class HomeAssistantMqttTests
         Assert.Equal("spotify_s2", result.LabelToStreamId["Spotify: Office (s2)"]);
         Assert.Equal("spotify_s3", result.LabelToStreamId["Spotify: Living Room"]);
     }
+
+    [Fact]
+    public void BuildSourceMapping_ShouldHandlePrefixedDtoIdsCorrectly()
+    {
+        var radios = new List<(string Id, string Name)>
+        {
+            ("radio_r1", "Rock"),
+            ("radio_r2", "Rock")
+        };
+
+        var spotifies = new List<(string Id, string Name)>
+        {
+            ("spotify_s1", "Office"),
+            ("spotify_s2", "Office")
+        };
+
+        var result = HomeAssistantMqttService.BuildSourceMapping(radios, spotifies);
+
+        Assert.Contains("Radio: Rock (r1)", result.SourceList);
+        Assert.Contains("Radio: Rock (r2)", result.SourceList);
+        Assert.Equal("radio_r1", result.LabelToStreamId["Radio: Rock (r1)"]);
+        Assert.Equal("Radio: Rock (r1)", result.StreamIdToLabel["radio_r1"]);
+        Assert.Equal("Radio: Rock (r1)", result.StreamIdToLabel["r1"]);
+
+        Assert.Contains("Spotify: Office (s1)", result.SourceList);
+        Assert.Contains("Spotify: Office (s2)", result.SourceList);
+        Assert.Equal("spotify_s1", result.LabelToStreamId["Spotify: Office (s1)"]);
+        Assert.Equal("Spotify: Office (s1)", result.StreamIdToLabel["spotify_s1"]);
+        Assert.Equal("Spotify: Office (s1)", result.StreamIdToLabel["s1"]);
+    }
+
+    [Theory]
+    [InlineData(65536)]
+    [InlineData(-1)]
+    public async Task UpdateSettings_ShouldRejectInvalidPort(int invalidPort)
+    {
+        await using var db = new OrchestratorDbContext(_dbOptions);
+        var mockVolume = new Mock<VolumeOrchestratorService>(db, Mock.Of<ISnapcastService>(), Mock.Of<ILibrespotApiClient>(), Mock.Of<IHubContext<AudioHub, IAudioClient>>(), Mock.Of<ILogger<VolumeOrchestratorService>>());
+        var mockStateBuilder = new Mock<FullStateBuilder>(db, Mock.Of<ISnapcastService>(), null, null, null, null);
+        var mockHub = new Mock<IHubContext<AudioHub, IAudioClient>>();
+        var mockMqtt = new Mock<IHomeAssistantMqttService>();
+
+        var controller = new SettingsController(db, mockVolume.Object, mockStateBuilder.Object, mockHub.Object, mockMqtt.Object, Mock.Of<ILogger<SettingsController>>());
+
+        var req = new UpdateSettingsRequest(
+            VolumeProfile: VolumeProfile.Linear,
+            HomeAssistant: new HomeAssistantSettingsDto(
+                Enabled: true,
+                Host: "192.168.178.50",
+                Port: invalidPort,
+                Username: null,
+                Password: null,
+                HasPassword: false,
+                UseTls: false,
+                DiscoveryPrefix: "homeassistant",
+                BaseTopic: "audio_orchestrator",
+                IsConnected: false
+            )
+        );
+
+        var result = await controller.UpdateSettings(req);
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result.Result);
+        Assert.Equal("Ungültiger Port (1-65535).", badRequest.Value);
+    }
 }
