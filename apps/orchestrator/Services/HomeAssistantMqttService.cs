@@ -9,12 +9,23 @@ using MQTTnet;
 
 namespace AudioOrchestrator.Services;
 
+public interface IMqttClientFactorySeam
+{
+    IMqttClient CreateClient();
+}
+
+public class DefaultMqttClientFactorySeam : IMqttClientFactorySeam
+{
+    private readonly MqttClientFactory _factory = new();
+    public IMqttClient CreateClient() => _factory.CreateMqttClient();
+}
+
 public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttService
 {
     private const string OffSourceLabel = "Aus (Stille)";
     private readonly ILogger<HomeAssistantMqttService> _logger;
     private readonly IServiceProvider _serviceProvider;
-    private readonly MqttClientFactory _mqttFactory = new();
+    private readonly IMqttClientFactorySeam _mqttFactory;
 
     private IMqttClient? _mqttClient;
     private OrchestratorSettingsEntity? _currentSettings;
@@ -29,10 +40,12 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
 
     public HomeAssistantMqttService(
         ILogger<HomeAssistantMqttService> logger,
-        IServiceProvider serviceProvider)
+        IServiceProvider serviceProvider,
+        IMqttClientFactorySeam? mqttFactory = null)
     {
         _logger = logger;
         _serviceProvider = serviceProvider;
+        _mqttFactory = mqttFactory ?? new DefaultMqttClientFactorySeam();
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -79,7 +92,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             return new TestMqttConnectionResponse(false, "Ungültiger Port (1-65535).");
         }
 
-        var client = _mqttFactory.CreateMqttClient();
+        var client = _mqttFactory.CreateClient();
         try
         {
             var optionsBuilder = new MqttClientOptionsBuilder()
@@ -195,7 +208,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         }
     }
 
-    private async Task EnsureConnectionAsync(CancellationToken ct)
+    internal async Task EnsureConnectionAsync(CancellationToken ct)
     {
         await _connectionLock.WaitAsync(ct);
         try
@@ -266,7 +279,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
 
         try
         {
-            _mqttClient = _mqttFactory.CreateMqttClient();
+            _mqttClient = _mqttFactory.CreateClient();
 
             var baseTopic = GetNormalizedBaseTopic();
             var discPrefix = GetNormalizedDiscoveryPrefix();
@@ -297,11 +310,12 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             if (connectResult.ResultCode != MqttClientConnectResultCode.Success)
             {
                 _logger.LogWarning("MQTT connect failed with result: {ResultCode}", connectResult.ResultCode);
+                await DisconnectInternalAsync();
                 return;
             }
 
             // 1. Subscribe to command topics & HA status topic
-            var subOptions = _mqttFactory.CreateSubscribeOptionsBuilder()
+            var subOptions = new MqttClientSubscribeOptionsBuilder()
                 .WithTopicFilter($"{baseTopic}/groups/+/set/#")
                 .WithTopicFilter($"{discPrefix}/status")
                 .Build();
@@ -335,6 +349,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to connect to MQTT broker");
+            await DisconnectInternalAsync();
         }
     }
 
@@ -773,7 +788,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         await PublishAsync($"{discPrefix}/button/audio_orchestrator_{groupId}/previous/config", prevBtnConfig.ToJsonString(), retain: true, ct);
     }
 
-    private async Task HandleIncomingMessageAsync(MqttApplicationMessageReceivedEventArgs e)
+    internal async Task HandleIncomingMessageAsync(MqttApplicationMessageReceivedEventArgs e)
     {
         var topic = e.ApplicationMessage.Topic;
         var rawPayload = e.ApplicationMessage.ConvertPayloadToString() ?? string.Empty;
@@ -894,21 +909,6 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         IEnumerable<(string Id, string Name)> radios,
         IEnumerable<(string Id, string Name)> spotifies)
     {
-        var radioList = radios.Where(r => !string.IsNullOrWhiteSpace(r.Name)).ToList();
-        var spotList = spotifies.Where(s => !string.IsNullOrWhiteSpace(s.Name)).ToList();
-
-        var duplicateRadioNames = radioList
-            .GroupBy(r => r.Name, StringComparer.OrdinalIgnoreCase)
-            .Where(g => g.Count() > 1)
-            .Select(g => g.Key)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-        var duplicateSpotNames = spotList
-            .GroupBy(s => s.Name, StringComparer.OrdinalIgnoreCase)
-            .Where(g => g.Count() > 1)
-            .Select(g => g.Key)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
         var sourceList = new List<string> { OffSourceLabel };
         var idToLabel = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -920,37 +920,99 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             [OffSourceLabel] = "default"
         };
 
-        foreach (var r in radioList)
-        {
-            var rawId = r.Id.StartsWith(OrchestratorConstants.RadioPrefix, StringComparison.OrdinalIgnoreCase)
-                ? r.Id[OrchestratorConstants.RadioPrefix.Length..]
-                : r.Id;
-            var isDup = duplicateRadioNames.Contains(r.Name);
-            var label = isDup ? $"Radio: {r.Name} ({rawId})" : $"Radio: {r.Name}";
-            var streamId = $"{OrchestratorConstants.RadioPrefix}{rawId}";
-            sourceList.Add(label);
-            idToLabel[streamId] = label;
-            idToLabel[rawId] = label;
-            idToLabel[r.Id] = label;
-            labelToId[label] = streamId;
-        }
-
-        foreach (var s in spotList)
-        {
-            var rawId = s.Id.StartsWith(OrchestratorConstants.SpotifyPrefix, StringComparison.OrdinalIgnoreCase)
-                ? s.Id[OrchestratorConstants.SpotifyPrefix.Length..]
-                : s.Id;
-            var isDup = duplicateSpotNames.Contains(s.Name);
-            var label = isDup ? $"Spotify: {s.Name} ({rawId})" : $"Spotify: {s.Name}";
-            var streamId = $"{OrchestratorConstants.SpotifyPrefix}{rawId}";
-            sourceList.Add(label);
-            idToLabel[streamId] = label;
-            idToLabel[rawId] = label;
-            idToLabel[s.Id] = label;
-            labelToId[label] = streamId;
-        }
+        PopulateSourceCategory(radios, OrchestratorConstants.RadioPrefix, "Radio: ", sourceList, idToLabel, labelToId);
+        PopulateSourceCategory(spotifies, OrchestratorConstants.SpotifyPrefix, "Spotify: ", sourceList, idToLabel, labelToId);
 
         return new SourceMappingResult(sourceList, idToLabel, labelToId);
+    }
+
+    private static void PopulateSourceCategory(
+        IEnumerable<(string Id, string Name)> rawItems,
+        string idPrefix,
+        string labelPrefix,
+        List<string> sourceList,
+        Dictionary<string, string> idToLabel,
+        Dictionary<string, string> labelToId)
+    {
+        // Sort deterministically by Id so results are independent of input order
+        var items = rawItems
+            .Where(x => !string.IsNullOrWhiteSpace(x.Name))
+            .OrderBy(x => x.Id, StringComparer.OrdinalIgnoreCase)
+            .Select(x =>
+            {
+                var rawId = x.Id.StartsWith(idPrefix, StringComparison.OrdinalIgnoreCase)
+                    ? x.Id[idPrefix.Length..]
+                    : x.Id;
+                var streamId = $"{idPrefix}{rawId}";
+                return (OriginalId: x.Id, RawId: rawId, StreamId: streamId, Name: x.Name);
+            })
+            .ToList();
+
+        if (items.Count == 0) return;
+
+        // 1. Initial proposal: if duplicate names exist, append rawId
+        var duplicateNames = items
+            .GroupBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Count() > 1)
+            .Select(g => g.Key)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var currentLabels = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in items)
+        {
+            var isDup = duplicateNames.Contains(item.Name);
+            currentLabels[item.StreamId] = isDup
+                ? $"{labelPrefix}{item.Name} ({item.RawId})"
+                : $"{labelPrefix}{item.Name}";
+        }
+
+        // 2. Collision resolution: if any label collides (e.g. literal name was "Office (id1)" while generated was "Office (id1)")
+        while (true)
+        {
+            var collisions = currentLabels
+                .GroupBy(kvp => kvp.Value, StringComparer.OrdinalIgnoreCase)
+                .Where(g => g.Count() > 1)
+                .ToList();
+
+            if (collisions.Count == 0) break;
+
+            foreach (var group in collisions)
+            {
+                var unassigned = group.Where(kvp =>
+                {
+                    var item = items.First(i => i.StreamId.Equals(kvp.Key, StringComparison.OrdinalIgnoreCase));
+                    return !kvp.Value.EndsWith($"({item.RawId})", StringComparison.OrdinalIgnoreCase);
+                }).ToList();
+
+                if (unassigned.Count > 0)
+                {
+                    foreach (var kvp in unassigned)
+                    {
+                        var item = items.First(i => i.StreamId.Equals(kvp.Key, StringComparison.OrdinalIgnoreCase));
+                        currentLabels[kvp.Key] = $"{kvp.Value} ({item.RawId})";
+                    }
+                }
+                else
+                {
+                    foreach (var kvp in group.Skip(1))
+                    {
+                        var item = items.First(i => i.StreamId.Equals(kvp.Key, StringComparison.OrdinalIgnoreCase));
+                        currentLabels[kvp.Key] = $"{kvp.Value}_{item.OriginalId}";
+                    }
+                }
+            }
+        }
+
+        // 3. Register final collision-free labels
+        foreach (var item in items)
+        {
+            var label = currentLabels[item.StreamId];
+            sourceList.Add(label);
+            idToLabel[item.StreamId] = label;
+            idToLabel[item.RawId] = label;
+            idToLabel[item.OriginalId] = label;
+            labelToId[label] = item.StreamId;
+        }
     }
 
     private static string ResolveSourceToStreamId(

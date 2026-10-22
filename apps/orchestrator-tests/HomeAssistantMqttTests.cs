@@ -7,8 +7,11 @@ using AudioOrchestrator.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Moq;
+using MQTTnet;
+using MQTTnet.Packets;
 using Xunit;
 
 namespace AudioOrchestrator.OrchestratorTests;
@@ -458,5 +461,336 @@ public class HomeAssistantMqttTests
         var settingsDto = Assert.IsType<SettingsDto>(okResult.Value);
 
         Assert.Equal(1883, settingsDto.HomeAssistant.Port);
+    }
+
+    [Fact]
+    public void BuildSourceMapping_ShouldHandleLiteralNameCollisionsDeterministically_IndependentOfInputOrder()
+    {
+        var radiosOrder1 = new List<(string Id, string Name)>
+        {
+            ("id1", "Office"),
+            ("id2", "Office"),
+            ("id3", "Office (id1)")
+        };
+
+        var radiosOrder2 = new List<(string Id, string Name)>
+        {
+            ("id3", "Office (id1)"),
+            ("id2", "Office"),
+            ("id1", "Office")
+        };
+
+        var result1 = HomeAssistantMqttService.BuildSourceMapping(radiosOrder1, []);
+        var result2 = HomeAssistantMqttService.BuildSourceMapping(radiosOrder2, []);
+
+        // Assert all labels are unique
+        Assert.Equal(result1.SourceList.Count, result1.SourceList.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        Assert.Equal(result2.SourceList.Count, result2.SourceList.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+
+        // Assert deterministic output independent of input order
+        Assert.Equal(result1.SourceList, result2.SourceList);
+
+        // Assert no label is overwritten in LabelToStreamId
+        Assert.Equal("radio_id1", result1.LabelToStreamId["Radio: Office (id1)"]);
+        Assert.Equal("radio_id2", result1.LabelToStreamId["Radio: Office (id2)"]);
+        Assert.Equal("radio_id3", result1.LabelToStreamId["Radio: Office (id1) (id3)"]);
+
+        Assert.Equal("radio_id1", result2.LabelToStreamId["Radio: Office (id1)"]);
+        Assert.Equal("radio_id2", result2.LabelToStreamId["Radio: Office (id2)"]);
+        Assert.Equal("radio_id3", result2.LabelToStreamId["Radio: Office (id1) (id3)"]);
+    }
+
+    private static (ServiceProvider ServiceProvider, OrchestratorDbContext Db, Mock<IMqttClient> MockClient, HomeAssistantMqttService Service, Mock<VolumeOrchestratorService> MockVolume) CreateTestContext(
+        string discoveryPrefix = "homeassistant",
+        string baseTopic = "audio_orchestrator")
+    {
+        var services = new ServiceCollection();
+        var dbName = Guid.NewGuid().ToString();
+        var dbOptions = new DbContextOptionsBuilder<OrchestratorDbContext>()
+            .UseInMemoryDatabase(dbName)
+            .Options;
+        services.AddDbContext<OrchestratorDbContext>(opt => opt.UseInMemoryDatabase(dbName));
+
+        var mockSnapcast = new Mock<ISnapcastService>();
+        mockSnapcast.Setup(s => s.GetStatusAsync()).ReturnsAsync((System.Text.Json.Nodes.JsonNode?)null);
+        var mockLibrespot = new Mock<ILibrespotApiClient>();
+        var mockHub = new Mock<IHubContext<AudioHub, IAudioClient>>();
+        mockHub.Setup(h => h.Clients.All).Returns(Mock.Of<IAudioClient>());
+
+        services.AddSingleton(mockSnapcast.Object);
+        services.AddSingleton(mockLibrespot.Object);
+        services.AddSingleton(mockHub.Object);
+        services.AddLogging();
+
+        var dummyDb = new OrchestratorDbContext(dbOptions);
+        var mockVolume = new Mock<VolumeOrchestratorService>(
+            dummyDb,
+            mockSnapcast.Object,
+            mockLibrespot.Object,
+            mockHub.Object,
+            Mock.Of<ILogger<VolumeOrchestratorService>>());
+        services.AddScoped(_ => mockVolume.Object);
+
+        // FullStateBuilder
+        services.AddScoped(sp =>
+        {
+            var db = sp.GetRequiredService<OrchestratorDbContext>();
+            return new FullStateBuilder(db, mockSnapcast.Object);
+        });
+
+        var sp = services.BuildServiceProvider();
+        var db = sp.GetRequiredService<OrchestratorDbContext>();
+        db.Settings.Add(new OrchestratorSettingsEntity
+        {
+            Id = "default",
+            HomeAssistantEnabled = true,
+            MqttHost = "127.0.0.1",
+            MqttPort = 1883,
+            MqttDiscoveryPrefix = discoveryPrefix,
+            MqttBaseTopic = baseTopic
+        });
+        db.SaveChanges();
+
+        var mockClient = new Mock<IMqttClient>();
+        var mockFactory = new Mock<IMqttClientFactorySeam>();
+        mockFactory.Setup(f => f.CreateClient()).Returns(mockClient.Object);
+
+        var serviceLogger = sp.GetRequiredService<ILogger<HomeAssistantMqttService>>();
+        var service = new HomeAssistantMqttService(serviceLogger, sp, mockFactory.Object);
+
+        return (sp, db, mockClient, service, mockVolume);
+    }
+
+    [Fact]
+    public async Task EnsureConnectionAsync_ShouldRetrySetup_WhenSubscriptionFails()
+    {
+        var (sp, db, mockClient, service, _) = CreateTestContext();
+
+        mockClient.Setup(c => c.ConnectAsync(It.IsAny<MqttClientOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientConnectResult());
+
+        // First pass: Subscription fails with Error
+        var failSubResult = new MqttClientSubscribeResult(
+            1,
+            new List<MqttClientSubscribeResultItem>
+            {
+                new(new MqttTopicFilter { Topic = "audio_orchestrator/groups/+/set/#" }, MqttClientSubscribeResultCode.UnspecifiedError)
+            },
+            string.Empty,
+            new List<MqttUserProperty>()
+        );
+
+        mockClient.Setup(c => c.SubscribeAsync(It.IsAny<MqttClientSubscribeOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(failSubResult);
+
+        await service.EnsureConnectionAsync(CancellationToken.None);
+
+        Assert.False(service.IsConnected);
+        mockClient.Verify(c => c.DisconnectAsync(It.IsAny<MqttClientDisconnectOptions>(), It.IsAny<CancellationToken>()), Times.Once);
+        // Birth message should NOT have been published
+        mockClient.Verify(c => c.PublishAsync(It.Is<MqttApplicationMessage>(m => m.Topic == "audio_orchestrator/bridge/status"), It.IsAny<CancellationToken>()), Times.Never);
+
+        // Second pass: Subscription succeeds
+        var successSubResult = new MqttClientSubscribeResult(
+            2,
+            new List<MqttClientSubscribeResultItem>
+            {
+                new(new MqttTopicFilter { Topic = "audio_orchestrator/groups/+/set/#" }, MqttClientSubscribeResultCode.GrantedQoS0),
+                new(new MqttTopicFilter { Topic = "homeassistant/status" }, MqttClientSubscribeResultCode.GrantedQoS0)
+            },
+            string.Empty,
+            new List<MqttUserProperty>()
+        );
+        mockClient.Setup(c => c.SubscribeAsync(It.IsAny<MqttClientSubscribeOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(successSubResult);
+        mockClient.SetupGet(c => c.IsConnected).Returns(true);
+
+        await service.EnsureConnectionAsync(CancellationToken.None);
+
+        // Birth message SHOULD now be published
+        mockClient.Verify(c => c.PublishAsync(It.Is<MqttApplicationMessage>(m => m.Topic == "audio_orchestrator/bridge/status"), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task EnsureConnectionAsync_ShouldResetClient_WhenBirthMessagePublishThrows()
+    {
+        var (sp, db, mockClient, service, _) = CreateTestContext();
+
+        mockClient.Setup(c => c.ConnectAsync(It.IsAny<MqttClientOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientConnectResult());
+
+        var successSubResult = new MqttClientSubscribeResult(
+            1,
+            new List<MqttClientSubscribeResultItem>
+            {
+                new(new MqttTopicFilter { Topic = "audio_orchestrator/groups/+/set/#" }, MqttClientSubscribeResultCode.GrantedQoS0)
+            },
+            string.Empty,
+            new List<MqttUserProperty>()
+        );
+        mockClient.Setup(c => c.SubscribeAsync(It.IsAny<MqttClientSubscribeOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(successSubResult);
+        mockClient.SetupGet(c => c.IsConnected).Returns(true);
+
+        // Publishing birth message throws
+        mockClient.Setup(c => c.PublishAsync(It.Is<MqttApplicationMessage>(m => m.Topic == "audio_orchestrator/bridge/status"), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Broker connection dropped during birth publish"));
+
+        await service.EnsureConnectionAsync(CancellationToken.None);
+
+        // Client should have been reset and disconnected to avoid half-initialized state
+        Assert.False(service.IsConnected);
+        mockClient.Verify(c => c.Dispose(), Times.Once);
+    }
+
+    [Fact]
+    public async Task EnsureConnectionAsync_ShouldUseCustomDiscoveryAndBaseTopics()
+    {
+        var (sp, db, mockClient, service, _) = CreateTestContext(discoveryPrefix: "custom_ha_disc", baseTopic: "custom_orch_base");
+
+        MqttClientOptions? capturedOptions = null;
+        mockClient.Setup(c => c.ConnectAsync(It.IsAny<MqttClientOptions>(), It.IsAny<CancellationToken>()))
+            .Callback<MqttClientOptions, CancellationToken>((opts, _) => capturedOptions = opts)
+            .ReturnsAsync(new MqttClientConnectResult());
+
+        MqttClientSubscribeOptions? capturedSubOptions = null;
+        mockClient.Setup(c => c.SubscribeAsync(It.IsAny<MqttClientSubscribeOptions>(), It.IsAny<CancellationToken>()))
+            .Callback<MqttClientSubscribeOptions, CancellationToken>((subOpts, _) => capturedSubOptions = subOpts)
+            .ReturnsAsync(new MqttClientSubscribeResult(
+                1,
+                new List<MqttClientSubscribeResultItem>
+                {
+                    new(new MqttTopicFilter { Topic = "custom_orch_base/groups/+/set/#" }, MqttClientSubscribeResultCode.GrantedQoS0),
+                    new(new MqttTopicFilter { Topic = "custom_ha_disc/status" }, MqttClientSubscribeResultCode.GrantedQoS0)
+                },
+                string.Empty,
+                new List<MqttUserProperty>()
+            ));
+        mockClient.SetupGet(c => c.IsConnected).Returns(true);
+
+        await service.EnsureConnectionAsync(CancellationToken.None);
+
+        Assert.NotNull(capturedOptions);
+        Assert.Equal("custom_orch_base/bridge/status", capturedOptions.WillTopic);
+
+        Assert.NotNull(capturedSubOptions);
+        var topicFilters = capturedSubOptions.TopicFilters.Select(tf => tf.Topic).ToList();
+        Assert.Contains("custom_orch_base/groups/+/set/#", topicFilters);
+        Assert.Contains("custom_ha_disc/status", topicFilters);
+
+        // Birth message topic
+        mockClient.Verify(c => c.PublishAsync(It.Is<MqttApplicationMessage>(m => m.Topic == "custom_orch_base/bridge/status"), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task HandleIncomingMessageAsync_ShouldRouteGroupCommandsCorrectly()
+    {
+        var (sp, db, mockClient, service, mockVolume) = CreateTestContext();
+
+        mockClient.Setup(c => c.ConnectAsync(It.IsAny<MqttClientOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientConnectResult());
+        mockClient.Setup(c => c.SubscribeAsync(It.IsAny<MqttClientSubscribeOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientSubscribeResult(
+                1,
+                new List<MqttClientSubscribeResultItem>
+                {
+                    new(new MqttTopicFilter { Topic = "audio_orchestrator/groups/+/set/#" }, MqttClientSubscribeResultCode.GrantedQoS0),
+                    new(new MqttTopicFilter { Topic = "homeassistant/status" }, MqttClientSubscribeResultCode.GrantedQoS0)
+                },
+                string.Empty,
+                new List<MqttUserProperty>()
+            ));
+        mockClient.SetupGet(c => c.IsConnected).Returns(true);
+
+        await service.EnsureConnectionAsync(CancellationToken.None);
+
+        db.Groups.Add(new GroupEntity
+        {
+            Id = "g1",
+            Name = "Wohnzimmer",
+            SnapcastGroupId = "snap_g1",
+            CurrentStreamId = "default",
+            MasterVolume = 50,
+            IsMuted = false
+        });
+        db.RadioStreams.Add(new RadioStreamEntity
+        {
+            Id = "r1",
+            Name = "Rock",
+            StreamUrl = "http://example.com/rock"
+        });
+        await db.SaveChangesAsync();
+
+        // 1. Volume command: audio_orchestrator/groups/g1/set/volume => "65"
+        var volMsg = new MqttApplicationMessageBuilder()
+            .WithTopic("audio_orchestrator/groups/g1/set/volume")
+            .WithPayload("65")
+            .Build();
+        var volArgs = new MqttApplicationMessageReceivedEventArgs("c1", volMsg, new MqttPublishPacket(), (_, _) => Task.CompletedTask);
+
+        await service.HandleIncomingMessageAsync(volArgs);
+        mockVolume.Verify(v => v.SetGroupVolumeAsync("g1", 65, false), Times.Once);
+
+        // 2. Mute command: audio_orchestrator/groups/g1/set/mute => "true"
+        var muteMsg = new MqttApplicationMessageBuilder()
+            .WithTopic("audio_orchestrator/groups/g1/set/mute")
+            .WithPayload("true")
+            .Build();
+        var muteArgs = new MqttApplicationMessageReceivedEventArgs("c1", muteMsg, new MqttPublishPacket(), (_, _) => Task.CompletedTask);
+
+        await service.HandleIncomingMessageAsync(muteArgs);
+        mockVolume.Verify(v => v.SetGroupVolumeAsync("g1", 50, true), Times.Once);
+
+        // 3. Source command: audio_orchestrator/groups/g1/set/source => "Radio: Rock"
+        var sourceMsg = new MqttApplicationMessageBuilder()
+            .WithTopic("audio_orchestrator/groups/g1/set/source")
+            .WithPayload("Radio: Rock")
+            .Build();
+        var sourceArgs = new MqttApplicationMessageReceivedEventArgs("c1", sourceMsg, new MqttPublishPacket(), (_, _) => Task.CompletedTask);
+
+        await service.HandleIncomingMessageAsync(sourceArgs);
+        var updatedGroup = await db.Groups.AsNoTracking().FirstAsync(g => g.Id == "g1");
+        Assert.Equal("radio_r1", updatedGroup.CurrentStreamId);
+    }
+
+    [Fact]
+    public async Task HandleIncomingMessageAsync_ShouldForceDiscovery_WhenHomeAssistantReportsOnline()
+    {
+        var (sp, db, mockClient, service, _) = CreateTestContext(discoveryPrefix: "custom_disc", baseTopic: "orch");
+
+        mockClient.Setup(c => c.ConnectAsync(It.IsAny<MqttClientOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientConnectResult());
+        mockClient.Setup(c => c.SubscribeAsync(It.IsAny<MqttClientSubscribeOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientSubscribeResult(
+                1,
+                new List<MqttClientSubscribeResultItem>
+                {
+                    new(new MqttTopicFilter { Topic = "orch/groups/+/set/#" }, MqttClientSubscribeResultCode.GrantedQoS0),
+                    new(new MqttTopicFilter { Topic = "custom_disc/status" }, MqttClientSubscribeResultCode.GrantedQoS0)
+                },
+                string.Empty,
+                new List<MqttUserProperty>()
+            ));
+        mockClient.SetupGet(c => c.IsConnected).Returns(true);
+
+        await service.EnsureConnectionAsync(CancellationToken.None);
+        mockClient.Invocations.Clear();
+
+        // Add a group to DB so discovery publishes something
+        db.Groups.Add(new GroupEntity { Id = "test_g1", Name = "Wohnzimmer", CurrentStreamId = "default" });
+        await db.SaveChangesAsync();
+
+        var haOnlineMsg = new MqttApplicationMessageBuilder()
+            .WithTopic("custom_disc/status")
+            .WithPayload("online")
+            .Build();
+        var args = new MqttApplicationMessageReceivedEventArgs("c1", haOnlineMsg, new MqttPublishPacket(), (_, _) => Task.CompletedTask);
+
+        await service.HandleIncomingMessageAsync(args);
+
+        // Verify discovery config published for group
+        mockClient.Verify(c => c.PublishAsync(
+            It.Is<MqttApplicationMessage>(m => m.Topic.StartsWith("custom_disc/select/audio_orchestrator_test_g1/source/config")),
+            It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
 }

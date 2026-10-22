@@ -57,6 +57,7 @@ builder.Services.AddScoped<AudioOrchestrator.Services.VolumeOrchestratorService>
 builder.Services.AddScoped<AudioOrchestrator.Services.FullStateBuilder>();
 
 builder.Services.AddSingleton<AudioOrchestrator.Services.RadioMetadataService>();
+builder.Services.AddSingleton<AudioOrchestrator.Services.IMqttClientFactorySeam, AudioOrchestrator.Services.DefaultMqttClientFactorySeam>();
 builder.Services.AddSingleton<AudioOrchestrator.Services.HomeAssistantMqttService>();
 builder.Services.AddSingleton<AudioOrchestrator.Services.IHomeAssistantMqttService>(sp => sp.GetRequiredService<AudioOrchestrator.Services.HomeAssistantMqttService>());
 
