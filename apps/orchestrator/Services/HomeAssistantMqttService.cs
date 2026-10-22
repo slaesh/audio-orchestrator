@@ -21,6 +21,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
     private FullStateDto? _lastFullState;
     private readonly HashSet<string> _discoveredGroupIds = new();
     private string _lastDiscoveryHash = string.Empty;
+    private bool _forceDiscovery = true;
     private readonly SemaphoreSlim _connectionLock = new(1, 1);
     private readonly SemaphoreSlim _publishLock = new(1, 1);
 
@@ -163,7 +164,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         await RefreshAndPublishAsync(ct);
     }
 
-    private async Task RefreshAndPublishAsync(CancellationToken ct)
+    private async Task RefreshAndPublishAsync(CancellationToken ct, bool forceDiscovery = false)
     {
         try
         {
@@ -171,7 +172,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             var stateBuilder = scope.ServiceProvider.GetRequiredService<FullStateBuilder>();
             var freshState = await stateBuilder.BuildAsync();
             _lastFullState = freshState;
-            await PublishDiscoveryAndStatesAsync(freshState, ct);
+            await PublishDiscoveryAndStatesAsync(freshState, ct, forceDiscovery);
         }
         catch (Exception ex)
         {
@@ -276,6 +277,8 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
 
             _logger.LogInformation("MQTT connected successfully. Publishing bridge online status.");
 
+            _forceDiscovery = true;
+
             // 1. Publish birth message
             await PublishAsync(statusTopic, "online", retain: true, ct);
 
@@ -291,7 +294,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             using var scope = _serviceProvider.CreateScope();
             var stateBuilder = scope.ServiceProvider.GetRequiredService<FullStateBuilder>();
             _lastFullState = await stateBuilder.BuildAsync();
-            await PublishDiscoveryAndStatesAsync(_lastFullState, ct);
+            await PublishDiscoveryAndStatesAsync(_lastFullState, ct, forceDiscovery: true);
         }
         catch (Exception ex)
         {
@@ -320,6 +323,8 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             {
                 _mqttClient.Dispose();
                 _mqttClient = null;
+                _lastDiscoveryHash = string.Empty;
+                _forceDiscovery = true;
             }
         }
     }
@@ -351,7 +356,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         await _mqttClient.PublishAsync(message, ct);
     }
 
-    private async Task PublishDiscoveryAndStatesAsync(FullStateDto state, CancellationToken ct)
+    private async Task PublishDiscoveryAndStatesAsync(FullStateDto state, CancellationToken ct, bool forceDiscovery = false)
     {
         if (!IsConnected || _currentSettings == null) return;
 
@@ -383,9 +388,10 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                 _discoveredGroupIds.Remove(removedId);
             }
 
-            // 2. Check if discovery needs re-publishing (group structure, names, or source list changed)
+            // 2. Check if discovery needs re-publishing (group structure, names, or source list changed, or forced)
             var discoveryHash = $"{discPrefix}|{baseTopic}|{string.Join(",", sourceList)}|{string.Join(";", state.Groups.Select(g => $"{g.Id}:{g.Name}"))}";
-            bool discoveryNeedsUpdate = discoveryHash != _lastDiscoveryHash;
+            bool discoveryNeedsUpdate = forceDiscovery || _forceDiscovery || discoveryHash != _lastDiscoveryHash;
+            _forceDiscovery = false;
 
             foreach (var group in state.Groups)
             {
@@ -733,7 +739,8 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             if (payload.Equals("online", StringComparison.OrdinalIgnoreCase))
             {
                 _logger.LogInformation("Home Assistant reported online. Re-publishing all discovery configs and states.");
-                await RefreshAndPublishAsync(CancellationToken.None);
+                _forceDiscovery = true;
+                await RefreshAndPublishAsync(CancellationToken.None, forceDiscovery: true);
             }
             return;
         }
