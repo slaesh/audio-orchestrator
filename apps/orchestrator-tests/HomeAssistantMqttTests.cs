@@ -1153,4 +1153,137 @@ public class HomeAssistantMqttTests
             It.Is<MqttApplicationMessage>(m => m.Topic.StartsWith("homeassistant/select/audio_orchestrator_g1/source/config") && string.IsNullOrEmpty(m.ConvertPayloadToString())),
             It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
+
+    [Fact]
+    public async Task ReloadConfigurationAsync_ShouldUnpublishOldDiscoveryTopics_WhenDiscoveryPrefixOrBaseTopicChanges()
+    {
+        var (sp, db, mockClient, service, _) = CreateTestContext(discoveryPrefix: "old_ha", baseTopic: "old_orch");
+
+        mockClient.Setup(c => c.ConnectAsync(It.IsAny<MqttClientOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientConnectResult());
+        mockClient.Setup(c => c.SubscribeAsync(It.IsAny<MqttClientSubscribeOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientSubscribeResult(
+                1,
+                new List<MqttClientSubscribeResultItem>
+                {
+                    new(new MqttTopicFilter { Topic = "old_orch/groups/+/set/#" }, MqttClientSubscribeResultCode.GrantedQoS0),
+                    new(new MqttTopicFilter { Topic = "old_ha/status" }, MqttClientSubscribeResultCode.GrantedQoS0)
+                },
+                string.Empty,
+                new List<MqttUserProperty>()
+            ));
+        mockClient.SetupGet(c => c.IsConnected).Returns(true);
+
+        // 1. Initial setup with group g1
+        var group = new GroupEntity { Id = "g1", Name = "Wohnzimmer", CurrentStreamId = "default" };
+        db.Groups.Add(group);
+        await db.SaveChangesAsync();
+
+        await service.EnsureConnectionAsync(CancellationToken.None);
+
+        // Verify group g1 was discovered under old_ha
+        mockClient.Verify(c => c.PublishAsync(
+            It.Is<MqttApplicationMessage>(m => m.Topic.StartsWith("old_ha/select/audio_orchestrator_g1/source/config") && !string.IsNullOrEmpty(m.ConvertPayloadToString())),
+            It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+
+        mockClient.Invocations.Clear();
+
+        // 2. Change discovery prefix and base topic in settings
+        var settings = await db.Settings.FirstAsync();
+        settings.MqttDiscoveryPrefix = "new_ha";
+        settings.MqttBaseTopic = "new_orch";
+        await db.SaveChangesAsync();
+
+        // Subscription for new topic
+        mockClient.Setup(c => c.SubscribeAsync(It.IsAny<MqttClientSubscribeOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientSubscribeResult(
+                2,
+                new List<MqttClientSubscribeResultItem>
+                {
+                    new(new MqttTopicFilter { Topic = "new_orch/groups/+/set/#" }, MqttClientSubscribeResultCode.GrantedQoS0),
+                    new(new MqttTopicFilter { Topic = "new_ha/status" }, MqttClientSubscribeResultCode.GrantedQoS0)
+                },
+                string.Empty,
+                new List<MqttUserProperty>()
+            ));
+
+        // Reload configuration
+        await service.ReloadConfigurationAsync(CancellationToken.None);
+
+        // Verify old discovery topics were cleaned up (empty payload retained publish)
+        mockClient.Verify(c => c.PublishAsync(
+            It.Is<MqttApplicationMessage>(m => m.Topic.StartsWith("old_ha/select/audio_orchestrator_g1/source/config") && string.IsNullOrEmpty(m.ConvertPayloadToString())),
+            It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        mockClient.Verify(c => c.PublishAsync(
+            It.Is<MqttApplicationMessage>(m => m.Topic == "old_orch/groups/g1/state" && string.IsNullOrEmpty(m.ConvertPayloadToString())),
+            It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        mockClient.Verify(c => c.PublishAsync(
+            It.Is<MqttApplicationMessage>(m => m.Topic == "old_orch/bridge/status" && string.IsNullOrEmpty(m.ConvertPayloadToString())),
+            It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+
+        // Verify new discovery topics were published under new_ha and new_orch
+        mockClient.Verify(c => c.PublishAsync(
+            It.Is<MqttApplicationMessage>(m => m.Topic.StartsWith("new_ha/select/audio_orchestrator_g1/source/config") && !string.IsNullOrEmpty(m.ConvertPayloadToString())),
+            It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        mockClient.Verify(c => c.PublishAsync(
+            It.Is<MqttApplicationMessage>(m => m.Topic == "new_orch/bridge/status" && m.ConvertPayloadToString() == "online"),
+            It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task NotifyFullStateAsync_ShouldDetectDiscoveryChange_WhenSourceNameDelimitersDiffer()
+    {
+        var (sp, db, mockClient, service, _) = CreateTestContext();
+
+        mockClient.Setup(c => c.ConnectAsync(It.IsAny<MqttClientOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientConnectResult());
+        mockClient.Setup(c => c.SubscribeAsync(It.IsAny<MqttClientSubscribeOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientSubscribeResult(
+                1,
+                new List<MqttClientSubscribeResultItem>
+                {
+                    new(new MqttTopicFilter { Topic = "audio_orchestrator/groups/+/set/#" }, MqttClientSubscribeResultCode.GrantedQoS0),
+                    new(new MqttTopicFilter { Topic = "homeassistant/status" }, MqttClientSubscribeResultCode.GrantedQoS0)
+                },
+                string.Empty,
+                new List<MqttUserProperty>()
+            ));
+        mockClient.SetupGet(c => c.IsConnected).Returns(true);
+
+        await service.EnsureConnectionAsync(CancellationToken.None);
+
+        var groupDto = new GroupDto("g1", "Wohnzimmer", "default", [], 50, false);
+
+        // Pass initial state with one radio whose name has a comma and "Radio: " prefix matching what would collide in naive join
+        var state1 = new FullStateDto(
+            [groupDto],
+            [],
+            [new StreamDto("radio_1", "Rock,Radio: Jazz", StreamStatus.Idle, "http://example.com/stream")],
+            [],
+            []
+        );
+
+        await service.NotifyFullStateAsync(state1);
+
+        mockClient.Invocations.Clear();
+
+        // Pass second state with two separate radios "Rock" and "Jazz"
+        var state2 = new FullStateDto(
+            [groupDto],
+            [],
+            [
+                new StreamDto("radio_1", "Rock", StreamStatus.Idle, "http://example.com/rock"),
+                new StreamDto("radio_2", "Jazz", StreamStatus.Idle, "http://example.com/jazz")
+            ],
+            [],
+            []
+        );
+
+        await service.NotifyFullStateAsync(state2);
+
+        // Discovery select entity MUST be republished because source list structured JSON changed
+        mockClient.Verify(c => c.PublishAsync(
+            It.Is<MqttApplicationMessage>(m => m.Topic.StartsWith("homeassistant/select/audio_orchestrator_g1/source/config")),
+            It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
 }

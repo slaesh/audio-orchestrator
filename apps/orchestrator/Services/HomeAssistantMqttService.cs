@@ -140,33 +140,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
     public async Task ReloadConfigurationAsync(CancellationToken ct = default)
     {
         _logger.LogInformation("Reloading Home Assistant MQTT configuration...");
-        await _connectionLock.WaitAsync(ct);
-        try
-        {
-            await StopAndDrainCallbacksAsync();
-            await _publishLock.WaitAsync(ct);
-            try
-            {
-                await DisconnectInternalAsync();
-                using var scope = _serviceProvider.CreateScope();
-                var db = scope.ServiceProvider.GetRequiredService<OrchestratorDbContext>();
-                _currentSettings = await db.Settings.FirstOrDefaultAsync(ct);
-                await ConnectClientAndSubscribeAsync(ct);
-            }
-            finally
-            {
-                _publishLock.Release();
-            }
-
-            if (IsConnected)
-            {
-                await RefreshAndPublishAsync(ct, forceDiscovery: true);
-            }
-        }
-        finally
-        {
-            _connectionLock.Release();
-        }
+        await EnsureConnectionAsync(ct, forceReload: true);
     }
 
     public async Task NotifyFullStateAsync(FullStateDto state, CancellationToken ct = default)
@@ -226,7 +200,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         }
     }
 
-    internal async Task EnsureConnectionAsync(CancellationToken ct)
+    internal async Task EnsureConnectionAsync(CancellationToken ct, bool forceReload = false)
     {
         await _connectionLock.WaitAsync(ct);
         try
@@ -243,7 +217,8 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                     await _publishLock.WaitAsync(ct);
                     try
                     {
-                        await DisconnectInternalAsync();
+                        await CleanupOldDiscoveryIfPrefixChangedOrDisabledAsync(settings, ct);
+                        await DisconnectInternalAsync(publishOffline: false);
                     }
                     finally
                     {
@@ -253,7 +228,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                 return;
             }
 
-            if (IsConnected && HasSameConfig(_currentSettings, settings))
+            if (!forceReload && IsConnected && HasSameConfig(_currentSettings, settings))
             {
                 // Heartbeat: refresh snapshot to pick up structural or external updates, then publish
                 await RefreshAndPublishAsync(ct);
@@ -264,7 +239,10 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             await _publishLock.WaitAsync(ct);
             try
             {
-                await DisconnectInternalAsync();
+                var oldBaseTopic = GetNormalizedBaseTopic(_currentSettings);
+                var newBaseTopic = GetNormalizedBaseTopic(settings);
+                await CleanupOldDiscoveryIfPrefixChangedOrDisabledAsync(settings, ct);
+                await DisconnectInternalAsync(publishOffline: oldBaseTopic == newBaseTopic);
                 _currentSettings = settings;
                 await ConnectClientAndSubscribeAsync(ct);
             }
@@ -297,18 +275,65 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                && a.MqttBaseTopic == b.MqttBaseTopic;
     }
 
-    private string GetNormalizedDiscoveryPrefix()
+    private static string GetNormalizedDiscoveryPrefix(OrchestratorSettingsEntity? settings)
     {
-        return string.IsNullOrWhiteSpace(_currentSettings?.MqttDiscoveryPrefix)
+        return string.IsNullOrWhiteSpace(settings?.MqttDiscoveryPrefix)
             ? "homeassistant"
-            : _currentSettings.MqttDiscoveryPrefix.Trim().TrimEnd('/');
+            : settings.MqttDiscoveryPrefix.Trim().TrimEnd('/');
     }
 
-    private string GetNormalizedBaseTopic()
+    private static string GetNormalizedBaseTopic(OrchestratorSettingsEntity? settings)
     {
-        return string.IsNullOrWhiteSpace(_currentSettings?.MqttBaseTopic)
+        return string.IsNullOrWhiteSpace(settings?.MqttBaseTopic)
             ? "audio_orchestrator"
-            : _currentSettings.MqttBaseTopic.Trim().TrimEnd('/');
+            : settings.MqttBaseTopic.Trim().TrimEnd('/');
+    }
+
+    private string GetNormalizedDiscoveryPrefix() => GetNormalizedDiscoveryPrefix(_currentSettings);
+    private string GetNormalizedBaseTopic() => GetNormalizedBaseTopic(_currentSettings);
+
+    private async Task CleanupOldDiscoveryIfPrefixChangedOrDisabledAsync(OrchestratorSettingsEntity? newSettings, CancellationToken ct)
+    {
+        if (!IsConnected || _currentSettings == null || _mqttClient == null) return;
+
+        var oldDiscPrefix = GetNormalizedDiscoveryPrefix(_currentSettings);
+        var oldBaseTopic = GetNormalizedBaseTopic(_currentSettings);
+        var newDiscPrefix = GetNormalizedDiscoveryPrefix(newSettings);
+        var newBaseTopic = GetNormalizedBaseTopic(newSettings);
+
+        var isNewDisabled = newSettings == null || !newSettings.HomeAssistantEnabled || string.IsNullOrWhiteSpace(newSettings.MqttHost);
+        var prefixOrTopicChanged = oldDiscPrefix != newDiscPrefix || oldBaseTopic != newBaseTopic;
+
+        if (!prefixOrTopicChanged && !isNewDisabled) return;
+
+        _logger.LogInformation(
+            "MQTT prefix, base topic or HA state changed (old: disc={OldDisc}, base={OldBase}; new: disc={NewDisc}, base={NewBase}, disabled={Disabled}). Cleaning up old retained discovery topics...",
+            oldDiscPrefix, oldBaseTopic, newDiscPrefix, newBaseTopic, isNewDisabled);
+
+        foreach (var groupId in _discoveredGroupIds.ToList())
+        {
+            try
+            {
+                await UnpublishGroupDiscoveryAsync(oldDiscPrefix, oldBaseTopic, groupId, ct);
+                _discoveredGroupIds.Remove(groupId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to unpublish discovery for group {GroupId} under old prefix {Prefix}", groupId, oldDiscPrefix);
+            }
+        }
+
+        if (oldBaseTopic != newBaseTopic || isNewDisabled)
+        {
+            try
+            {
+                await PublishAsync($"{oldBaseTopic}/bridge/status", string.Empty, retain: true, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to clear old bridge status topic {Topic}", $"{oldBaseTopic}/bridge/status");
+            }
+        }
     }
 
     private async Task ConnectClientAndSubscribeAsync(CancellationToken ct)
@@ -426,13 +451,13 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         }
     }
 
-    private async Task DisconnectInternalAsync()
+    private async Task DisconnectInternalAsync(bool publishOffline = true)
     {
         if (_mqttClient != null)
         {
             try
             {
-                if (_mqttClient.IsConnected && _currentSettings != null)
+                if (publishOffline && _mqttClient.IsConnected && _currentSettings != null)
                 {
                     var baseTopic = GetNormalizedBaseTopic();
                     await PublishAsync($"{baseTopic}/bridge/status", "offline", retain: true, CancellationToken.None);
@@ -542,7 +567,13 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             }
 
             // 2. Check if discovery needs re-publishing (group structure, names, or source list changed, or forced)
-            var discoveryHash = $"{discPrefix}|{baseTopic}|{string.Join(",", sourceList)}|{string.Join(";", state.Groups.Select(g => $"{g.Id}:{g.Name}"))}";
+            var discoveryHash = JsonSerializer.Serialize(new
+            {
+                Prefix = discPrefix,
+                BaseTopic = baseTopic,
+                Sources = sourceList,
+                Groups = state.Groups.Select(g => new { g.Id, g.Name })
+            });
             bool discoveryNeedsUpdate = wasForced || discoveryHash != _lastDiscoveryHash;
 
             foreach (var group in state.Groups)
