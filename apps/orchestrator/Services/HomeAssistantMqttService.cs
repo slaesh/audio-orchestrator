@@ -610,7 +610,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         };
         await PublishAsync($"{discPrefix}/button/audio_orchestrator_{groupId}/pause/config", pauseBtnConfig.ToJsonString(), retain: true, ct);
 
-        // Entity 8: button.group_stop (Stop button: always available, switches group to default silence)
+        // Entity 8: button.group_stop (Stop button: active only on Spotify)
         var stopBtnConfig = new JsonObject
         {
             ["name"] = "Stopp",
@@ -618,7 +618,12 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             ["icon"] = "mdi:stop",
             ["command_topic"] = $"{groupCmdTopic}/command",
             ["payload_press"] = "stop",
-            ["availability_topic"] = bridgeStatusTopic,
+            ["availability"] = new JsonArray
+            {
+                new JsonObject { ["topic"] = bridgeStatusTopic },
+                new JsonObject { ["topic"] = transportAvailTopic }
+            },
+            ["availability_mode"] = "all",
             ["device"] = CreateDeviceObject(groupId, groupName)
         };
         await PublishAsync($"{discPrefix}/button/audio_orchestrator_{groupId}/stop/config", stopBtnConfig.ToJsonString(), retain: true, ct);

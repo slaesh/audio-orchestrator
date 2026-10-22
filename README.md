@@ -59,6 +59,7 @@ flowchart TD
 - **Containerized Radio Plugins**: Extensible Docker-based radio handler plugins for rich live song title, artist, and cover art metadata extraction (e.g. Audalaxy / StreamABC for Sunshine Live, with automatic ICY stream metadata fallback).
 - **Auto-Discovery & Zero-Config Clients**: Any new Snapclient device on your network appears automatically in the Unassigned Rooms inventory.
 - **Bi-Directional Volume & Mix Control**: Full master volume and individual room mix balance controls synced in real time across the web UI, external REST API, and Spotify mobile apps.
+- **Home Assistant Ready**: Native MQTT Auto-Discovery for devices/controls plus an optional [HACS Custom Integration](docs/home-assistant-integration.md) for full `media_player` support.
 - **Kiosk & Touchscreen Widget View**: Dedicated `/widgets/selector` and `/widgets/group/:id` full-screen layouts designed for wall-mounted tablets and home automation displays.
 - **Self-Healing State**: All configurations, stream assignments, and volume balances are persisted in SQLite and reconciled immediately after host reboots.
 
