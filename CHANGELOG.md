@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.1](https://github.com/slaesh/audio-orchestrator/compare/v0.4.0...v0.4.1) (2026-10-22)
+
+
+### Bug Fixes
+
+* **spotify:** dynamically resolve latest compatible version for new nodes ([#7](https://github.com/slaesh/audio-orchestrator/issues/7)) ([beb90c4](https://github.com/slaesh/audio-orchestrator/commit/beb90c4852d4028c63201b1788e88ec367b6d8df))
+* **types:** harden API types with StreamStatus, NodeType, UpgradePhase and fix codegen mappings ([#5](https://github.com/slaesh/audio-orchestrator/issues/5)) ([92e8bd4](https://github.com/slaesh/audio-orchestrator/commit/92e8bd4bf0b516520a0fd5e93ab508ab9b39b7c7))
+
 ## [0.4.0](https://github.com/slaesh/audio-orchestrator/compare/v0.3.0...v0.4.0) (2026-10-21)
 
 
