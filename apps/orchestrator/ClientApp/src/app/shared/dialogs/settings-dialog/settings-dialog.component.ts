@@ -25,6 +25,7 @@ import { ZardButtonComponent } from '../../../core/ui/button/button.component';
 import { DataService } from '../../../core/services/data.service';
 import { ToastService } from '../../../core/services/toast.service';
 import { VolumeProfile, HomeAssistantSettingsDto } from '@api';
+import { HttpErrorResponse } from '@angular/common/http';
 
 @Component({
   selector: 'app-settings-dialog',
@@ -179,6 +180,19 @@ export class SettingsDialogComponent implements OnInit {
         this.toast.error('Ungültiger Port (1-65535)');
         return;
       }
+
+      const discPrefix = this.haDiscoveryPrefix().trim().replace(/\/+$/, '');
+      const baseTopic = this.haBaseTopic().trim().replace(/\/+$/, '');
+
+      if (!discPrefix || discPrefix.includes('+') || discPrefix.includes('#') || /\s/.test(discPrefix)) {
+        this.toast.error('Ungültiger Discovery-Präfix (+, # und Leerzeichen sind nicht erlaubt)');
+        return;
+      }
+
+      if (!baseTopic || baseTopic.includes('+') || baseTopic.includes('#') || /\s/.test(baseTopic)) {
+        this.toast.error('Ungültiges Basis-Topic (+, # und Leerzeichen sind nicht erlaubt)');
+        return;
+      }
     }
 
     this.saving.set(true);
@@ -207,8 +221,11 @@ export class SettingsDialogComponent implements OnInit {
 
       this.toast.success('Einstellungen erfolgreich gespeichert');
       this.ref.close();
-    } catch (e) {
-      this.toast.error('Fehler beim Speichern der Einstellungen');
+    } catch (e: unknown) {
+      const msg = e instanceof HttpErrorResponse && typeof e.error === 'string'
+        ? e.error
+        : 'Fehler beim Speichern der Einstellungen';
+      this.toast.error(msg);
     } finally {
       this.saving.set(false);
     }

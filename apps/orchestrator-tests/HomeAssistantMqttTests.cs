@@ -286,4 +286,118 @@ public class HomeAssistantMqttTests
         var badRequest = Assert.IsType<BadRequestObjectResult>(result.Result);
         Assert.Equal("Ungültiger Port (1-65535).", badRequest.Value);
     }
+
+    [Theory]
+    [InlineData("homeassistant/#", "audio_orchestrator")]
+    [InlineData("homeassistant", "audio+orchestrator")]
+    [InlineData("home assistant", "audio_orchestrator")]
+    public async Task UpdateSettings_ShouldRejectInvalidTopics(string discoveryPrefix, string baseTopic)
+    {
+        await using var db = new OrchestratorDbContext(_dbOptions);
+        var mockVolume = new Mock<VolumeOrchestratorService>(db, Mock.Of<ISnapcastService>(), Mock.Of<ILibrespotApiClient>(), Mock.Of<IHubContext<AudioHub, IAudioClient>>(), Mock.Of<ILogger<VolumeOrchestratorService>>());
+        var mockStateBuilder = new Mock<FullStateBuilder>(db, Mock.Of<ISnapcastService>(), null, null, null, null);
+        var mockHub = new Mock<IHubContext<AudioHub, IAudioClient>>();
+        var mockMqtt = new Mock<IHomeAssistantMqttService>();
+
+        var controller = new SettingsController(db, mockVolume.Object, mockStateBuilder.Object, mockHub.Object, mockMqtt.Object, Mock.Of<ILogger<SettingsController>>());
+
+        var req = new UpdateSettingsRequest(
+            VolumeProfile: VolumeProfile.Linear,
+            HomeAssistant: new HomeAssistantSettingsDto(
+                Enabled: true,
+                Host: "192.168.178.50",
+                Port: 1883,
+                Username: null,
+                Password: null,
+                HasPassword: false,
+                UseTls: false,
+                DiscoveryPrefix: discoveryPrefix,
+                BaseTopic: baseTopic,
+                IsConnected: false
+            )
+        );
+
+        var result = await controller.UpdateSettings(req);
+        Assert.IsType<BadRequestObjectResult>(result.Result);
+    }
+
+    [Fact]
+    public async Task UpdateSettings_ShouldRejectConnectionChange_WhenSavedPasswordReusedWithoutExplicitPassword()
+    {
+        await using var db = new OrchestratorDbContext(_dbOptions);
+        db.Settings.Add(new OrchestratorSettingsEntity
+        {
+            Id = "default",
+            HomeAssistantEnabled = true,
+            MqttHost = "192.168.178.50",
+            MqttPort = 1883,
+            MqttPassword = "super-secret-password"
+        });
+        await db.SaveChangesAsync();
+
+        var mockVolume = new Mock<VolumeOrchestratorService>(db, Mock.Of<ISnapcastService>(), Mock.Of<ILibrespotApiClient>(), Mock.Of<IHubContext<AudioHub, IAudioClient>>(), Mock.Of<ILogger<VolumeOrchestratorService>>());
+        var mockStateBuilder = new Mock<FullStateBuilder>(db, Mock.Of<ISnapcastService>(), null, null, null, null);
+        var mockHub = new Mock<IHubContext<AudioHub, IAudioClient>>();
+        var mockMqtt = new Mock<IHomeAssistantMqttService>();
+
+        var controller = new SettingsController(db, mockVolume.Object, mockStateBuilder.Object, mockHub.Object, mockMqtt.Object, Mock.Of<ILogger<SettingsController>>());
+
+        // Attempt to redirect host to an attacker IP while omitting Password (hoping to steal old password)
+        var req = new UpdateSettingsRequest(
+            VolumeProfile: VolumeProfile.Linear,
+            HomeAssistant: new HomeAssistantSettingsDto(
+                Enabled: true,
+                Host: "attacker.com",
+                Port: 1883,
+                Username: null,
+                Password: null, // Omitted
+                HasPassword: true,
+                UseTls: false,
+                DiscoveryPrefix: "homeassistant",
+                BaseTopic: "audio_orchestrator",
+                IsConnected: false
+            )
+        );
+
+        var result = await controller.UpdateSettings(req);
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result.Result);
+        Assert.Contains("Verbindungsdaten geändert", badRequest.Value?.ToString());
+    }
+
+    [Fact]
+    public async Task TestMqttConnection_ShouldNotReuseSavedPassword_WhenConnectionSettingsMismatch()
+    {
+        await using var db = new OrchestratorDbContext(_dbOptions);
+        db.Settings.Add(new OrchestratorSettingsEntity
+        {
+            Id = "default",
+            HomeAssistantEnabled = true,
+            MqttHost = "192.168.178.50",
+            MqttPort = 1883,
+            MqttUsername = "user1",
+            MqttPassword = "super-secret-password",
+            MqttUseTls = true
+        });
+        await db.SaveChangesAsync();
+
+        var mockVolume = new Mock<VolumeOrchestratorService>(db, Mock.Of<ISnapcastService>(), Mock.Of<ILibrespotApiClient>(), Mock.Of<IHubContext<AudioHub, IAudioClient>>(), Mock.Of<ILogger<VolumeOrchestratorService>>());
+        var mockStateBuilder = new Mock<FullStateBuilder>(db, Mock.Of<ISnapcastService>(), null, null, null, null);
+        var mockHub = new Mock<IHubContext<AudioHub, IAudioClient>>();
+        var mockMqtt = new Mock<IHomeAssistantMqttService>();
+
+        TestMqttConnectionRequest? capturedRequest = null;
+        mockMqtt.Setup(m => m.TestConnectionAsync(It.IsAny<TestMqttConnectionRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<TestMqttConnectionRequest, CancellationToken>((req, ct) => capturedRequest = req)
+            .ReturnsAsync(new TestMqttConnectionResponse(true, "OK"));
+
+        var controller = new SettingsController(db, mockVolume.Object, mockStateBuilder.Object, mockHub.Object, mockMqtt.Object, Mock.Of<ILogger<SettingsController>>());
+
+        // Test with different port (e.g. 1884 instead of 1883) and null password
+        var testReq = new TestMqttConnectionRequest("192.168.178.50", 1884, "user1", null, true);
+        await controller.TestMqttConnection(testReq);
+
+        Assert.NotNull(capturedRequest);
+        // Password should NOT be populated because Port differed!
+        Assert.Null(capturedRequest.Password);
+    }
 }

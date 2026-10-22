@@ -140,10 +140,18 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
 
     public async Task NotifyFullStateAsync(FullStateDto state, CancellationToken ct = default)
     {
-        _lastFullState = state;
         if (!IsConnected || _currentSettings == null || !_currentSettings.HomeAssistantEnabled) return;
 
-        await PublishDiscoveryAndStatesAsync(state, ct);
+        await _publishLock.WaitAsync(ct);
+        try
+        {
+            _lastFullState = state;
+            await PublishDiscoveryAndStatesInternalAsync(state, ct);
+        }
+        finally
+        {
+            _publishLock.Release();
+        }
     }
 
     public async Task NotifyRadioMetadataAsync(string streamId, string? title, string? artist, string? coverUrl, CancellationToken ct = default)
@@ -166,17 +174,24 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
 
     private async Task RefreshAndPublishAsync(CancellationToken ct, bool forceDiscovery = false)
     {
+        if (!IsConnected || _currentSettings == null) return;
+
+        await _publishLock.WaitAsync(ct);
         try
         {
             using var scope = _serviceProvider.CreateScope();
             var stateBuilder = scope.ServiceProvider.GetRequiredService<FullStateBuilder>();
             var freshState = await stateBuilder.BuildAsync();
             _lastFullState = freshState;
-            await PublishDiscoveryAndStatesAsync(freshState, ct, forceDiscovery);
+            await PublishDiscoveryAndStatesInternalAsync(freshState, ct, forceDiscovery);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to refresh state and publish to MQTT");
+        }
+        finally
+        {
+            _publishLock.Release();
         }
     }
 
@@ -185,7 +200,6 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         using var scope = _serviceProvider.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<OrchestratorDbContext>();
         var settings = await db.Settings.FirstOrDefaultAsync(ct);
-        var stateBuilder = scope.ServiceProvider.GetRequiredService<FullStateBuilder>();
 
         if (settings == null || !settings.HomeAssistantEnabled || string.IsNullOrWhiteSpace(settings.MqttHost))
         {
@@ -201,9 +215,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         if (IsConnected && HasSameConfig(_currentSettings, settings))
         {
             // Heartbeat: refresh snapshot to pick up structural or external updates, then publish
-            var freshState = await stateBuilder.BuildAsync();
-            _lastFullState = freshState;
-            await PublishDiscoveryAndStatesAsync(freshState, ct);
+            await RefreshAndPublishAsync(ct);
             return;
         }
 
@@ -306,10 +318,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             await _mqttClient.SubscribeAsync(subOptions, ct);
 
             // 3. Initial sync
-            using var scope = _serviceProvider.CreateScope();
-            var stateBuilder = scope.ServiceProvider.GetRequiredService<FullStateBuilder>();
-            _lastFullState = await stateBuilder.BuildAsync();
-            await PublishDiscoveryAndStatesAsync(_lastFullState, ct, forceDiscovery: true);
+            await RefreshAndPublishAsync(ct, forceDiscovery: true);
         }
         catch (Exception ex)
         {
@@ -371,11 +380,10 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         await _mqttClient.PublishAsync(message, ct);
     }
 
-    private async Task PublishDiscoveryAndStatesAsync(FullStateDto state, CancellationToken ct, bool forceDiscovery = false)
+    private async Task PublishDiscoveryAndStatesInternalAsync(FullStateDto state, CancellationToken ct, bool forceDiscovery = false)
     {
         if (!IsConnected || _currentSettings == null) return;
 
-        await _publishLock.WaitAsync(ct);
         try
         {
             var baseTopic = GetNormalizedBaseTopic();
@@ -531,10 +539,6 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to publish discovery and states to MQTT");
-        }
-        finally
-        {
-            _publishLock.Release();
         }
     }
 
@@ -757,7 +761,8 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
     private async Task HandleIncomingMessageAsync(MqttApplicationMessageReceivedEventArgs e)
     {
         var topic = e.ApplicationMessage.Topic;
-        var payload = e.ApplicationMessage.ConvertPayloadToString().Trim();
+        var rawPayload = e.ApplicationMessage.ConvertPayloadToString() ?? string.Empty;
+        var payload = rawPayload.Trim();
 
         _logger.LogDebug("MQTT Message received: {Topic} => {Payload}", topic, payload);
 
@@ -789,7 +794,9 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
 
         try
         {
-            await ProcessGroupCommandAsync(groupId, action, payload);
+            // Preserve raw payload for source selection to retain exact whitespace in source names
+            var commandPayload = action == "source" ? rawPayload : payload;
+            await ProcessGroupCommandAsync(groupId, action, commandPayload);
         }
         catch (Exception ex)
         {
@@ -858,9 +865,8 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
 
         // Broadcast updated state to SignalR and MQTT
         var freshState = await stateBuilder.BuildAsync();
-        _lastFullState = freshState;
         await hubContext.Clients.All.OnFullStateUpdate(freshState);
-        await PublishDiscoveryAndStatesAsync(freshState, CancellationToken.None);
+        await NotifyFullStateAsync(freshState, CancellationToken.None);
     }
 
     public record SourceMappingResult(

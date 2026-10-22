@@ -77,6 +77,30 @@ public class SettingsController : ControllerBase
                 return BadRequest("Ungültiger Port (1-65535).");
             }
 
+            var discoveryPrefix = string.IsNullOrWhiteSpace(req.HomeAssistant.DiscoveryPrefix) ? "homeassistant" : req.HomeAssistant.DiscoveryPrefix.Trim().TrimEnd('/');
+            var baseTopic = string.IsNullOrWhiteSpace(req.HomeAssistant.BaseTopic) ? "audio_orchestrator" : req.HomeAssistant.BaseTopic.Trim().TrimEnd('/');
+
+            if (!IsValidMqttTopic(discoveryPrefix))
+            {
+                return BadRequest("Ungültiger Discovery-Präfix: Wildcards (+, #) oder ungültige Zeichen sind nicht erlaubt.");
+            }
+
+            if (!IsValidMqttTopic(baseTopic))
+            {
+                return BadRequest("Ungültiges Basis-Topic: Wildcards (+, #) oder ungültige Zeichen sind nicht erlaubt.");
+            }
+
+            // Prevent saved-password reuse when connection settings change
+            bool connectionChanged = !string.Equals(settings.MqttHost, req.HomeAssistant.Host, StringComparison.OrdinalIgnoreCase)
+                || settings.MqttPort != port
+                || !string.Equals(settings.MqttUsername ?? string.Empty, req.HomeAssistant.Username ?? string.Empty, StringComparison.Ordinal)
+                || settings.MqttUseTls != req.HomeAssistant.UseTls;
+
+            if (connectionChanged && req.HomeAssistant.Password == null && !string.IsNullOrEmpty(settings.MqttPassword))
+            {
+                return BadRequest("Verbindungsdaten geändert: Bei Änderung von Host, Port, Benutzername oder TLS muss das Passwort neu angegeben oder explizit gelöscht werden.");
+            }
+
             settings.HomeAssistantEnabled = req.HomeAssistant.Enabled;
             settings.MqttHost = req.HomeAssistant.Host;
             settings.MqttPort = port;
@@ -86,8 +110,8 @@ public class SettingsController : ControllerBase
                 settings.MqttPassword = req.HomeAssistant.Password;
             }
             settings.MqttUseTls = req.HomeAssistant.UseTls;
-            settings.MqttDiscoveryPrefix = string.IsNullOrWhiteSpace(req.HomeAssistant.DiscoveryPrefix) ? "homeassistant" : req.HomeAssistant.DiscoveryPrefix.Trim().TrimEnd('/');
-            settings.MqttBaseTopic = string.IsNullOrWhiteSpace(req.HomeAssistant.BaseTopic) ? "audio_orchestrator" : req.HomeAssistant.BaseTopic.Trim().TrimEnd('/');
+            settings.MqttDiscoveryPrefix = discoveryPrefix;
+            settings.MqttBaseTopic = baseTopic;
         }
 
         await _db.SaveChangesAsync();
@@ -127,12 +151,25 @@ public class SettingsController : ControllerBase
         if (req.Password == null)
         {
             var settings = await _db.Settings.FirstOrDefaultAsync();
-            if (settings?.MqttHost == req.Host && !string.IsNullOrEmpty(settings.MqttPassword))
+            if (settings != null
+                && !string.IsNullOrEmpty(settings.MqttPassword)
+                && string.Equals(settings.MqttHost, req.Host, StringComparison.OrdinalIgnoreCase)
+                && settings.MqttPort == req.Port
+                && string.Equals(settings.MqttUsername ?? string.Empty, req.Username ?? string.Empty, StringComparison.Ordinal)
+                && settings.MqttUseTls == req.UseTls)
             {
                 requestToUse = req with { Password = settings.MqttPassword };
             }
         }
         var result = await _mqttService.TestConnectionAsync(requestToUse);
         return Ok(result);
+    }
+
+    private static bool IsValidMqttTopic(string topic)
+    {
+        if (string.IsNullOrWhiteSpace(topic)) return false;
+        if (topic.Contains('+') || topic.Contains('#') || topic.Contains('\0')) return false;
+        if (topic.Any(char.IsWhiteSpace)) return false;
+        return true;
     }
 }
