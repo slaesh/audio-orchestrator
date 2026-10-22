@@ -491,12 +491,20 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             .WithQualityOfServiceLevel(MQTTnet.Protocol.MqttQualityOfServiceLevel.AtLeastOnce)
             .Build();
 
-        await _mqttClient.PublishAsync(message, ct);
+        var result = await _mqttClient.PublishAsync(message, ct);
+        if (result != null && result.ReasonCode != MqttClientPublishReasonCode.Success)
+        {
+            _logger.LogWarning("MQTT publish rejected for topic {Topic}: {ReasonCode} ({ReasonString})", topic, result.ReasonCode, result.ReasonString);
+            throw new InvalidOperationException($"MQTT publish rejected for topic '{topic}': {result.ReasonCode}");
+        }
     }
 
     private async Task PublishDiscoveryAndStatesInternalAsync(FullStateDto state, CancellationToken ct, bool forceDiscovery = false)
     {
         if (!IsConnected || _currentSettings == null) return;
+
+        var wasForced = forceDiscovery || _forceDiscovery;
+        _forceDiscovery = false;
 
         try
         {
@@ -533,8 +541,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
 
             // 2. Check if discovery needs re-publishing (group structure, names, or source list changed, or forced)
             var discoveryHash = $"{discPrefix}|{baseTopic}|{string.Join(",", sourceList)}|{string.Join(";", state.Groups.Select(g => $"{g.Id}:{g.Name}"))}";
-            bool discoveryNeedsUpdate = forceDiscovery || _forceDiscovery || discoveryHash != _lastDiscoveryHash;
-            _forceDiscovery = false;
+            bool discoveryNeedsUpdate = wasForced || discoveryHash != _lastDiscoveryHash;
 
             foreach (var group in state.Groups)
             {
@@ -655,7 +662,14 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         }
         catch (Exception ex)
         {
+            if (wasForced)
+            {
+                _forceDiscovery = true;
+            }
+            _lastDiscoveryHash = string.Empty;
+            _discoveredGroupIds.Clear();
             _logger.LogError(ex, "Failed to publish discovery and states to MQTT");
+            throw;
         }
     }
 

@@ -552,6 +552,8 @@ public class HomeAssistantMqttTests
         db.SaveChanges();
 
         var mockClient = new Mock<IMqttClient>();
+        mockClient.Setup(c => c.PublishAsync(It.IsAny<MqttApplicationMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientPublishResult(1, MqttClientPublishReasonCode.Success, string.Empty, Array.Empty<MqttUserProperty>()));
         var mockFactory = new Mock<IMqttClientFactorySeam>();
         mockFactory.Setup(f => f.CreateClient()).Returns(mockClient.Object);
 
@@ -950,5 +952,61 @@ public class HomeAssistantMqttTests
         Assert.Equal("radio_r1", HomeAssistantMqttService.ResolveSourceToStreamId("radio_r1", radios, spotifies));
         Assert.Equal("spotify_s1", HomeAssistantMqttService.ResolveSourceToStreamId("s1", radios, spotifies));
         Assert.Equal("spotify_s1", HomeAssistantMqttService.ResolveSourceToStreamId("spotify_s1", radios, spotifies));
+    }
+
+    [Fact]
+    public async Task PublishDiscovery_ShouldNotCacheDiscovery_AndPreserveRetry_WhenPublishIsNegativelyAcknowledged()
+    {
+        var (sp, db, mockClient, service, _) = CreateTestContext();
+
+        mockClient.Setup(c => c.ConnectAsync(It.IsAny<MqttClientOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientConnectResult());
+        mockClient.Setup(c => c.SubscribeAsync(It.IsAny<MqttClientSubscribeOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientSubscribeResult(
+                1,
+                new List<MqttClientSubscribeResultItem>
+                {
+                    new(new MqttTopicFilter { Topic = "audio_orchestrator/groups/+/set/#" }, MqttClientSubscribeResultCode.GrantedQoS0),
+                    new(new MqttTopicFilter { Topic = "homeassistant/status" }, MqttClientSubscribeResultCode.GrantedQoS0)
+                },
+                string.Empty,
+                new List<MqttUserProperty>()
+            ));
+        mockClient.SetupGet(c => c.IsConnected).Returns(true);
+
+        await service.EnsureConnectionAsync(CancellationToken.None);
+
+        db.Groups.Add(new GroupEntity { Id = "g1", Name = "Wohnzimmer", CurrentStreamId = "default" });
+        await db.SaveChangesAsync();
+
+        // 1. Simulate negative acknowledgement from MQTT broker (e.g. NotAuthorized)
+        mockClient.Setup(c => c.PublishAsync(
+                It.Is<MqttApplicationMessage>(m => m.Topic.Contains("audio_orchestrator_g1")),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientPublishResult(1, MqttClientPublishReasonCode.NotAuthorized, "ACL rejected", Array.Empty<MqttUserProperty>()));
+
+        // Trigger discovery via HA status online (which sets forceDiscovery = true)
+        var haOnlineMsg = new MqttApplicationMessageBuilder()
+            .WithTopic("homeassistant/status")
+            .WithPayload("online")
+            .Build();
+        var args = new MqttApplicationMessageReceivedEventArgs("c1", haOnlineMsg, new MqttPublishPacket(), (_, _) => Task.CompletedTask);
+
+        await service.HandleIncomingMessageAsync(args);
+
+        // Discovery failed due to negative acknowledgement, so it must not be cached as successful
+        mockClient.Invocations.Clear();
+
+        // 2. Broker recovers: publish calls now succeed
+        mockClient.Setup(c => c.PublishAsync(It.IsAny<MqttApplicationMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientPublishResult(1, MqttClientPublishReasonCode.Success, string.Empty, Array.Empty<MqttUserProperty>()));
+
+        // Next heartbeat/sync: Even though discoveryHash has not changed, the retry was preserved!
+        await service.EnsureConnectionAsync(CancellationToken.None);
+
+        // Verify discovery was re-attempted and published
+        mockClient.Verify(c => c.PublishAsync(
+            It.Is<MqttApplicationMessage>(m => m.Topic.StartsWith("homeassistant/select/audio_orchestrator_g1/source/config")),
+            It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
 }
