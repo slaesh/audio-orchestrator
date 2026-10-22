@@ -66,6 +66,7 @@ export class SettingsDialogComponent implements OnInit {
   haUsername = signal<string>('');
   haPassword = signal<string>('');
   haHasPassword = signal<boolean>(false);
+  haPasswordCleared = signal<boolean>(false);
   haUseTls = signal<boolean>(false);
   haDiscoveryPrefix = signal<string>('homeassistant');
   haBaseTopic = signal<string>('audio_orchestrator');
@@ -93,6 +94,7 @@ export class SettingsDialogComponent implements OnInit {
         this.haUsername.set(res.homeAssistant.username ?? '');
         this.haPassword.set('');
         this.haHasPassword.set(res.homeAssistant.hasPassword);
+        this.haPasswordCleared.set(false);
         this.haUseTls.set(res.homeAssistant.useTls);
         this.haDiscoveryPrefix.set(res.homeAssistant.discoveryPrefix || 'homeassistant');
         this.haBaseTopic.set(res.homeAssistant.baseTopic || 'audio_orchestrator');
@@ -111,6 +113,19 @@ export class SettingsDialogComponent implements OnInit {
     this.selectedProfile.set(profile);
   }
 
+  clearPassword() {
+    this.haHasPassword.set(false);
+    this.haPassword.set('');
+    this.haPasswordCleared.set(true);
+  }
+
+  onPasswordChange(val: string) {
+    this.haPassword.set(val);
+    if (val) {
+      this.haPasswordCleared.set(false);
+    }
+  }
+
   async testConnection() {
     const host = this.haHost().trim();
     if (!host) {
@@ -123,11 +138,12 @@ export class SettingsDialogComponent implements OnInit {
 
     try {
       const enteredPassword = this.haPassword();
+      const passwordToSend = enteredPassword ? enteredPassword : (this.haPasswordCleared() ? '' : undefined);
       const res = await this.data.testMqttConnection({
         host,
         port: this.haPort() || 1883,
         username: this.haUsername().trim() || undefined,
-        password: enteredPassword ? enteredPassword : undefined,
+        password: passwordToSend,
         useTls: this.haUseTls(),
       });
 
@@ -156,12 +172,13 @@ export class SettingsDialogComponent implements OnInit {
       this.data.setShowRawVolume(this.showRaw());
 
       const enteredPassword = this.haPassword();
+      const passwordToSend = enteredPassword ? enteredPassword : (this.haPasswordCleared() ? '' : undefined);
       const haSettings: HomeAssistantSettingsDto = {
         enabled: this.haEnabled(),
         host: this.haHost().trim(),
         port: this.haPort() || 1883,
         username: this.haUsername().trim() || undefined,
-        password: enteredPassword ? enteredPassword : undefined,
+        password: passwordToSend,
         hasPassword: this.haHasPassword(),
         useTls: this.haUseTls(),
         discoveryPrefix: this.haDiscoveryPrefix().trim() || 'homeassistant',

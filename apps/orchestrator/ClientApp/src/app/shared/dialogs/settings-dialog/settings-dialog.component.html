@@ -198,15 +198,26 @@
                 />
               </div>
               <div>
-                <label for="mqttPassword" class="block text-[11px] font-medium text-muted-foreground mb-1">
-                  Passwort (optional)
-                </label>
+                <div class="flex items-center justify-between mb-1">
+                  <label for="mqttPassword" class="block text-[11px] font-medium text-muted-foreground">
+                    Passwort (optional)
+                  </label>
+                  @if (haHasPassword()) {
+                    <button
+                      type="button"
+                      (click)="clearPassword()"
+                      class="text-[10px] text-destructive hover:underline font-normal cursor-pointer"
+                    >
+                      Gespeichertes Passwort entfernen
+                    </button>
+                  }
+                </div>
                 <input
                   type="password"
                   id="mqttPassword"
-                  placeholder="••••••••"
+                  [placeholder]="haHasPassword() ? '•••••••• (gespeichert)' : '••••••••'"
                   [ngModel]="haPassword()"
-                  (ngModelChange)="haPassword.set($event)"
+                  (ngModelChange)="onPasswordChange($event)"
                   class="w-full text-xs px-3 py-2 rounded-lg border border-input bg-background focus:outline-none focus:ring-1 focus:ring-primary"
                 />
               </div>

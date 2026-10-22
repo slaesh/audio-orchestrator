@@ -80,8 +80,8 @@ public class SettingsController : ControllerBase
                 settings.MqttPassword = req.HomeAssistant.Password;
             }
             settings.MqttUseTls = req.HomeAssistant.UseTls;
-            settings.MqttDiscoveryPrefix = string.IsNullOrWhiteSpace(req.HomeAssistant.DiscoveryPrefix) ? "homeassistant" : req.HomeAssistant.DiscoveryPrefix;
-            settings.MqttBaseTopic = string.IsNullOrWhiteSpace(req.HomeAssistant.BaseTopic) ? "audio_orchestrator" : req.HomeAssistant.BaseTopic;
+            settings.MqttDiscoveryPrefix = string.IsNullOrWhiteSpace(req.HomeAssistant.DiscoveryPrefix) ? "homeassistant" : req.HomeAssistant.DiscoveryPrefix.Trim().TrimEnd('/');
+            settings.MqttBaseTopic = string.IsNullOrWhiteSpace(req.HomeAssistant.BaseTopic) ? "audio_orchestrator" : req.HomeAssistant.BaseTopic.Trim().TrimEnd('/');
         }
 
         await _db.SaveChangesAsync();

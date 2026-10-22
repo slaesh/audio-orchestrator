@@ -233,6 +233,20 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                && a.MqttBaseTopic == b.MqttBaseTopic;
     }
 
+    private string GetNormalizedDiscoveryPrefix()
+    {
+        return string.IsNullOrWhiteSpace(_currentSettings?.MqttDiscoveryPrefix)
+            ? "homeassistant"
+            : _currentSettings.MqttDiscoveryPrefix.Trim().TrimEnd('/');
+    }
+
+    private string GetNormalizedBaseTopic()
+    {
+        return string.IsNullOrWhiteSpace(_currentSettings?.MqttBaseTopic)
+            ? "audio_orchestrator"
+            : _currentSettings.MqttBaseTopic.Trim().TrimEnd('/');
+    }
+
     private async Task ConnectInternalAsync(CancellationToken ct)
     {
         if (_currentSettings == null || !_currentSettings.HomeAssistantEnabled || string.IsNullOrWhiteSpace(_currentSettings.MqttHost))
@@ -244,7 +258,8 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         {
             _mqttClient = _mqttFactory.CreateMqttClient();
 
-            var baseTopic = string.IsNullOrWhiteSpace(_currentSettings.MqttBaseTopic) ? "audio_orchestrator" : _currentSettings.MqttBaseTopic.TrimEnd('/');
+            var baseTopic = GetNormalizedBaseTopic();
+            var discPrefix = GetNormalizedDiscoveryPrefix();
             var statusTopic = $"{baseTopic}/bridge/status";
 
             var optionsBuilder = new MqttClientOptionsBuilder()
@@ -285,7 +300,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             // 2. Subscribe to command topics & HA status topic
             var subOptions = _mqttFactory.CreateSubscribeOptionsBuilder()
                 .WithTopicFilter($"{baseTopic}/groups/+/set/#")
-                .WithTopicFilter($"{_currentSettings.MqttDiscoveryPrefix}/status")
+                .WithTopicFilter($"{discPrefix}/status")
                 .Build();
 
             await _mqttClient.SubscribeAsync(subOptions, ct);
@@ -310,7 +325,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             {
                 if (_mqttClient.IsConnected && _currentSettings != null)
                 {
-                    var baseTopic = string.IsNullOrWhiteSpace(_currentSettings.MqttBaseTopic) ? "audio_orchestrator" : _currentSettings.MqttBaseTopic.TrimEnd('/');
+                    var baseTopic = GetNormalizedBaseTopic();
                     await PublishAsync($"{baseTopic}/bridge/status", "offline", retain: true, CancellationToken.None);
                 }
                 await _mqttClient.DisconnectAsync(cancellationToken: CancellationToken.None);
@@ -363,20 +378,16 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         await _publishLock.WaitAsync(ct);
         try
         {
-            var baseTopic = string.IsNullOrWhiteSpace(_currentSettings.MqttBaseTopic) ? "audio_orchestrator" : _currentSettings.MqttBaseTopic.TrimEnd('/');
-            var discPrefix = string.IsNullOrWhiteSpace(_currentSettings.MqttDiscoveryPrefix) ? "homeassistant" : _currentSettings.MqttDiscoveryPrefix.TrimEnd('/');
+            var baseTopic = GetNormalizedBaseTopic();
+            var discPrefix = GetNormalizedDiscoveryPrefix();
             var bridgeStatusTopic = $"{baseTopic}/bridge/status";
 
-            // Source list formatted consistently with HACS integration
-            var sourceList = new List<string> { OffSourceLabel };
-            foreach (var r in state.RadioStreams)
-            {
-                if (!string.IsNullOrWhiteSpace(r.Name)) sourceList.Add($"Radio: {r.Name}");
-            }
-            foreach (var s in state.SpotifySources)
-            {
-                if (!string.IsNullOrWhiteSpace(s.Name)) sourceList.Add($"Spotify: {s.Name}");
-            }
+            // Source mapping with disambiguation for duplicate source names
+            var sourceMapping = BuildSourceMapping(
+                state.RadioStreams.Select(r => (r.Id, r.Name)),
+                state.SpotifySources.Select(s => (s.Id, s.Name))
+            );
+            var sourceList = sourceMapping.SourceList;
 
             var currentGroupIds = state.Groups.Select(g => g.Id).ToHashSet();
 
@@ -406,7 +417,10 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                 var isSpotify = activeStreamId.StartsWith("spotify_");
                 var isRadio = activeStreamId.StartsWith("radio_");
 
-                string currentSourceName = OffSourceLabel;
+                var currentSourceName = sourceMapping.StreamIdToLabel.TryGetValue(activeStreamId, out var mappedLabel)
+                    ? mappedLabel
+                    : OffSourceLabel;
+
                 string? mediaTitle = null;
                 string? mediaArtist = null;
                 string? mediaAlbum = null;
@@ -423,7 +437,6 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                     var r = state.RadioStreams.FirstOrDefault(x => x.Id == activeStreamId);
                     if (r != null)
                     {
-                        currentSourceName = $"Radio: {r.Name}";
                         mediaChannel = r.Name;
                         mediaTitle = r.CurrentTitle;
                         mediaArtist = r.CurrentArtist;
@@ -438,7 +451,6 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                     var s = state.SpotifySources.FirstOrDefault(x => x.Id == pureId || $"spotify_{x.Id}" == activeStreamId);
                     if (s != null)
                     {
-                        currentSourceName = $"Spotify: {s.Name}";
                         mediaTitle = s.CurrentTitle;
                         mediaArtist = s.CurrentArtist;
                         mediaAlbum = s.CurrentAlbum;
@@ -467,6 +479,14 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
 
                 // Publish Group State JSON
                 var roomNames = group.Rooms.Select(r => r.FriendlyName ?? r.Name).Where(n => !string.IsNullOrWhiteSpace(n)).ToList();
+
+                var rawTrackInfo = string.IsNullOrWhiteSpace(mediaTitle)
+                    ? (string.IsNullOrWhiteSpace(mediaChannel) ? currentSourceName : mediaChannel)
+                    : (string.IsNullOrWhiteSpace(mediaArtist) ? mediaTitle : $"{mediaArtist} - {mediaTitle}");
+
+                // Home Assistant state strings must not exceed 255 characters
+                var trackInfo = rawTrackInfo.Length > 255 ? rawTrackInfo.Substring(0, 255) : rawTrackInfo;
+
                 var statePayload = new JsonObject
                 {
                     ["state"] = playbackState,
@@ -487,9 +507,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                     ["context_uri"] = contextUri,
                     ["entity_picture"] = currentCoverUrl,
                     ["rooms"] = JsonSerializer.SerializeToNode(roomNames),
-                    ["track_info"] = string.IsNullOrWhiteSpace(mediaTitle)
-                        ? (string.IsNullOrWhiteSpace(mediaChannel) ? currentSourceName : mediaChannel)
-                        : (string.IsNullOrWhiteSpace(mediaArtist) ? mediaTitle : $"{mediaArtist} - {mediaTitle}")
+                    ["track_info"] = trackInfo
                 };
 
                 await PublishAsync(groupStateTopic, statePayload.ToJsonString(), retain: true, ct);
@@ -733,8 +751,11 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
 
         _logger.LogDebug("MQTT Message received: {Topic} => {Payload}", topic, payload);
 
+        var discPrefix = GetNormalizedDiscoveryPrefix();
+        var baseTopic = GetNormalizedBaseTopic();
+
         // Check for HA birth/status message
-        if (_currentSettings != null && topic.Equals($"{_currentSettings.MqttDiscoveryPrefix}/status", StringComparison.OrdinalIgnoreCase))
+        if (topic.Equals($"{discPrefix}/status", StringComparison.OrdinalIgnoreCase))
         {
             if (payload.Equals("online", StringComparison.OrdinalIgnoreCase))
             {
@@ -746,7 +767,6 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         }
 
         // Expected format: <baseTopic>/groups/<groupId>/set/<action>
-        var baseTopic = string.IsNullOrWhiteSpace(_currentSettings?.MqttBaseTopic) ? "audio_orchestrator" : _currentSettings.MqttBaseTopic.TrimEnd('/');
         var prefix = $"{baseTopic}/groups/";
         if (!topic.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return;
 
@@ -803,7 +823,13 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                 break;
 
             case "source":
-                var targetStreamId = ResolveSourceToStreamId(payload, await db.RadioStreams.ToListAsync(), await db.SpotifySources.ToListAsync());
+                var radios = await db.RadioStreams.ToListAsync();
+                var spotifies = await db.SpotifySources.ToListAsync();
+                var targetStreamId = ResolveSourceToStreamId(
+                    payload,
+                    radios.Select(r => (r.Id, r.Name)),
+                    spotifies.Select(s => (s.Id, s.Name))
+                );
                 await SetGroupStreamInternalAsync(group, targetStreamId, db, snapcast, volumeOrchestrator);
                 break;
 
@@ -827,37 +853,113 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         await PublishDiscoveryAndStatesAsync(freshState, CancellationToken.None);
     }
 
-    private static string ResolveSourceToStreamId(string sourceInput, List<RadioStreamEntity> radios, List<SpotifySourceEntity> spotifies)
+    public record SourceMappingResult(
+        List<string> SourceList,
+        Dictionary<string, string> StreamIdToLabel,
+        Dictionary<string, string> LabelToStreamId
+    );
+
+    public static SourceMappingResult BuildSourceMapping(
+        IEnumerable<(string Id, string Name)> radios,
+        IEnumerable<(string Id, string Name)> spotifies)
     {
-        if (string.IsNullOrWhiteSpace(sourceInput) || sourceInput == OffSourceLabel || sourceInput.Equals("default", StringComparison.OrdinalIgnoreCase))
+        var radioList = radios.Where(r => !string.IsNullOrWhiteSpace(r.Name)).ToList();
+        var spotList = spotifies.Where(s => !string.IsNullOrWhiteSpace(s.Name)).ToList();
+
+        var duplicateRadioNames = radioList
+            .GroupBy(r => r.Name, StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Count() > 1)
+            .Select(g => g.Key)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var duplicateSpotNames = spotList
+            .GroupBy(s => s.Name, StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Count() > 1)
+            .Select(g => g.Key)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var sourceList = new List<string> { OffSourceLabel };
+        var idToLabel = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["default"] = OffSourceLabel,
+            [""] = OffSourceLabel
+        };
+        var labelToId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            [OffSourceLabel] = "default"
+        };
+
+        foreach (var r in radioList)
+        {
+            var isDup = duplicateRadioNames.Contains(r.Name);
+            var label = isDup ? $"Radio: {r.Name} ({r.Id})" : $"Radio: {r.Name}";
+            var streamId = $"{OrchestratorConstants.RadioPrefix}{r.Id}";
+            sourceList.Add(label);
+            idToLabel[streamId] = label;
+            idToLabel[r.Id] = label;
+            labelToId[label] = streamId;
+        }
+
+        foreach (var s in spotList)
+        {
+            var isDup = duplicateSpotNames.Contains(s.Name);
+            var label = isDup ? $"Spotify: {s.Name} ({s.Id})" : $"Spotify: {s.Name}";
+            var streamId = $"{OrchestratorConstants.SpotifyPrefix}{s.Id}";
+            sourceList.Add(label);
+            idToLabel[streamId] = label;
+            idToLabel[s.Id] = label;
+            labelToId[label] = streamId;
+        }
+
+        return new SourceMappingResult(sourceList, idToLabel, labelToId);
+    }
+
+    private static string ResolveSourceToStreamId(
+        string sourceInput,
+        IEnumerable<(string Id, string Name)> radios,
+        IEnumerable<(string Id, string Name)> spotifies)
+    {
+        if (string.IsNullOrWhiteSpace(sourceInput)
+            || sourceInput.Equals(OffSourceLabel, StringComparison.OrdinalIgnoreCase)
+            || sourceInput.Equals("default", StringComparison.OrdinalIgnoreCase))
         {
             return "default";
         }
 
+        var mapping = BuildSourceMapping(radios, spotifies);
+
+        // 1. Exact match with any advertised source option label (handles disambiguated duplicates automatically)
+        if (mapping.LabelToStreamId.TryGetValue(sourceInput, out var mappedStreamId))
+        {
+            return mappedStreamId;
+        }
+
+        // 2. Direct stream ID passed (e.g. "radio_xyz" or "spotify_xyz")
+        if (sourceInput.StartsWith(OrchestratorConstants.RadioPrefix, StringComparison.OrdinalIgnoreCase)
+            || sourceInput.StartsWith(OrchestratorConstants.SpotifyPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return sourceInput;
+        }
+
+        // 3. Fallback: Parse prefix and match by ID or Name
         if (sourceInput.StartsWith("Radio: ", StringComparison.OrdinalIgnoreCase))
         {
             var clean = sourceInput.Substring("Radio: ".Length).Trim();
-            var radio = radios.FirstOrDefault(r => r.Name.Equals(clean, StringComparison.OrdinalIgnoreCase) || r.Id.Equals(clean, StringComparison.OrdinalIgnoreCase));
-            if (radio != null) return $"{OrchestratorConstants.RadioPrefix}{radio.Id}";
+            var radioList = radios.ToList();
+            var radio = radioList.FirstOrDefault(r => r.Id.Equals(clean, StringComparison.OrdinalIgnoreCase)
+                                                   || r.Name.Equals(clean, StringComparison.OrdinalIgnoreCase));
+            if (!string.IsNullOrEmpty(radio.Id)) return $"{OrchestratorConstants.RadioPrefix}{radio.Id}";
             return "default";
         }
 
         if (sourceInput.StartsWith("Spotify: ", StringComparison.OrdinalIgnoreCase))
         {
             var clean = sourceInput.Substring("Spotify: ".Length).Trim();
-            var spot = spotifies.FirstOrDefault(s => s.Name.Equals(clean, StringComparison.OrdinalIgnoreCase) || s.Id.Equals(clean, StringComparison.OrdinalIgnoreCase));
-            if (spot != null) return $"{OrchestratorConstants.SpotifyPrefix}{spot.Id}";
+            var spotList = spotifies.ToList();
+            var spot = spotList.FirstOrDefault(s => s.Id.Equals(clean, StringComparison.OrdinalIgnoreCase)
+                                                || s.Name.Equals(clean, StringComparison.OrdinalIgnoreCase));
+            if (!string.IsNullOrEmpty(spot.Id)) return $"{OrchestratorConstants.SpotifyPrefix}{spot.Id}";
             return "default";
-        }
-
-        if (sourceInput.StartsWith(OrchestratorConstants.RadioPrefix))
-        {
-            return sourceInput;
-        }
-
-        if (sourceInput.StartsWith(OrchestratorConstants.SpotifyPrefix))
-        {
-            return sourceInput;
         }
 
         return "default";

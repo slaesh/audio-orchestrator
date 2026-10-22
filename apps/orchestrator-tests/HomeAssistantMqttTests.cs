@@ -130,4 +130,96 @@ public class HomeAssistantMqttTests
         Assert.True(resp.Success);
         Assert.Equal("Connected successfully", resp.Message);
     }
+
+    [Fact]
+    public async Task UpdateSettings_ShouldAllowClearingSavedPassword()
+    {
+        await using var db = new OrchestratorDbContext(_dbOptions);
+        db.Settings.Add(new OrchestratorSettingsEntity
+        {
+            Id = "default",
+            HomeAssistantEnabled = true,
+            MqttHost = "192.168.178.50",
+            MqttPassword = "old-secret"
+        });
+        await db.SaveChangesAsync();
+
+        var mockVolume = new Mock<VolumeOrchestratorService>(db, Mock.Of<ISnapcastService>(), Mock.Of<ILibrespotApiClient>(), Mock.Of<IHubContext<AudioHub, IAudioClient>>(), Mock.Of<ILogger<VolumeOrchestratorService>>());
+        var mockStateBuilder = new Mock<FullStateBuilder>(db, Mock.Of<ISnapcastService>(), null, null, null, null);
+        mockStateBuilder.Setup(s => s.BuildAsync()).ReturnsAsync(new FullStateDto(new List<GroupDto>(), new List<RoomDto>(), new List<StreamDto>(), new List<SpotifySourceDto>(), new List<StreamDto>(), null, VolumeProfile.Linear));
+
+        var mockClients = new Mock<IHubClients<IAudioClient>>();
+        mockClients.Setup(c => c.All).Returns(Mock.Of<IAudioClient>());
+        var mockHub = new Mock<IHubContext<AudioHub, IAudioClient>>();
+        mockHub.Setup(h => h.Clients).Returns(mockClients.Object);
+
+        var mockMqtt = new Mock<IHomeAssistantMqttService>();
+        var controller = new SettingsController(db, mockVolume.Object, mockStateBuilder.Object, mockHub.Object, mockMqtt.Object, Mock.Of<ILogger<SettingsController>>());
+
+        var req = new UpdateSettingsRequest(
+            VolumeProfile: VolumeProfile.Linear,
+            HomeAssistant: new HomeAssistantSettingsDto(
+                Enabled: true,
+                Host: "192.168.178.50",
+                Port: 1883,
+                Username: "test-user",
+                Password: "", // Explicit clear
+                HasPassword: false,
+                UseTls: false,
+                DiscoveryPrefix: "homeassistant/", // Trailing slash to test normalization
+                BaseTopic: "audio_orchestrator/",
+                IsConnected: false
+            )
+        );
+
+        var result = await controller.UpdateSettings(req);
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        var settingsDto = Assert.IsType<SettingsDto>(okResult.Value);
+
+        Assert.False(settingsDto.HomeAssistant.HasPassword);
+        Assert.Equal("homeassistant", settingsDto.HomeAssistant.DiscoveryPrefix);
+        Assert.Equal("audio_orchestrator", settingsDto.HomeAssistant.BaseTopic);
+
+        var saved = await db.Settings.FirstOrDefaultAsync();
+        Assert.NotNull(saved);
+        Assert.Equal("", saved.MqttPassword);
+        Assert.Equal("homeassistant", saved.MqttDiscoveryPrefix);
+        Assert.Equal("audio_orchestrator", saved.MqttBaseTopic);
+    }
+
+    [Fact]
+    public void BuildSourceMapping_ShouldDisambiguateDuplicateNamesWithId()
+    {
+        var radios = new List<(string Id, string Name)>
+        {
+            ("r1", "Rock"),
+            ("r2", "Rock"),
+            ("r3", "Jazz")
+        };
+
+        var spotifies = new List<(string Id, string Name)>
+        {
+            ("s1", "Office"),
+            ("s2", "Office"),
+            ("s3", "Living Room")
+        };
+
+        var result = HomeAssistantMqttService.BuildSourceMapping(radios, spotifies);
+
+        Assert.Contains("Radio: Rock (r1)", result.SourceList);
+        Assert.Contains("Radio: Rock (r2)", result.SourceList);
+        Assert.Contains("Radio: Jazz", result.SourceList);
+
+        Assert.Contains("Spotify: Office (s1)", result.SourceList);
+        Assert.Contains("Spotify: Office (s2)", result.SourceList);
+        Assert.Contains("Spotify: Living Room", result.SourceList);
+
+        Assert.Equal("radio_r1", result.LabelToStreamId["Radio: Rock (r1)"]);
+        Assert.Equal("radio_r2", result.LabelToStreamId["Radio: Rock (r2)"]);
+        Assert.Equal("radio_r3", result.LabelToStreamId["Radio: Jazz"]);
+
+        Assert.Equal("spotify_s1", result.LabelToStreamId["Spotify: Office (s1)"]);
+        Assert.Equal("spotify_s2", result.LabelToStreamId["Spotify: Office (s2)"]);
+        Assert.Equal("spotify_s3", result.LabelToStreamId["Spotify: Living Room"]);
+    }
 }
