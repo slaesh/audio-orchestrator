@@ -122,9 +122,6 @@ export class SettingsDialogComponent implements OnInit {
 
   onPasswordChange(val: string) {
     this.haPassword.set(val);
-    if (val) {
-      this.haPasswordCleared.set(false);
-    }
   }
 
   async testConnection() {

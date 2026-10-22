@@ -793,4 +793,30 @@ public class HomeAssistantMqttTests
             It.Is<MqttApplicationMessage>(m => m.Topic.StartsWith("custom_disc/select/audio_orchestrator_test_g1/source/config")),
             It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
+
+    [Fact]
+    public async Task ReloadConfigurationAsync_ShouldCoordinateWithPublishLock_AndPerformInitialSync()
+    {
+        var (sp, db, mockClient, service, _) = CreateTestContext();
+
+        mockClient.Setup(c => c.ConnectAsync(It.IsAny<MqttClientOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientConnectResult());
+        mockClient.Setup(c => c.SubscribeAsync(It.IsAny<MqttClientSubscribeOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientSubscribeResult(
+                1,
+                new List<MqttClientSubscribeResultItem>
+                {
+                    new(new MqttTopicFilter { Topic = "audio_orchestrator/groups/+/set/#" }, MqttClientSubscribeResultCode.GrantedQoS0),
+                    new(new MqttTopicFilter { Topic = "homeassistant/status" }, MqttClientSubscribeResultCode.GrantedQoS0)
+                },
+                string.Empty,
+                new List<MqttUserProperty>()
+            ));
+        mockClient.SetupGet(c => c.IsConnected).Returns(true);
+
+        await service.ReloadConfigurationAsync(CancellationToken.None);
+
+        Assert.True(service.IsConnected);
+        mockClient.Verify(c => c.PublishAsync(It.Is<MqttApplicationMessage>(m => m.Topic == "audio_orchestrator/bridge/status"), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
 }

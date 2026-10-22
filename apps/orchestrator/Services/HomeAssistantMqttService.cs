@@ -139,11 +139,24 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         await _connectionLock.WaitAsync(ct);
         try
         {
-            await DisconnectInternalAsync();
-            using var scope = _serviceProvider.CreateScope();
-            var db = scope.ServiceProvider.GetRequiredService<OrchestratorDbContext>();
-            _currentSettings = await db.Settings.FirstOrDefaultAsync(ct);
-            await ConnectInternalAsync(ct);
+            await _publishLock.WaitAsync(ct);
+            try
+            {
+                await DisconnectInternalAsync();
+                using var scope = _serviceProvider.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<OrchestratorDbContext>();
+                _currentSettings = await db.Settings.FirstOrDefaultAsync(ct);
+                await ConnectClientAndSubscribeAsync(ct);
+            }
+            finally
+            {
+                _publishLock.Release();
+            }
+
+            if (IsConnected)
+            {
+                await RefreshAndPublishAsync(ct, forceDiscovery: true);
+            }
         }
         finally
         {
@@ -221,7 +234,15 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             {
                 if (IsConnected)
                 {
-                    await DisconnectInternalAsync();
+                    await _publishLock.WaitAsync(ct);
+                    try
+                    {
+                        await DisconnectInternalAsync();
+                    }
+                    finally
+                    {
+                        _publishLock.Release();
+                    }
                 }
                 return;
             }
@@ -233,9 +254,22 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                 return;
             }
 
-            await DisconnectInternalAsync();
-            _currentSettings = settings;
-            await ConnectInternalAsync(ct);
+            await _publishLock.WaitAsync(ct);
+            try
+            {
+                await DisconnectInternalAsync();
+                _currentSettings = settings;
+                await ConnectClientAndSubscribeAsync(ct);
+            }
+            finally
+            {
+                _publishLock.Release();
+            }
+
+            if (IsConnected)
+            {
+                await RefreshAndPublishAsync(ct, forceDiscovery: true);
+            }
         }
         finally
         {
@@ -270,7 +304,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             : _currentSettings.MqttBaseTopic.Trim().TrimEnd('/');
     }
 
-    private async Task ConnectInternalAsync(CancellationToken ct)
+    private async Task ConnectClientAndSubscribeAsync(CancellationToken ct)
     {
         if (_currentSettings == null || !_currentSettings.HomeAssistantEnabled || string.IsNullOrWhiteSpace(_currentSettings.MqttHost))
         {
@@ -342,9 +376,6 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
 
             // 2. Publish birth message
             await PublishAsync(statusTopic, "online", retain: true, ct);
-
-            // 3. Initial sync
-            await RefreshAndPublishAsync(ct, forceDiscovery: true);
         }
         catch (Exception ex)
         {
@@ -385,7 +416,15 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         await _connectionLock.WaitAsync();
         try
         {
-            await DisconnectInternalAsync();
+            await _publishLock.WaitAsync();
+            try
+            {
+                await DisconnectInternalAsync();
+            }
+            finally
+            {
+                _publishLock.Release();
+            }
         }
         finally
         {
