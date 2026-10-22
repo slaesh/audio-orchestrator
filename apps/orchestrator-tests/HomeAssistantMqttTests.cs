@@ -191,6 +191,63 @@ public class HomeAssistantMqttTests
     }
 
     [Fact]
+    public async Task UpdateSettings_ShouldAutomaticallyClearPassword_WhenUsernameIsRemoved()
+    {
+        await using var db = new OrchestratorDbContext(_dbOptions);
+        db.Settings.Add(new OrchestratorSettingsEntity
+        {
+            Id = "default",
+            HomeAssistantEnabled = true,
+            MqttHost = "192.168.178.50",
+            MqttPort = 1883,
+            MqttUsername = "old-user",
+            MqttPassword = "old-password"
+        });
+        await db.SaveChangesAsync();
+
+        var mockVolume = new Mock<VolumeOrchestratorService>(db, Mock.Of<ISnapcastService>(), Mock.Of<ILibrespotApiClient>(), Mock.Of<IHubContext<AudioHub, IAudioClient>>(), Mock.Of<ILogger<VolumeOrchestratorService>>());
+        var mockStateBuilder = new Mock<FullStateBuilder>(db, Mock.Of<ISnapcastService>(), null, null, null, null);
+        mockStateBuilder.Setup(s => s.BuildAsync()).ReturnsAsync(new FullStateDto(new List<GroupDto>(), new List<RoomDto>(), new List<StreamDto>(), new List<SpotifySourceDto>(), new List<StreamDto>(), null, VolumeProfile.Linear));
+
+        var mockClients = new Mock<IHubClients<IAudioClient>>();
+        mockClients.Setup(c => c.All).Returns(Mock.Of<IAudioClient>());
+        var mockHub = new Mock<IHubContext<AudioHub, IAudioClient>>();
+        mockHub.Setup(h => h.Clients).Returns(mockClients.Object);
+
+        var mockMqtt = new Mock<IHomeAssistantMqttService>();
+        var controller = new SettingsController(db, mockVolume.Object, mockStateBuilder.Object, mockHub.Object, mockMqtt.Object, Mock.Of<ILogger<SettingsController>>());
+
+        // User removed the username to connect anonymously without explicitly deleting the password first
+        var req = new UpdateSettingsRequest(
+            VolumeProfile: VolumeProfile.Linear,
+            HomeAssistant: new HomeAssistantSettingsDto(
+                Enabled: true,
+                Host: "192.168.178.50",
+                Port: 1883,
+                Username: "",
+                Password: null,
+                HasPassword: false,
+                UseTls: false,
+                DiscoveryPrefix: "homeassistant",
+                BaseTopic: "audio_orchestrator",
+                IsConnected: false
+            )
+        );
+
+        var result = await controller.UpdateSettings(req);
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        var settingsDto = Assert.IsType<SettingsDto>(okResult.Value);
+
+        Assert.Null(settingsDto.HomeAssistant.Username);
+        Assert.False(settingsDto.HomeAssistant.HasPassword);
+
+        var saved = await db.Settings.FirstOrDefaultAsync();
+        Assert.NotNull(saved);
+        Assert.Null(saved.MqttUsername);
+        Assert.Null(saved.MqttPassword);
+    }
+
+    [Fact]
     public void BuildSourceMapping_ShouldDisambiguateDuplicateNamesWithId()
     {
         var radios = new List<(string Id, string Name)>

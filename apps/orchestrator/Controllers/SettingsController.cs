@@ -96,21 +96,32 @@ public class SettingsController : ControllerBase
             }
 
             // Prevent saved-password reuse when connection settings change
-            bool connectionChanged = !string.Equals(settings.MqttHost, req.HomeAssistant.Host, StringComparison.OrdinalIgnoreCase)
+            bool hostOrPortOrTlsChanged = !string.Equals(settings.MqttHost, req.HomeAssistant.Host, StringComparison.OrdinalIgnoreCase)
                 || settings.MqttPort != port
-                || !string.Equals(settings.MqttUsername ?? string.Empty, req.HomeAssistant.Username ?? string.Empty, StringComparison.Ordinal)
                 || settings.MqttUseTls != req.HomeAssistant.UseTls;
 
-            if (connectionChanged && req.HomeAssistant.Password == null && !string.IsNullOrEmpty(settings.MqttPassword))
+            bool usernameChanged = !string.Equals(settings.MqttUsername ?? string.Empty, req.HomeAssistant.Username ?? string.Empty, StringComparison.Ordinal);
+
+            if (hostOrPortOrTlsChanged && req.HomeAssistant.Password == null && !string.IsNullOrEmpty(settings.MqttPassword))
             {
-                return BadRequest("Verbindungsdaten geändert: Bei Änderung von Host, Port, Benutzername oder TLS muss das Passwort neu angegeben oder explizit gelöscht werden.");
+                return BadRequest("Verbindungsdaten geändert: Bei Änderung von Host, Port oder TLS muss das Passwort neu angegeben oder explizit gelöscht werden.");
+            }
+
+            if (usernameChanged && !string.IsNullOrWhiteSpace(req.HomeAssistant.Username) && req.HomeAssistant.Password == null && !string.IsNullOrEmpty(settings.MqttPassword))
+            {
+                return BadRequest("Verbindungsdaten geändert: Bei Änderung des Benutzernamens muss das Passwort neu angegeben oder explizit gelöscht werden.");
             }
 
             settings.HomeAssistantEnabled = req.HomeAssistant.Enabled;
             settings.MqttHost = req.HomeAssistant.Host;
             settings.MqttPort = port;
-            settings.MqttUsername = req.HomeAssistant.Username;
-            if (req.HomeAssistant.Password != null)
+            settings.MqttUsername = string.IsNullOrWhiteSpace(req.HomeAssistant.Username) ? null : req.HomeAssistant.Username.Trim();
+            if (string.IsNullOrWhiteSpace(req.HomeAssistant.Username))
+            {
+                // Removing username switches to anonymous MQTT; automatically clear any stored password
+                settings.MqttPassword = null;
+            }
+            else if (req.HomeAssistant.Password != null)
             {
                 settings.MqttPassword = req.HomeAssistant.Password;
             }

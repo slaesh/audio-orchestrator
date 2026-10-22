@@ -141,12 +141,15 @@ export class SettingsDialogComponent implements OnInit {
     this.testResult.set(null);
 
     try {
+      const isUsernameEmpty = !this.haUsername().trim();
       const enteredPassword = this.haPassword();
-      const passwordToSend = enteredPassword ? enteredPassword : (this.haPasswordCleared() ? '' : undefined);
+      const passwordToSend = isUsernameEmpty
+        ? undefined
+        : (enteredPassword ? enteredPassword : (this.haPasswordCleared() ? '' : undefined));
       const res = await this.data.testMqttConnection({
         host,
         port: this.haPort() || 1883,
-        username: this.haUsername().trim() || undefined,
+        username: isUsernameEmpty ? undefined : this.haUsername().trim(),
         password: passwordToSend,
         useTls: this.haUseTls(),
       });
@@ -201,15 +204,18 @@ export class SettingsDialogComponent implements OnInit {
     try {
       this.data.setShowRawVolume(this.showRaw());
 
+      const isUsernameEmpty = !this.haUsername().trim();
       const enteredPassword = this.haPassword();
-      const passwordToSend = enteredPassword ? enteredPassword : (this.haPasswordCleared() ? '' : undefined);
+      const passwordToSend = isUsernameEmpty
+        ? ''
+        : (enteredPassword ? enteredPassword : (this.haPasswordCleared() ? '' : undefined));
       const haSettings: HomeAssistantSettingsDto = {
         enabled: this.haEnabled(),
         host: this.haHost().trim(),
         port: this.haPort() || 1883,
-        username: this.haUsername().trim() || undefined,
+        username: isUsernameEmpty ? undefined : this.haUsername().trim(),
         password: passwordToSend,
-        hasPassword: this.haHasPassword(),
+        hasPassword: isUsernameEmpty ? false : this.haHasPassword(),
         useTls: this.haUseTls(),
         discoveryPrefix: this.haDiscoveryPrefix().trim() || 'homeassistant',
         baseTopic: this.haBaseTopic().trim() || 'audio_orchestrator',

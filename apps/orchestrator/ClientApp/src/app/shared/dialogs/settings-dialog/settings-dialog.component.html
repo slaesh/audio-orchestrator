@@ -204,7 +204,7 @@
                   <label for="mqttPassword" class="block text-[11px] font-medium text-muted-foreground whitespace-nowrap">
                     Passwort (optional)
                   </label>
-                  @if (haHasPassword() && !haPassword()) {
+                  @if (haUsername().trim() && haHasPassword() && !haPassword()) {
                     <button
                       type="button"
                       (click)="clearPassword()"
@@ -217,10 +217,11 @@
                 <input
                   type="password"
                   id="mqttPassword"
-                  [placeholder]="haHasPassword() && !haPassword() ? '•••••••• (gespeichert)' : '••••••••'"
+                  [placeholder]="!haUsername().trim() ? 'Kein Passwort (anonym)' : (haHasPassword() && !haPassword() ? '•••••••• (gespeichert)' : '••••••••')"
+                  [disabled]="!haUsername().trim()"
                   [ngModel]="haPassword()"
                   (ngModelChange)="onPasswordChange($event)"
-                  class="w-full text-xs px-3 py-2 rounded-lg border border-input bg-background focus:outline-none focus:ring-1 focus:ring-primary"
+                  class="w-full text-xs px-3 py-2 rounded-lg border border-input bg-background focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 disabled:cursor-not-allowed"
                 />
               </div>
             </div>
