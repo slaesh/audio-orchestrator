@@ -1417,4 +1417,150 @@ public class HomeAssistantMqttTests
             It.Is<MqttApplicationMessage>(m => m.Topic.StartsWith("new_ha/select/audio_orchestrator_g1/source/config") && !string.IsNullOrEmpty(m.ConvertPayloadToString())),
             It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
+
+    [Fact]
+    public async Task EnsureConnectionAsync_ShouldEnqueueCleanup_WhenDisabledDuringBrokerOutage()
+    {
+        var (sp, db, mockClient, service, _) = CreateTestContext();
+
+        mockClient.Setup(c => c.ConnectAsync(It.IsAny<MqttClientOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientConnectResult());
+        mockClient.Setup(c => c.SubscribeAsync(It.IsAny<MqttClientSubscribeOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientSubscribeResult(
+                1,
+                new List<MqttClientSubscribeResultItem>
+                {
+                    new(new MqttTopicFilter { Topic = "audio_orchestrator/groups/+/set/#" }, MqttClientSubscribeResultCode.GrantedQoS0),
+                    new(new MqttTopicFilter { Topic = "homeassistant/status" }, MqttClientSubscribeResultCode.GrantedQoS0)
+                },
+                string.Empty,
+                new List<MqttUserProperty>()
+            ));
+        mockClient.SetupGet(c => c.IsConnected).Returns(true);
+
+        // 1. Initial connection with group g1
+        var group = new GroupEntity { Id = "g1", Name = "Wohnzimmer", CurrentStreamId = "default" };
+        db.Groups.Add(group);
+        await db.SaveChangesAsync();
+
+        await service.EnsureConnectionAsync(CancellationToken.None);
+
+        // 2. Broker outage occurs while connected
+        mockClient.SetupGet(c => c.IsConnected).Returns(false);
+
+        // 3. User disables Home Assistant in settings during outage
+        var settings = await db.Settings.FirstAsync();
+        settings.HomeAssistantEnabled = false;
+        await db.SaveChangesAsync();
+
+        // 4. EnsureConnectionAsync runs during outage (disconnected)
+        await service.EnsureConnectionAsync(CancellationToken.None);
+
+        mockClient.Invocations.Clear();
+
+        // 5. Broker recovers
+        mockClient.SetupGet(c => c.IsConnected).Returns(true);
+
+        // 6. Next EnsureConnectionAsync run should connect for cleanup and remove g1
+        await service.EnsureConnectionAsync(CancellationToken.None);
+
+        mockClient.Verify(c => c.PublishAsync(
+            It.Is<MqttApplicationMessage>(m => m.Topic.StartsWith("homeassistant/select/audio_orchestrator_g1/source/config") && string.IsNullOrEmpty(m.ConvertPayloadToString())),
+            It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task PublishAsync_ShouldThrow_WhenDisconnectedDuringUnpublish()
+    {
+        var (sp, db, mockClient, service, _) = CreateTestContext();
+
+        mockClient.Setup(c => c.ConnectAsync(It.IsAny<MqttClientOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientConnectResult());
+        mockClient.Setup(c => c.SubscribeAsync(It.IsAny<MqttClientSubscribeOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientSubscribeResult(
+                1,
+                new List<MqttClientSubscribeResultItem>
+                {
+                    new(new MqttTopicFilter { Topic = "audio_orchestrator/groups/+/set/#" }, MqttClientSubscribeResultCode.GrantedQoS0),
+                    new(new MqttTopicFilter { Topic = "homeassistant/status" }, MqttClientSubscribeResultCode.GrantedQoS0)
+                },
+                string.Empty,
+                new List<MqttUserProperty>()
+            ));
+        mockClient.SetupGet(c => c.IsConnected).Returns(true);
+
+        var group = new GroupEntity { Id = "g1", Name = "Wohnzimmer", CurrentStreamId = "default" };
+        db.Groups.Add(group);
+        await db.SaveChangesAsync();
+
+        await service.EnsureConnectionAsync(CancellationToken.None);
+
+        // Delete group, but disconnect client before/during unpublish
+        db.Groups.Remove(group);
+        await db.SaveChangesAsync();
+
+        mockClient.SetupGet(c => c.IsConnected).Returns(false);
+
+        // EnsureConnectionAsync runs while disconnected
+        await service.EnsureConnectionAsync(CancellationToken.None);
+
+        // Reconnect broker
+        mockClient.SetupGet(c => c.IsConnected).Returns(true);
+
+        // Next pass: unpublish should be retried because previous attempt threw on disconnect
+        await service.EnsureConnectionAsync(CancellationToken.None);
+
+        mockClient.Verify(c => c.PublishAsync(
+            It.Is<MqttApplicationMessage>(m => m.Topic.StartsWith("homeassistant/select/audio_orchestrator_g1/source/config") && string.IsNullOrEmpty(m.ConvertPayloadToString())),
+            It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task NotifyFullStateAsync_ShouldNotPublish_WhenIntegrationDisabledEvenIfClientConnected()
+    {
+        var (sp, db, mockClient, service, _) = CreateTestContext();
+
+        mockClient.Setup(c => c.ConnectAsync(It.IsAny<MqttClientOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientConnectResult());
+        mockClient.Setup(c => c.SubscribeAsync(It.IsAny<MqttClientSubscribeOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientSubscribeResult(
+                1,
+                new List<MqttClientSubscribeResultItem>
+                {
+                    new(new MqttTopicFilter { Topic = "audio_orchestrator/groups/+/set/#" }, MqttClientSubscribeResultCode.GrantedQoS0),
+                    new(new MqttTopicFilter { Topic = "homeassistant/status" }, MqttClientSubscribeResultCode.GrantedQoS0)
+                },
+                string.Empty,
+                new List<MqttUserProperty>()
+            ));
+        mockClient.SetupGet(c => c.IsConnected).Returns(true);
+
+        var group = new GroupEntity { Id = "g1", Name = "Wohnzimmer", CurrentStreamId = "default" };
+        db.Groups.Add(group);
+        await db.SaveChangesAsync();
+
+        await service.EnsureConnectionAsync(CancellationToken.None);
+
+        // Disable Home Assistant in settings, but simulate cleanup publish failure so client remains connected to retry
+        var settings = await db.Settings.FirstAsync();
+        settings.HomeAssistantEnabled = false;
+        await db.SaveChangesAsync();
+
+        mockClient.Setup(c => c.PublishAsync(
+                It.Is<MqttApplicationMessage>(m => m.Topic.StartsWith("homeassistant/select/audio_orchestrator_g1")),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Broker refused unpublish"));
+
+        await service.EnsureConnectionAsync(CancellationToken.None);
+        mockClient.Invocations.Clear();
+
+        // While client is connected and waiting to retry cleanup, attempt to publish full state
+        var dummyState = new FullStateDto([new GroupDto("g1", "Wohnzimmer", "default", [], 50, false)], [], [], [], []);
+        await service.NotifyFullStateAsync(dummyState);
+
+        // Should NOT publish discovery or state for group g1
+        mockClient.Verify(c => c.PublishAsync(
+            It.Is<MqttApplicationMessage>(m => m.Topic.Contains("audio_orchestrator_g1") && !string.IsNullOrEmpty(m.ConvertPayloadToString())),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
 }

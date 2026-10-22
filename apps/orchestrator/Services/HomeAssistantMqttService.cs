@@ -44,6 +44,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
     private readonly List<PendingDiscoveryCleanup> _pendingCleanups = new();
     private string _lastDiscoveryHash = string.Empty;
     private bool _forceDiscovery = true;
+    private volatile bool _statePublishingEnabled = false;
     private readonly SemaphoreSlim _connectionLock = new(1, 1);
     private readonly SemaphoreSlim _publishLock = new(1, 1);
     private readonly object _callbackSync = new();
@@ -156,11 +157,12 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
 
     public async Task NotifyFullStateAsync(FullStateDto state, CancellationToken ct = default)
     {
-        if (!IsConnected || _currentSettings == null || !_currentSettings.HomeAssistantEnabled) return;
+        if (!_statePublishingEnabled || !IsConnected || _currentSettings == null || !_currentSettings.HomeAssistantEnabled) return;
 
         await _publishLock.WaitAsync(ct);
         try
         {
+            if (!_statePublishingEnabled || _currentSettings == null || !_currentSettings.HomeAssistantEnabled) return;
             _lastFullState = state;
             await PublishDiscoveryAndStatesInternalAsync(state, ct);
         }
@@ -176,19 +178,19 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
 
     public async Task NotifyRadioMetadataAsync(string streamId, string? title, string? artist, string? coverUrl, CancellationToken ct = default)
     {
-        if (!IsConnected || _lastFullState == null) return;
+        if (!_statePublishingEnabled || !IsConnected || _lastFullState == null) return;
         await RefreshAndPublishAsync(ct);
     }
 
     public async Task NotifySpotifyEventAsync(SpotifyEventDto spotifyEvent, CancellationToken ct = default)
     {
-        if (!IsConnected || _lastFullState == null) return;
+        if (!_statePublishingEnabled || !IsConnected || _lastFullState == null) return;
         await RefreshAndPublishAsync(ct);
     }
 
     public async Task NotifyGroupVolumeChangedAsync(string groupId, int volume, bool isMuted, CancellationToken ct = default)
     {
-        if (!IsConnected || _lastFullState == null) return;
+        if (!_statePublishingEnabled || !IsConnected || _lastFullState == null) return;
         await RefreshAndPublishAsync(ct);
     }
 
@@ -200,6 +202,8 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         try
         {
             await ProcessPendingCleanupsAsync(ct);
+
+            if (!_statePublishingEnabled || _currentSettings == null || !_currentSettings.HomeAssistantEnabled) return;
 
             using var scope = _serviceProvider.CreateScope();
             var stateBuilder = scope.ServiceProvider.GetRequiredService<FullStateBuilder>();
@@ -228,22 +232,26 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
 
             if (settings == null || !settings.HomeAssistantEnabled || string.IsNullOrWhiteSpace(settings.MqttHost))
             {
-                if (IsConnected || _pendingCleanups.Count > 0)
+                if (IsConnected || _pendingCleanups.Count > 0 || _currentSettings != null)
                 {
                     await StopAndDrainCallbacksAsync();
                     await _publishLock.WaitAsync(ct);
                     try
                     {
+                        _statePublishingEnabled = false;
+
                         if (_currentSettings != null && _discoveredGroupIds.Count > 0)
                         {
                             EnqueueDiscoveryCleanup(_currentSettings, null);
                         }
 
-                        if (!IsConnected && _currentSettings != null && _pendingCleanups.Any(p =>
+                        var hasPendingForCurrent = _currentSettings != null && _pendingCleanups.Any(p =>
                             string.Equals(p.Host, _currentSettings.MqttHost, StringComparison.OrdinalIgnoreCase)
-                            && p.Port == _currentSettings.MqttPort))
+                            && p.Port == _currentSettings.MqttPort);
+
+                        if (!IsConnected && hasPendingForCurrent)
                         {
-                            await ConnectClientAndSubscribeAsync(ct);
+                            await ConnectClientForCleanupOnlyAsync(ct);
                         }
 
                         if (IsConnected)
@@ -251,7 +259,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                             await ProcessPendingCleanupsAsync(ct);
                         }
 
-                        var hasPendingForCurrent = _currentSettings != null && _pendingCleanups.Any(p =>
+                        hasPendingForCurrent = _currentSettings != null && _pendingCleanups.Any(p =>
                             string.Equals(p.Host, _currentSettings.MqttHost, StringComparison.OrdinalIgnoreCase)
                             && p.Port == _currentSettings.MqttPort);
 
@@ -517,11 +525,48 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
 
             // 2. Publish birth message
             await PublishAsync(statusTopic, "online", retain: true, ct);
+            _statePublishingEnabled = true;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to connect to MQTT broker");
             await DisconnectInternalAsync();
+        }
+    }
+
+    private async Task ConnectClientForCleanupOnlyAsync(CancellationToken ct)
+    {
+        if (_currentSettings == null || string.IsNullOrWhiteSpace(_currentSettings.MqttHost)) return;
+
+        try
+        {
+            _mqttClient = _mqttFactory.CreateClient();
+
+            var optionsBuilder = new MqttClientOptionsBuilder()
+                .WithTcpServer(_currentSettings.MqttHost, _currentSettings.MqttPort)
+                .WithClientId($"AudioOrchestrator_Cleanup_{Guid.NewGuid():N}");
+
+            if (!string.IsNullOrWhiteSpace(_currentSettings.MqttUsername))
+            {
+                optionsBuilder.WithCredentials(_currentSettings.MqttUsername, _currentSettings.MqttPassword ?? string.Empty);
+            }
+
+            if (_currentSettings.MqttUseTls)
+            {
+                optionsBuilder.WithTlsOptions(o => o.UseTls());
+            }
+
+            var connectResult = await _mqttClient.ConnectAsync(optionsBuilder.Build(), ct);
+            if (connectResult.ResultCode != MqttClientConnectResultCode.Success)
+            {
+                _logger.LogWarning("MQTT connect for cleanup failed: {ResultCode}", connectResult.ResultCode);
+                await DisconnectInternalAsync(publishOffline: false);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to connect to MQTT broker for cleanup");
+            await DisconnectInternalAsync(publishOffline: false);
         }
     }
 
@@ -561,7 +606,14 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                 if (publishOffline && _mqttClient.IsConnected && _currentSettings != null)
                 {
                     var baseTopic = GetNormalizedBaseTopic();
-                    await PublishAsync($"{baseTopic}/bridge/status", "offline", retain: true, CancellationToken.None);
+                    try
+                    {
+                        await PublishAsync($"{baseTopic}/bridge/status", "offline", retain: true, CancellationToken.None);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex, "Failed to publish bridge offline status during disconnect");
+                    }
                 }
                 await _mqttClient.DisconnectAsync(cancellationToken: CancellationToken.None);
             }
@@ -571,6 +623,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             }
             finally
             {
+                _statePublishingEnabled = false;
                 _mqttClient.Dispose();
                 _mqttClient = null;
                 _lastDiscoveryHash = string.Empty;
@@ -608,7 +661,10 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
 
     private async Task PublishAsync(string topic, string payload, bool retain = false, CancellationToken ct = default)
     {
-        if (!IsConnected || _mqttClient == null) return;
+        if (!IsConnected || _mqttClient == null)
+        {
+            throw new InvalidOperationException($"Cannot publish to topic '{topic}': MQTT client is not connected.");
+        }
 
         var message = new MqttApplicationMessageBuilder()
             .WithTopic(topic)
@@ -629,7 +685,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
 
     private async Task PublishDiscoveryAndStatesInternalAsync(FullStateDto state, CancellationToken ct, bool forceDiscovery = false)
     {
-        if (!IsConnected || _currentSettings == null) return;
+        if (!_statePublishingEnabled || !IsConnected || _currentSettings == null || !_currentSettings.HomeAssistantEnabled) return;
 
         var wasForced = forceDiscovery || _forceDiscovery;
         _forceDiscovery = false;
