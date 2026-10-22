@@ -55,15 +55,6 @@ public class VolumeOrchestratorService
         await _db.SaveChangesAsync();
         await _hub.Clients.All.OnGroupVolumeChanged(group.Id, group.MasterVolume, group.IsMuted);
 
-        if (_serviceProvider != null)
-        {
-            var mqtt = _serviceProvider.GetService<IHomeAssistantMqttService>();
-            if (mqtt != null)
-            {
-                _ = mqtt.NotifyGroupVolumeChangedAsync(group.Id, group.MasterVolume, group.IsMuted);
-            }
-        }
-        
         // If the group is listening to a Spotify source, sync with that source and all sibling groups
         if (!string.IsNullOrEmpty(group.CurrentStreamId) && group.CurrentStreamId.StartsWith(OrchestratorConstants.SpotifyPrefix))
         {
@@ -104,6 +95,15 @@ public class VolumeOrchestratorService
                 {
                     _logger.LogWarning("Could not push volume to Spotify source {SourceId} (node might still be starting or offline): {Message}", sourceId, ex.Message);
                 }
+            }
+        }
+
+        if (_serviceProvider != null)
+        {
+            var mqtt = _serviceProvider.GetService<IHomeAssistantMqttService>();
+            if (mqtt != null)
+            {
+                _ = mqtt.NotifyGroupVolumeChangedAsync(group.Id, group.MasterVolume, group.IsMuted);
             }
         }
 

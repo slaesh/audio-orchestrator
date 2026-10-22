@@ -121,6 +121,8 @@ export type HomeAssistantSettingsDto = {
     /** Transpiled from string? */
     password?: string;
     /** Transpiled from bool */
+    hasPassword: boolean;
+    /** Transpiled from bool */
     useTls: boolean;
     /** Transpiled from string */
     discoveryPrefix: string;

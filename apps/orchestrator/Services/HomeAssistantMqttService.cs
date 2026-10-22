@@ -19,6 +19,8 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
     private IMqttClient? _mqttClient;
     private OrchestratorSettingsEntity? _currentSettings;
     private FullStateDto? _lastFullState;
+    private readonly HashSet<string> _discoveredGroupIds = new();
+    private string _lastDiscoveryHash = string.Empty;
     private readonly SemaphoreSlim _connectionLock = new(1, 1);
     private readonly SemaphoreSlim _publishLock = new(1, 1);
 
@@ -124,6 +126,9 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         try
         {
             await DisconnectInternalAsync();
+            using var scope = _serviceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<OrchestratorDbContext>();
+            _currentSettings = await db.Settings.FirstOrDefaultAsync(ct);
             await ConnectInternalAsync(ct);
         }
         finally
@@ -179,6 +184,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         using var scope = _serviceProvider.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<OrchestratorDbContext>();
         var settings = await db.Settings.FirstOrDefaultAsync(ct);
+        var stateBuilder = scope.ServiceProvider.GetRequiredService<FullStateBuilder>();
 
         if (settings == null || !settings.HomeAssistantEnabled || string.IsNullOrWhiteSpace(settings.MqttHost))
         {
@@ -193,11 +199,10 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
 
         if (IsConnected && HasSameConfig(_currentSettings, settings))
         {
-            // Heartbeat state update
-            if (_lastFullState != null)
-            {
-                await PublishDiscoveryAndStatesAsync(_lastFullState, ct);
-            }
+            // Heartbeat: refresh snapshot to pick up structural or external updates, then publish
+            var freshState = await stateBuilder.BuildAsync();
+            _lastFullState = freshState;
+            await PublishDiscoveryAndStatesAsync(freshState, ct);
             return;
         }
 
@@ -368,6 +373,20 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                 if (!string.IsNullOrWhiteSpace(s.Name)) sourceList.Add($"Spotify: {s.Name}");
             }
 
+            var currentGroupIds = state.Groups.Select(g => g.Id).ToHashSet();
+
+            // 1. Remove discovery & state for groups that were deleted
+            var removedGroupIds = _discoveredGroupIds.Except(currentGroupIds).ToList();
+            foreach (var removedId in removedGroupIds)
+            {
+                await UnpublishGroupDiscoveryAsync(discPrefix, baseTopic, removedId, ct);
+                _discoveredGroupIds.Remove(removedId);
+            }
+
+            // 2. Check if discovery needs re-publishing (group structure, names, or source list changed)
+            var discoveryHash = $"{discPrefix}|{baseTopic}|{string.Join(",", sourceList)}|{string.Join(";", state.Groups.Select(g => $"{g.Id}:{g.Name}"))}";
+            bool discoveryNeedsUpdate = discoveryHash != _lastDiscoveryHash;
+
             foreach (var group in state.Groups)
             {
                 var groupId = group.Id;
@@ -429,14 +448,18 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                     playbackState = "idle";
                 }
 
-                // 1. Publish Home Assistant Discovery Configs
-                await PublishGroupDiscoveryAsync(discPrefix, baseTopic, groupId, groupName, sourceList, ct);
+                // Publish discovery only when changed or new
+                if (discoveryNeedsUpdate || !_discoveredGroupIds.Contains(groupId))
+                {
+                    await PublishGroupDiscoveryAsync(discPrefix, baseTopic, groupId, groupName, sourceList, ct);
+                    _discoveredGroupIds.Add(groupId);
+                }
 
-                // 2. Publish transport availability topic (for play/pause/next/prev buttons)
+                // Publish transport availability topic (for play/pause/stop/next/prev buttons)
                 var transportAvailabilityTopic = $"{baseTopic}/groups/{groupId}/transport_available";
                 await PublishAsync(transportAvailabilityTopic, isSpotify ? "online" : "offline", retain: true, ct);
 
-                // 3. Publish Group State JSON
+                // Publish Group State JSON
                 var roomNames = group.Rooms.Select(r => r.FriendlyName ?? r.Name).Where(n => !string.IsNullOrWhiteSpace(n)).ToList();
                 var statePayload = new JsonObject
                 {
@@ -465,6 +488,11 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
 
                 await PublishAsync(groupStateTopic, statePayload.ToJsonString(), retain: true, ct);
             }
+
+            if (discoveryNeedsUpdate)
+            {
+                _lastDiscoveryHash = discoveryHash;
+            }
         }
         catch (Exception ex)
         {
@@ -474,6 +502,33 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         {
             _publishLock.Release();
         }
+    }
+
+    private async Task UnpublishGroupDiscoveryAsync(string discPrefix, string baseTopic, string groupId, CancellationToken ct)
+    {
+        var discoveryEntities = new[]
+        {
+            $"select/audio_orchestrator_{groupId}/source",
+            $"number/audio_orchestrator_{groupId}/volume",
+            $"switch/audio_orchestrator_{groupId}/mute",
+            $"sensor/audio_orchestrator_{groupId}/state",
+            $"sensor/audio_orchestrator_{groupId}/track",
+            $"button/audio_orchestrator_{groupId}/play",
+            $"button/audio_orchestrator_{groupId}/pause",
+            $"button/audio_orchestrator_{groupId}/stop",
+            $"button/audio_orchestrator_{groupId}/next",
+            $"button/audio_orchestrator_{groupId}/previous"
+        };
+
+        foreach (var entity in discoveryEntities)
+        {
+            // Empty payload removes discovery in Home Assistant
+            await PublishAsync($"{discPrefix}/{entity}/config", string.Empty, retain: true, ct);
+        }
+
+        // Clear retained state & availability
+        await PublishAsync($"{baseTopic}/groups/{groupId}/state", string.Empty, retain: true, ct);
+        await PublishAsync($"{baseTopic}/groups/{groupId}/transport_available", string.Empty, retain: true, ct);
     }
 
     private static JsonObject CreateDeviceObject(string groupId, string groupName) => new()
@@ -727,7 +782,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             case "volume":
                 if (double.TryParse(payload, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var volVal))
                 {
-                    int percent = volVal <= 1.0 && volVal > 0.0 && payload.Contains('.') ? (int)Math.Round(volVal * 100.0) : (int)Math.Round(volVal);
+                    int percent = (int)Math.Round(volVal);
                     percent = Math.Clamp(percent, 0, 100);
                     await volumeOrchestrator.SetGroupVolumeAsync(group.Id, percent, group.IsMuted);
                 }
@@ -772,15 +827,28 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             return "default";
         }
 
-        var clean = sourceInput.Replace("Radio: ", "").Replace("Spotify: ", "").Trim();
+        if (sourceInput.StartsWith("Radio: ", StringComparison.OrdinalIgnoreCase))
+        {
+            var clean = sourceInput.Substring("Radio: ".Length).Trim();
+            var radio = radios.FirstOrDefault(r => r.Name.Equals(clean, StringComparison.OrdinalIgnoreCase) || r.Id.Equals(clean, StringComparison.OrdinalIgnoreCase));
+            if (radio != null) return $"{OrchestratorConstants.RadioPrefix}{radio.Id}";
+            return "default";
+        }
 
-        var radio = radios.FirstOrDefault(r => r.Name.Equals(clean, StringComparison.OrdinalIgnoreCase) || r.Id.Equals(clean, StringComparison.OrdinalIgnoreCase));
-        if (radio != null) return $"{OrchestratorConstants.RadioPrefix}{radio.Id}";
+        if (sourceInput.StartsWith("Spotify: ", StringComparison.OrdinalIgnoreCase))
+        {
+            var clean = sourceInput.Substring("Spotify: ".Length).Trim();
+            var spot = spotifies.FirstOrDefault(s => s.Name.Equals(clean, StringComparison.OrdinalIgnoreCase) || s.Id.Equals(clean, StringComparison.OrdinalIgnoreCase));
+            if (spot != null) return $"{OrchestratorConstants.SpotifyPrefix}{spot.Id}";
+            return "default";
+        }
 
-        var spot = spotifies.FirstOrDefault(s => s.Name.Equals(clean, StringComparison.OrdinalIgnoreCase) || s.Id.Equals(clean, StringComparison.OrdinalIgnoreCase));
-        if (spot != null) return $"{OrchestratorConstants.SpotifyPrefix}{spot.Id}";
+        if (sourceInput.StartsWith(OrchestratorConstants.RadioPrefix))
+        {
+            return sourceInput;
+        }
 
-        if (sourceInput.StartsWith(OrchestratorConstants.RadioPrefix) || sourceInput.StartsWith(OrchestratorConstants.SpotifyPrefix))
+        if (sourceInput.StartsWith(OrchestratorConstants.SpotifyPrefix))
         {
             return sourceInput;
         }

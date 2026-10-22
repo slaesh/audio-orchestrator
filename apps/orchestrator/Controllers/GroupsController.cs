@@ -21,6 +21,7 @@ public class GroupsController : ControllerBase
     private readonly IHubContext<AudioHub, IAudioClient> _hub;
     private readonly FullStateBuilder _stateBuilder;
     private readonly VolumeOrchestratorService _volumeOrchestrator;
+    private readonly IHomeAssistantMqttService? _mqttService;
 
     public GroupsController(
         IReconciliationService reconciliation,
@@ -29,7 +30,8 @@ public class GroupsController : ControllerBase
         ILogger<GroupsController> logger,
         IHubContext<AudioHub, IAudioClient> hub,
         FullStateBuilder stateBuilder,
-        VolumeOrchestratorService volumeOrchestrator)
+        VolumeOrchestratorService volumeOrchestrator,
+        IHomeAssistantMqttService? mqttService = null)
     {
         _reconciliation = reconciliation;
         _snapcast = snapcast;
@@ -38,6 +40,17 @@ public class GroupsController : ControllerBase
         _hub = hub;
         _stateBuilder = stateBuilder;
         _volumeOrchestrator = volumeOrchestrator;
+        _mqttService = mqttService;
+    }
+
+    private async Task BroadcastStateAsync()
+    {
+        var state = await _stateBuilder.BuildAsync();
+        await _hub.Clients.All.OnFullStateUpdate(state);
+        if (_mqttService != null)
+        {
+            _ = _mqttService.NotifyFullStateAsync(state);
+        }
     }
 
     [HttpGet]
@@ -59,8 +72,7 @@ public class GroupsController : ControllerBase
         var group = new GroupEntity { Name = request.Name };
         _db.Groups.Add(group);
         await _db.SaveChangesAsync();
-        
-        await _hub.Clients.All.OnFullStateUpdate(await _stateBuilder.BuildAsync());
+        await BroadcastStateAsync();
         return Ok(group);
     }
 
@@ -75,7 +87,7 @@ public class GroupsController : ControllerBase
         
         _db.Groups.Remove(group);
         await _db.SaveChangesAsync();
-        await _hub.Clients.All.OnFullStateUpdate(await _stateBuilder.BuildAsync());
+        await BroadcastStateAsync();
         return NoContent();
     }
 
@@ -94,7 +106,7 @@ public class GroupsController : ControllerBase
 
         // Technically we might want to recreate the LibreSpot container to change its name, 
         // but for MVP updating DB and Snapcast is sufficient.
-        await _hub.Clients.All.OnFullStateUpdate(await _stateBuilder.BuildAsync());
+        await BroadcastStateAsync();
         return Ok(group);
     }
 
@@ -102,7 +114,7 @@ public class GroupsController : ControllerBase
     public async Task<IActionResult> SetGroupVolume(string id, [FromBody] VolumeRequest req)
     {
         await _volumeOrchestrator.SetGroupVolumeAsync(id, req.Percent, req.Muted);
-        await _hub.Clients.All.OnFullStateUpdate(await _stateBuilder.BuildAsync());
+        await BroadcastStateAsync();
         return Ok();
     }
 
@@ -237,7 +249,7 @@ public class GroupsController : ControllerBase
             _logger.LogWarning($"Assignment confirmation check failed: {ex.Message}. The room likely moved successfully; background reconciliation will verify.");
         }
 
-        await _hub.Clients.All.OnFullStateUpdate(await _stateBuilder.BuildAsync());
+        await BroadcastStateAsync();
         return Ok();
     }
 
@@ -331,7 +343,7 @@ public class GroupsController : ControllerBase
             }
         }
         
-        await _hub.Clients.All.OnFullStateUpdate(await _stateBuilder.BuildAsync());
+        await BroadcastStateAsync();
         return Ok();
     }
 }

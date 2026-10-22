@@ -1850,6 +1850,7 @@
           "port",
           "username",
           "password",
+          "hasPassword",
           "useTls",
           "discoveryPrefix",
           "baseTopic",
@@ -1881,6 +1882,9 @@
               "null",
               "string"
             ]
+          },
+          "hasPassword": {
+            "type": "boolean"
           },
           "useTls": {
             "type": "boolean"

@@ -101,6 +101,7 @@ public record HomeAssistantSettingsDto(
     int Port,
     string? Username,
     string? Password,
+    bool HasPassword,
     bool UseTls,
     string DiscoveryPrefix,
     string BaseTopic,

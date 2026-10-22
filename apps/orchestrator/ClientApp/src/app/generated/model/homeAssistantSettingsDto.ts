@@ -15,6 +15,7 @@ export interface HomeAssistantSettingsDto {
     port: number;
     username: string | null;
     password: string | null;
+    hasPassword: boolean;
     useTls: boolean;
     discoveryPrefix: string;
     baseTopic: string;

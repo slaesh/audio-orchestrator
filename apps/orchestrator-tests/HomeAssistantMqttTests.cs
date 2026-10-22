@@ -78,6 +78,7 @@ public class HomeAssistantMqttTests
                 Port: 1883,
                 Username: "test-user",
                 Password: "secret-password",
+                HasPassword: true,
                 UseTls: false,
                 DiscoveryPrefix: "homeassistant",
                 BaseTopic: "audio_orchestrator",
@@ -93,6 +94,8 @@ public class HomeAssistantMqttTests
         Assert.True(settingsDto.HomeAssistant.Enabled);
         Assert.Equal("192.168.178.50", settingsDto.HomeAssistant.Host);
         Assert.Equal("test-user", settingsDto.HomeAssistant.Username);
+        Assert.Null(settingsDto.HomeAssistant.Password);
+        Assert.True(settingsDto.HomeAssistant.HasPassword);
 
         var savedEntity = await db.Settings.FirstOrDefaultAsync();
         Assert.NotNull(savedEntity);

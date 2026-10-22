@@ -55,6 +55,8 @@ export class SettingsDialogComponent implements OnInit {
 
   selectedProfile = signal<VolumeProfile>(this.data.volumeProfile());
   showRaw = signal<boolean>(this.data.showRawVolume());
+  loading = signal<boolean>(true);
+  loadFailed = signal<boolean>(false);
   saving = signal<boolean>(false);
 
   // Home Assistant MQTT Settings
@@ -63,6 +65,7 @@ export class SettingsDialogComponent implements OnInit {
   haPort = signal<number>(1883);
   haUsername = signal<string>('');
   haPassword = signal<string>('');
+  haHasPassword = signal<boolean>(false);
   haUseTls = signal<boolean>(false);
   haDiscoveryPrefix = signal<string>('homeassistant');
   haBaseTopic = signal<string>('audio_orchestrator');
@@ -72,6 +75,12 @@ export class SettingsDialogComponent implements OnInit {
   testResult = signal<{ success: boolean; message: string } | null>(null);
 
   async ngOnInit() {
+    await this.loadSettings();
+  }
+
+  async loadSettings() {
+    this.loading.set(true);
+    this.loadFailed.set(false);
     try {
       const res = await this.data.getSettings();
       if (res.volumeProfile) {
@@ -82,7 +91,8 @@ export class SettingsDialogComponent implements OnInit {
         this.haHost.set(res.homeAssistant.host ?? '');
         this.haPort.set(res.homeAssistant.port || 1883);
         this.haUsername.set(res.homeAssistant.username ?? '');
-        this.haPassword.set(res.homeAssistant.password ?? '');
+        this.haPassword.set('');
+        this.haHasPassword.set(res.homeAssistant.hasPassword);
         this.haUseTls.set(res.homeAssistant.useTls);
         this.haDiscoveryPrefix.set(res.homeAssistant.discoveryPrefix || 'homeassistant');
         this.haBaseTopic.set(res.homeAssistant.baseTopic || 'audio_orchestrator');
@@ -90,6 +100,10 @@ export class SettingsDialogComponent implements OnInit {
       }
     } catch (e) {
       console.error('Failed to load settings', e);
+      this.loadFailed.set(true);
+      this.toast.error('Fehler beim Laden der Einstellungen');
+    } finally {
+      this.loading.set(false);
     }
   }
 
@@ -108,11 +122,12 @@ export class SettingsDialogComponent implements OnInit {
     this.testResult.set(null);
 
     try {
+      const enteredPassword = this.haPassword();
       const res = await this.data.testMqttConnection({
         host,
         port: this.haPort() || 1883,
         username: this.haUsername().trim() || undefined,
-        password: this.haPassword() || undefined,
+        password: enteredPassword ? enteredPassword : undefined,
         useTls: this.haUseTls(),
       });
 
@@ -132,16 +147,22 @@ export class SettingsDialogComponent implements OnInit {
   }
 
   async saveAndClose() {
+    if (this.loading() || this.loadFailed()) {
+      return;
+    }
+
     this.saving.set(true);
     try {
       this.data.setShowRawVolume(this.showRaw());
 
+      const enteredPassword = this.haPassword();
       const haSettings: HomeAssistantSettingsDto = {
         enabled: this.haEnabled(),
         host: this.haHost().trim(),
         port: this.haPort() || 1883,
         username: this.haUsername().trim() || undefined,
-        password: this.haPassword() || undefined,
+        password: enteredPassword ? enteredPassword : undefined,
+        hasPassword: this.haHasPassword(),
         useTls: this.haUseTls(),
         discoveryPrefix: this.haDiscoveryPrefix().trim() || 'homeassistant',
         baseTopic: this.haBaseTopic().trim() || 'audio_orchestrator',

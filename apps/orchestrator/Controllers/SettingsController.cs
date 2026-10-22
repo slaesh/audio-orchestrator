@@ -46,7 +46,8 @@ public class SettingsController : ControllerBase
             Host: settings?.MqttHost,
             Port: settings?.MqttPort ?? 1883,
             Username: settings?.MqttUsername,
-            Password: settings?.MqttPassword,
+            Password: null,
+            HasPassword: !string.IsNullOrEmpty(settings?.MqttPassword),
             UseTls: settings?.MqttUseTls ?? false,
             DiscoveryPrefix: settings?.MqttDiscoveryPrefix ?? "homeassistant",
             BaseTopic: settings?.MqttBaseTopic ?? "audio_orchestrator",
@@ -74,7 +75,10 @@ public class SettingsController : ControllerBase
             settings.MqttHost = req.HomeAssistant.Host;
             settings.MqttPort = req.HomeAssistant.Port > 0 ? req.HomeAssistant.Port : 1883;
             settings.MqttUsername = req.HomeAssistant.Username;
-            settings.MqttPassword = req.HomeAssistant.Password;
+            if (req.HomeAssistant.Password != null)
+            {
+                settings.MqttPassword = req.HomeAssistant.Password;
+            }
             settings.MqttUseTls = req.HomeAssistant.UseTls;
             settings.MqttDiscoveryPrefix = string.IsNullOrWhiteSpace(req.HomeAssistant.DiscoveryPrefix) ? "homeassistant" : req.HomeAssistant.DiscoveryPrefix;
             settings.MqttBaseTopic = string.IsNullOrWhiteSpace(req.HomeAssistant.BaseTopic) ? "audio_orchestrator" : req.HomeAssistant.BaseTopic;
@@ -99,7 +103,8 @@ public class SettingsController : ControllerBase
             Host: settings.MqttHost,
             Port: settings.MqttPort,
             Username: settings.MqttUsername,
-            Password: settings.MqttPassword,
+            Password: null,
+            HasPassword: !string.IsNullOrEmpty(settings.MqttPassword),
             UseTls: settings.MqttUseTls,
             DiscoveryPrefix: settings.MqttDiscoveryPrefix,
             BaseTopic: settings.MqttBaseTopic,
@@ -112,7 +117,16 @@ public class SettingsController : ControllerBase
     [HttpPost("mqtt/test")]
     public async Task<ActionResult<TestMqttConnectionResponse>> TestMqttConnection([FromBody] TestMqttConnectionRequest req)
     {
-        var result = await _mqttService.TestConnectionAsync(req);
+        var requestToUse = req;
+        if (req.Password == null)
+        {
+            var settings = await _db.Settings.FirstOrDefaultAsync();
+            if (settings?.MqttHost == req.Host && !string.IsNullOrEmpty(settings.MqttPassword))
+            {
+                requestToUse = req with { Password = settings.MqttPassword };
+            }
+        }
+        var result = await _mqttService.TestConnectionAsync(requestToUse);
         return Ok(result);
     }
 }
