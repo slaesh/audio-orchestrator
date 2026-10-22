@@ -375,16 +375,6 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                 var groupStateTopic = $"{baseTopic}/groups/{groupId}/state";
                 var groupCmdTopic = $"{baseTopic}/groups/{groupId}/set";
 
-                // Device info for Home Assistant device grouping
-                var deviceObj = new JsonObject
-                {
-                    ["identifiers"] = new JsonArray { $"audio_orchestrator_group_{groupId}" },
-                    ["name"] = groupName,
-                    ["manufacturer"] = "Audio Orchestrator",
-                    ["model"] = "Synchronized Audio Group",
-                    ["sw_version"] = "1.0.0"
-                };
-
                 // Determine active source info
                 var activeStreamId = group.StreamId ?? "default";
                 var isOff = string.IsNullOrEmpty(activeStreamId) || activeStreamId == "default";
@@ -440,7 +430,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                 }
 
                 // 1. Publish Home Assistant Discovery Configs
-                await PublishGroupDiscoveryAsync(discPrefix, baseTopic, groupId, groupName, deviceObj, sourceList, ct);
+                await PublishGroupDiscoveryAsync(discPrefix, baseTopic, groupId, groupName, sourceList, ct);
 
                 // 2. Publish transport availability topic (for play/pause/next/prev buttons)
                 var transportAvailabilityTopic = $"{baseTopic}/groups/{groupId}/transport_available";
@@ -486,12 +476,20 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         }
     }
 
+    private static JsonObject CreateDeviceObject(string groupId, string groupName) => new()
+    {
+        ["identifiers"] = new JsonArray { $"audio_orchestrator_group_{groupId}" },
+        ["name"] = groupName,
+        ["manufacturer"] = "Audio Orchestrator",
+        ["model"] = "Synchronized Audio Group",
+        ["sw_version"] = "1.0.0"
+    };
+
     private async Task PublishGroupDiscoveryAsync(
         string discPrefix,
         string baseTopic,
         string groupId,
         string groupName,
-        JsonObject deviceObj,
         List<string> sourceList,
         CancellationToken ct)
     {
@@ -511,7 +509,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             ["command_topic"] = $"{groupCmdTopic}/source",
             ["options"] = JsonSerializer.SerializeToNode(sourceList),
             ["availability_topic"] = bridgeStatusTopic,
-            ["device"] = deviceObj
+            ["device"] = CreateDeviceObject(groupId, groupName)
         };
         await PublishAsync($"{discPrefix}/select/audio_orchestrator_{groupId}/source/config", selectConfig.ToJsonString(), retain: true, ct);
 
@@ -529,7 +527,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             ["step"] = 1,
             ["mode"] = "slider",
             ["availability_topic"] = bridgeStatusTopic,
-            ["device"] = deviceObj
+            ["device"] = CreateDeviceObject(groupId, groupName)
         };
         await PublishAsync($"{discPrefix}/number/audio_orchestrator_{groupId}/volume/config", volumeConfig.ToJsonString(), retain: true, ct);
 
@@ -545,7 +543,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             ["payload_on"] = "ON",
             ["payload_off"] = "OFF",
             ["availability_topic"] = bridgeStatusTopic,
-            ["device"] = deviceObj
+            ["device"] = CreateDeviceObject(groupId, groupName)
         };
         await PublishAsync($"{discPrefix}/switch/audio_orchestrator_{groupId}/mute/config", muteConfig.ToJsonString(), retain: true, ct);
 
@@ -559,7 +557,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             ["value_template"] = "{{ value_json.state }}",
             ["json_attributes_topic"] = groupStateTopic,
             ["availability_topic"] = bridgeStatusTopic,
-            ["device"] = deviceObj
+            ["device"] = CreateDeviceObject(groupId, groupName)
         };
         await PublishAsync($"{discPrefix}/sensor/audio_orchestrator_{groupId}/state/config", stateSensorConfig.ToJsonString(), retain: true, ct);
 
@@ -572,7 +570,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             ["state_topic"] = groupStateTopic,
             ["value_template"] = "{{ value_json.track_info }}",
             ["availability_topic"] = bridgeStatusTopic,
-            ["device"] = deviceObj
+            ["device"] = CreateDeviceObject(groupId, groupName)
         };
         await PublishAsync($"{discPrefix}/sensor/audio_orchestrator_{groupId}/track/config", trackSensorConfig.ToJsonString(), retain: true, ct);
 
@@ -590,7 +588,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                 new JsonObject { ["topic"] = transportAvailTopic }
             },
             ["availability_mode"] = "all",
-            ["device"] = deviceObj
+            ["device"] = CreateDeviceObject(groupId, groupName)
         };
         await PublishAsync($"{discPrefix}/button/audio_orchestrator_{groupId}/play/config", playBtnConfig.ToJsonString(), retain: true, ct);
 
@@ -608,7 +606,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                 new JsonObject { ["topic"] = transportAvailTopic }
             },
             ["availability_mode"] = "all",
-            ["device"] = deviceObj
+            ["device"] = CreateDeviceObject(groupId, groupName)
         };
         await PublishAsync($"{discPrefix}/button/audio_orchestrator_{groupId}/pause/config", pauseBtnConfig.ToJsonString(), retain: true, ct);
 
@@ -621,7 +619,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             ["command_topic"] = $"{groupCmdTopic}/command",
             ["payload_press"] = "stop",
             ["availability_topic"] = bridgeStatusTopic,
-            ["device"] = deviceObj
+            ["device"] = CreateDeviceObject(groupId, groupName)
         };
         await PublishAsync($"{discPrefix}/button/audio_orchestrator_{groupId}/stop/config", stopBtnConfig.ToJsonString(), retain: true, ct);
 
@@ -639,7 +637,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                 new JsonObject { ["topic"] = transportAvailTopic }
             },
             ["availability_mode"] = "all",
-            ["device"] = deviceObj
+            ["device"] = CreateDeviceObject(groupId, groupName)
         };
         await PublishAsync($"{discPrefix}/button/audio_orchestrator_{groupId}/next/config", nextBtnConfig.ToJsonString(), retain: true, ct);
 
@@ -657,7 +655,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                 new JsonObject { ["topic"] = transportAvailTopic }
             },
             ["availability_mode"] = "all",
-            ["device"] = deviceObj
+            ["device"] = CreateDeviceObject(groupId, groupName)
         };
         await PublishAsync($"{discPrefix}/button/audio_orchestrator_{groupId}/previous/config", prevBtnConfig.ToJsonString(), retain: true, ct);
     }
