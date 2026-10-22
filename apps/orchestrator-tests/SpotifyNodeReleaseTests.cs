@@ -75,6 +75,10 @@ public class SpotifyNodeReleaseTests
     [InlineData("0.2.0", "ghcr.io/slaesh/radio:latest", "0.2.0")]
     [InlineData(null, "ghcr.io/slaesh/radio:0.3.5", "0.3.5")]
     [InlineData("", "ghcr.io/slaesh/radio:latest", "0.1.0")]
+    [InlineData(null, "localhost:5000/radio", "0.1.0")]
+    [InlineData("", "localhost:5000/radio", "0.1.0")]
+    [InlineData(null, "localhost:5000/radio:0.3.5", "0.3.5")]
+    [InlineData(null, "localhost:5000/radio:latest", "0.1.0")]
     public void RadioPluginEntity_GetEffectiveVersion_ResolvesCorrectly(string? currentVersion, string dockerImage, string expected)
     {
         var entity = new AudioOrchestrator.Data.Entities.RadioPluginEntity

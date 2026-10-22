@@ -10,6 +10,7 @@ using AudioOrchestrator.Data;
 using AudioOrchestrator.Data.Entities;
 using AudioOrchestrator.Contracts;
 using AudioOrchestrator.Hubs;
+using Microsoft.Extensions.Configuration;
 
 namespace AudioOrchestrator.OrchestratorTests;
 
@@ -229,5 +230,95 @@ public class SpotifySourcesControllerTests
             null,
             null
         ), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetSourceReleases_WhenCurrentVersionEmpty_ResolvesFromConfiguredImage()
+    {
+        using var db = GetDbContext();
+        var source = new SpotifySourceEntity
+        {
+            Id = "src-empty-rel",
+            Name = "Empty Version Source",
+            CurrentVersion = "",
+            MaxVolume = 50
+        };
+        db.SpotifySources.Add(source);
+        await db.SaveChangesAsync();
+
+        var inMemorySettings = new Dictionary<string, string?>
+        {
+            { "SPOTIFY_NODE_IMAGE", "ghcr.io/slaesh/librespot-server:0.3.1" }
+        };
+        Microsoft.Extensions.Configuration.IConfiguration config = new Microsoft.Extensions.Configuration.ConfigurationBuilder().AddInMemoryCollection(inMemorySettings).Build();
+
+        _releaseServiceMock
+            .Setup(r => r.GetReleaseHistoryAsync("0.3.1", null))
+            .ReturnsAsync(new List<SpotifyReleaseDto>
+            {
+                new SpotifyReleaseDto("v0.3.2", "0.3.2", "0.3.2", "notes", DateTime.UtcNow, true)
+            });
+
+        var controller = new SpotifySourcesController(
+            _containerLifecycleMock.Object,
+            _librespotApiMock.Object,
+            _snapcastMock.Object,
+            db,
+            _loggerMock.Object,
+            _hubMock.Object,
+            _builderMock.Object,
+            _releaseServiceMock.Object,
+            config
+        );
+
+        var actionResult = await controller.GetSourceReleases("src-empty-rel");
+        var okResult = Assert.IsType<OkObjectResult>(actionResult.Result);
+        var releases = Assert.IsAssignableFrom<IEnumerable<SpotifyReleaseDto>>(okResult.Value);
+
+        Assert.Single(releases);
+        _releaseServiceMock.Verify(r => r.GetReleaseHistoryAsync("0.3.1", null), Times.Once);
+    }
+
+    [Fact]
+    public async Task UpgradeSource_WhenCurrentVersionEmpty_ResolvesFromConfiguredImage()
+    {
+        using var db = GetDbContext();
+        var source = new SpotifySourceEntity
+        {
+            Id = "src-empty-upg",
+            Name = "Empty Version Source",
+            CurrentVersion = "",
+            MaxVolume = 50
+        };
+        db.SpotifySources.Add(source);
+        await db.SaveChangesAsync();
+
+        var inMemorySettings = new Dictionary<string, string?>
+        {
+            { "SPOTIFY_NODE_IMAGE", "ghcr.io/slaesh/librespot-server:0.3.1" }
+        };
+        Microsoft.Extensions.Configuration.IConfiguration config = new Microsoft.Extensions.Configuration.ConfigurationBuilder().AddInMemoryCollection(inMemorySettings).Build();
+
+        _releaseServiceMock
+            .Setup(r => r.GetLatestCompatibleVersionAsync("0.3.1"))
+            .ReturnsAsync("0.3.2");
+
+        var controller = new SpotifySourcesController(
+            _containerLifecycleMock.Object,
+            _librespotApiMock.Object,
+            _snapcastMock.Object,
+            db,
+            _loggerMock.Object,
+            _hubMock.Object,
+            _builderMock.Object,
+            _releaseServiceMock.Object,
+            config
+        );
+
+        var actionResult = await controller.UpgradeSource("src-empty-upg");
+        Assert.IsType<OkObjectResult>(actionResult);
+
+        _releaseServiceMock.Verify(r => r.GetLatestCompatibleVersionAsync("0.3.1"), Times.Once);
+        _containerLifecycleMock.Verify(c => c.UpgradeSpotifyNodeAsync("src-empty-upg", "0.3.2"), Times.Once);
     }
 }

@@ -21,6 +21,7 @@ public class SpotifySourcesController : ControllerBase
     private readonly IHubContext<AudioHub, IAudioClient> _hub;
     private readonly FullStateBuilder _stateBuilder;
     private readonly ISpotifyNodeReleaseService _releaseService;
+    private readonly IConfiguration? _configuration;
 
     public SpotifySourcesController(
         IContainerLifecycleService containerLifecycle,
@@ -30,7 +31,8 @@ public class SpotifySourcesController : ControllerBase
         ILogger<SpotifySourcesController> logger,
         IHubContext<AudioHub, IAudioClient> hub,
         FullStateBuilder stateBuilder,
-        ISpotifyNodeReleaseService releaseService)
+        ISpotifyNodeReleaseService releaseService,
+        IConfiguration? configuration = null)
     {
         _containerLifecycle = containerLifecycle;
         _librespotApi = librespotApi;
@@ -40,6 +42,7 @@ public class SpotifySourcesController : ControllerBase
         _hub = hub;
         _stateBuilder = stateBuilder;
         _releaseService = releaseService;
+        _configuration = configuration;
     }
 
     [HttpGet]
@@ -270,6 +273,13 @@ public class SpotifySourcesController : ControllerBase
         }
     }
 
+    private string GetEffectiveSpotifyVersion(SpotifySourceEntity source)
+    {
+        if (!string.IsNullOrWhiteSpace(source.CurrentVersion)) return source.CurrentVersion;
+        var baseImage = _configuration?["SPOTIFY_NODE_IMAGE"] ?? OrchestratorConstants.DefaultSpotifyNodeImage;
+        return OrchestratorConstants.ExtractImageTag(baseImage);
+    }
+
     [HttpGet("releases")]
     public async Task<ActionResult<IReadOnlyList<SpotifyReleaseDto>>> GetReleases([FromQuery] string? currentVersion = null, [FromQuery] bool forceRefresh = false)
     {
@@ -283,7 +293,8 @@ public class SpotifySourcesController : ControllerBase
         var source = await _db.SpotifySources.FindAsync(id);
         if (source == null) return NotFound();
 
-        var history = await _releaseService.GetReleaseHistoryAsync(source.CurrentVersion, targetVersion);
+        var effectiveVersion = GetEffectiveSpotifyVersion(source);
+        var history = await _releaseService.GetReleaseHistoryAsync(effectiveVersion, targetVersion);
         return Ok(history);
     }
 
@@ -296,7 +307,8 @@ public class SpotifySourcesController : ControllerBase
         var targetVersion = req?.TargetVersion;
         if (string.IsNullOrWhiteSpace(targetVersion))
         {
-            targetVersion = await _releaseService.GetLatestCompatibleVersionAsync(source.CurrentVersion);
+            var effectiveVersion = GetEffectiveSpotifyVersion(source);
+            targetVersion = await _releaseService.GetLatestCompatibleVersionAsync(effectiveVersion);
             if (string.IsNullOrWhiteSpace(targetVersion))
             {
                 return BadRequest("No compatible upgrade version available for this node.");
