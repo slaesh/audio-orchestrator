@@ -492,7 +492,9 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             .Build();
 
         var result = await _mqttClient.PublishAsync(message, ct);
-        if (result != null && result.ReasonCode != MqttClientPublishReasonCode.Success)
+        if (result != null
+            && result.ReasonCode != MqttClientPublishReasonCode.Success
+            && result.ReasonCode != MqttClientPublishReasonCode.NoMatchingSubscribers)
         {
             _logger.LogWarning("MQTT publish rejected for topic {Topic}: {ReasonCode} ({ReasonString})", topic, result.ReasonCode, result.ReasonString);
             throw new InvalidOperationException($"MQTT publish rejected for topic '{topic}': {result.ReasonCode}");
@@ -667,7 +669,6 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                 _forceDiscovery = true;
             }
             _lastDiscoveryHash = string.Empty;
-            _discoveredGroupIds.Clear();
             _logger.LogError(ex, "Failed to publish discovery and states to MQTT");
             throw;
         }
