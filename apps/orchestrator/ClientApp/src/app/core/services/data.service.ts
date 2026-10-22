@@ -502,6 +502,30 @@ export class DataService {
     }
   }
 
+  async getSettings() {
+    return await firstValueFrom(this.settingsApi.apiSettingsGet());
+  }
+
+  async updateSettings(req: UpdateSettingsRequest) {
+    const res = await firstValueFrom(this.settingsApi.apiSettingsPut(req));
+    const curr = this.stateSignal();
+    if (curr) {
+      this.stateSignal.set({ ...curr, volumeProfile: res.volumeProfile });
+    }
+    return res;
+  }
+
+  async testMqttConnection(req: { host: string; port: number; username?: string | null; password?: string | null; useTls: boolean }) {
+    const payload = {
+      host: req.host,
+      port: req.port,
+      username: req.username ?? null,
+      password: req.password ?? null,
+      useTls: req.useTls,
+    };
+    return await firstValueFrom(this.settingsApi.apiSettingsMqttTestPost(payload));
+  }
+
   async setGroupVolume(id: string, percent: number, muted: boolean) {
     this.patchGroupVolume(id, percent, muted);
     this.groupVolumeUpdate$.next({ id, percent, muted });

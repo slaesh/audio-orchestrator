@@ -53,6 +53,12 @@ public class RadioMetadataService : BackgroundService
             var signalrId = $"{OrchestratorConstants.RadioPrefix}{streamDbId}";
             await _hub.Clients.All.OnRadioMetadataChanged(signalrId, payload.Title, payload.Artist, payload.CoverUrl);
             _logger.LogInformation("Radio {StreamId} metadata updated: {Artist} - {Title}", streamDbId, payload.Artist, payload.Title);
+
+            var mqtt = scope.ServiceProvider.GetService<IHomeAssistantMqttService>();
+            if (mqtt != null)
+            {
+                _ = mqtt.NotifyRadioMetadataAsync(signalrId, payload.Title, payload.Artist, payload.CoverUrl, ct);
+            }
         }
 
         if (!string.IsNullOrWhiteSpace(payload.Version))

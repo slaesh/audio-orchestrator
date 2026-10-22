@@ -17,6 +17,7 @@ public class SettingsController : ControllerBase
     private readonly VolumeOrchestratorService _volumeOrchestrator;
     private readonly FullStateBuilder _stateBuilder;
     private readonly IHubContext<AudioHub, IAudioClient> _hub;
+    private readonly IHomeAssistantMqttService _mqttService;
     private readonly ILogger<SettingsController> _logger;
 
     public SettingsController(
@@ -24,46 +25,94 @@ public class SettingsController : ControllerBase
         VolumeOrchestratorService volumeOrchestrator,
         FullStateBuilder stateBuilder,
         IHubContext<AudioHub, IAudioClient> hub,
+        IHomeAssistantMqttService mqttService,
         ILogger<SettingsController> logger)
     {
         _db = db;
         _volumeOrchestrator = volumeOrchestrator;
         _stateBuilder = stateBuilder;
         _hub = hub;
+        _mqttService = mqttService;
         _logger = logger;
     }
 
     [HttpGet]
-    public async Task<IActionResult> GetSettings()
+    public async Task<ActionResult<SettingsDto>> GetSettings()
     {
         var settings = await _db.Settings.FirstOrDefaultAsync();
         var profile = settings?.VolumeProfile ?? VolumeProfile.Cubic;
-        return Ok(new { volumeProfile = profile });
+        var haDto = new HomeAssistantSettingsDto(
+            Enabled: settings?.HomeAssistantEnabled ?? false,
+            Host: settings?.MqttHost,
+            Port: settings?.MqttPort ?? 1883,
+            Username: settings?.MqttUsername,
+            Password: settings?.MqttPassword,
+            UseTls: settings?.MqttUseTls ?? false,
+            DiscoveryPrefix: settings?.MqttDiscoveryPrefix ?? "homeassistant",
+            BaseTopic: settings?.MqttBaseTopic ?? "audio_orchestrator",
+            IsConnected: _mqttService.IsConnected
+        );
+
+        return Ok(new SettingsDto(profile, haDto));
     }
 
     [HttpPut]
-    public async Task<IActionResult> UpdateSettings([FromBody] UpdateSettingsRequest req)
+    public async Task<ActionResult<SettingsDto>> UpdateSettings([FromBody] UpdateSettingsRequest req)
     {
         var settings = await _db.Settings.FirstOrDefaultAsync();
         if (settings == null)
         {
-            settings = new OrchestratorSettingsEntity { Id = "default", VolumeProfile = req.VolumeProfile };
+            settings = new OrchestratorSettingsEntity { Id = "default" };
             _db.Settings.Add(settings);
         }
-        else
+
+        settings.VolumeProfile = req.VolumeProfile;
+
+        if (req.HomeAssistant != null)
         {
-            settings.VolumeProfile = req.VolumeProfile;
+            settings.HomeAssistantEnabled = req.HomeAssistant.Enabled;
+            settings.MqttHost = req.HomeAssistant.Host;
+            settings.MqttPort = req.HomeAssistant.Port > 0 ? req.HomeAssistant.Port : 1883;
+            settings.MqttUsername = req.HomeAssistant.Username;
+            settings.MqttPassword = req.HomeAssistant.Password;
+            settings.MqttUseTls = req.HomeAssistant.UseTls;
+            settings.MqttDiscoveryPrefix = string.IsNullOrWhiteSpace(req.HomeAssistant.DiscoveryPrefix) ? "homeassistant" : req.HomeAssistant.DiscoveryPrefix;
+            settings.MqttBaseTopic = string.IsNullOrWhiteSpace(req.HomeAssistant.BaseTopic) ? "audio_orchestrator" : req.HomeAssistant.BaseTopic;
         }
 
         await _db.SaveChangesAsync();
-        _logger.LogInformation("Volume profile updated to {Profile}. Recalculating all volumes...", req.VolumeProfile);
+        _logger.LogInformation("Settings updated. VolumeProfile: {Profile}, HA MQTT Enabled: {HaEnabled}", req.VolumeProfile, settings.HomeAssistantEnabled);
 
         // Recalculate hardware output for all active groups and unassigned rooms
         await _volumeOrchestrator.RecalculateAllAsync();
 
-        // Broadcast full state update to SignalR clients
-        await _hub.Clients.All.OnFullStateUpdate(await _stateBuilder.BuildAsync());
+        // Reload MQTT connection in background
+        _ = _mqttService.ReloadConfigurationAsync();
 
-        return Ok(new { volumeProfile = req.VolumeProfile });
+        // Broadcast full state update to SignalR clients
+        var fullState = await _stateBuilder.BuildAsync();
+        await _hub.Clients.All.OnFullStateUpdate(fullState);
+        await _mqttService.NotifyFullStateAsync(fullState);
+
+        var haDto = new HomeAssistantSettingsDto(
+            Enabled: settings.HomeAssistantEnabled,
+            Host: settings.MqttHost,
+            Port: settings.MqttPort,
+            Username: settings.MqttUsername,
+            Password: settings.MqttPassword,
+            UseTls: settings.MqttUseTls,
+            DiscoveryPrefix: settings.MqttDiscoveryPrefix,
+            BaseTopic: settings.MqttBaseTopic,
+            IsConnected: _mqttService.IsConnected
+        );
+
+        return Ok(new SettingsDto(settings.VolumeProfile, haDto));
+    }
+
+    [HttpPost("mqtt/test")]
+    public async Task<ActionResult<TestMqttConnectionResponse>> TestMqttConnection([FromBody] TestMqttConnectionRequest req)
+    {
+        var result = await _mqttService.TestConnectionAsync(req);
+        return Ok(result);
     }
 }

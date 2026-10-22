@@ -108,10 +108,64 @@ export type SpotifyReleaseDto = {
     url?: string;
 }
 
+/** Transpiled from AudioOrchestrator.Contracts.HomeAssistantSettingsDto */
+export type HomeAssistantSettingsDto = {
+    /** Transpiled from bool */
+    enabled: boolean;
+    /** Transpiled from string? */
+    host?: string;
+    /** Transpiled from int */
+    port: number;
+    /** Transpiled from string? */
+    username?: string;
+    /** Transpiled from string? */
+    password?: string;
+    /** Transpiled from bool */
+    useTls: boolean;
+    /** Transpiled from string */
+    discoveryPrefix: string;
+    /** Transpiled from string */
+    baseTopic: string;
+    /** Transpiled from bool */
+    isConnected: boolean;
+}
+
+/** Transpiled from AudioOrchestrator.Contracts.TestMqttConnectionRequest */
+export type TestMqttConnectionRequest = {
+    /** Transpiled from string */
+    host: string;
+    /** Transpiled from int */
+    port: number;
+    /** Transpiled from string? */
+    username?: string;
+    /** Transpiled from string? */
+    password?: string;
+    /** Transpiled from bool */
+    useTls: boolean;
+}
+
+/** Transpiled from AudioOrchestrator.Contracts.TestMqttConnectionResponse */
+export type TestMqttConnectionResponse = {
+    /** Transpiled from bool */
+    success: boolean;
+    /** Transpiled from string */
+    message: string;
+}
+
+/** Transpiled from AudioOrchestrator.Contracts.SettingsDto */
+export type SettingsDto = {
+    /** Transpiled from AudioOrchestrator.Contracts.VolumeProfile */
+    volumeProfile: VolumeProfile;
+    /** Transpiled from AudioOrchestrator.Contracts.HomeAssistantSettingsDto */
+    homeAssistant: HomeAssistantSettingsDto;
+}
+
 /** Transpiled from AudioOrchestrator.Contracts.UpdateSettingsRequest */
 export type UpdateSettingsRequest = {
     /** Transpiled from AudioOrchestrator.Contracts.VolumeProfile */
     volumeProfile: VolumeProfile;
+    /** Transpiled from AudioOrchestrator.Contracts.HomeAssistantSettingsDto? */
+    homeAssistant?: HomeAssistantSettingsDto;
 }
 
 /** Transpiled from AudioOrchestrator.Contracts.NodeUpgradeRequest */

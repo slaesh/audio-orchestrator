@@ -24,6 +24,7 @@ public class EventsController : ControllerBase
     private readonly VolumeOrchestratorService _volumeOrchestrator;
     private readonly ILibrespotApiClient _librespotApi;
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly IHomeAssistantMqttService _mqttService;
 
     public EventsController(
         ISnapcastService snapcast, 
@@ -33,7 +34,8 @@ public class EventsController : ControllerBase
         FullStateBuilder stateBuilder,
         VolumeOrchestratorService volumeOrchestrator,
         ILibrespotApiClient librespotApi,
-        IServiceScopeFactory scopeFactory)
+        IServiceScopeFactory scopeFactory,
+        IHomeAssistantMqttService mqttService)
     {
         _snapcast = snapcast;
         _db = db;
@@ -43,6 +45,7 @@ public class EventsController : ControllerBase
         _volumeOrchestrator = volumeOrchestrator;
         _librespotApi = librespotApi;
         _scopeFactory = scopeFactory;
+        _mqttService = mqttService;
     }
 
     private async Task SyncMetadataToSource(SpotifySourceEntity source, WebhookEventPayload payload, OrchestratorDbContext db)
@@ -408,12 +411,15 @@ public class EventsController : ControllerBase
 
         // Always send the fine-grained event
         await _hub.Clients.All.OnSpotifyEvent(spotifyEvent);
+        _ = _mqttService.NotifySpotifyEventAsync(spotifyEvent);
 
         // Major state changes still trigger a full sync to ensure all clients are consistent
         var majorEvents = new[] { "playing", "stopped", "paused", "started", "inactive", "connected", "disconnected", "set_queue" };
         if (majorEvents.Contains(payload.Event))
         {
-            await _hub.Clients.All.OnFullStateUpdate(await _stateBuilder.BuildAsync());
+            var freshState = await _stateBuilder.BuildAsync();
+            await _hub.Clients.All.OnFullStateUpdate(freshState);
+            _ = _mqttService.NotifyFullStateAsync(freshState);
         }
 
         return Ok();
