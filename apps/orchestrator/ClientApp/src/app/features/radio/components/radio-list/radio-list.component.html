@@ -80,7 +80,7 @@
             @if (getMatchedPlugin(stream.url); as plugin) {
               <z-badge zType="outline" class="bg-primary/10 border-primary/30 text-primary text-[10px] py-0 px-2 font-mono flex items-center gap-1" [title]="'Powered by ' + plugin.name + ' (' + plugin.dockerImage + ')'">
                 <ng-icon name="lucideZap" size="0.65rem" />
-                {{ plugin.name }} <span class="opacity-70">v{{ plugin.currentVersion || '0.1.0' }}</span>
+                {{ plugin.name }} <span class="opacity-70">v{{ plugin.currentVersion }}</span>
               </z-badge>
               @if (plugin.hasUpdate) {
                 <button 

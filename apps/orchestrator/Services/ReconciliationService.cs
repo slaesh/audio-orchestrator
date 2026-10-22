@@ -28,6 +28,7 @@ public class ReconciliationService : IReconciliationService, IDisposable
     private readonly IContainerLifecycleService _containerLifecycle;
     private readonly IFifoService _fifoService;
     private readonly ISnapcastService _snapcast;
+    private readonly IConfiguration? _configuration;
     private readonly SemaphoreSlim _reconcileLock = new(1, 1);
 
     public ReconciliationService(
@@ -36,7 +37,8 @@ public class ReconciliationService : IReconciliationService, IDisposable
         IServiceProvider serviceProvider,
         IContainerLifecycleService containerLifecycle,
         IFifoService fifoService,
-        ISnapcastService snapcast)
+        ISnapcastService snapcast,
+        IConfiguration? configuration = null)
     {
         _dockerClient = dockerClient;
         _logger = logger;
@@ -44,6 +46,7 @@ public class ReconciliationService : IReconciliationService, IDisposable
         _containerLifecycle = containerLifecycle;
         _fifoService = fifoService;
         _snapcast = snapcast;
+        _configuration = configuration;
     }
 
     public void Dispose()
@@ -109,14 +112,10 @@ public class ReconciliationService : IReconciliationService, IDisposable
             s.ContextUri = null;
             s.ContextName = null;
             s.ErrorMessage = null;
-            if (string.IsNullOrWhiteSpace(s.CurrentVersion))
-            {
-                s.CurrentVersion = OrchestratorConstants.SpotifyNodeVersion;
-            }
 
             var streamId = $"{OrchestratorConstants.SpotifyPrefix}{s.Id}";
             var fifoPath = $"{OrchestratorConstants.FifoBaseDir}/{streamId}";
-            await _containerLifecycle.SpawnLibreSpotAsync(s.Id, s.Name, fifoPath, s.MaxVolume, containers, s.CurrentVersion);
+            await _containerLifecycle.SpawnLibreSpotAsync(s.Id, s.Name, fifoPath, s.MaxVolume, containers, string.IsNullOrWhiteSpace(s.CurrentVersion) ? null : s.CurrentVersion);
         }
 
         // 2. Reconcile Radio Streams (Ensure all are running and FIFOs exist)

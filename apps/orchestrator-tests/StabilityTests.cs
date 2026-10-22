@@ -11,6 +11,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using AudioOrchestrator.Hubs;
 using AudioOrchestrator.Contracts;
+using Microsoft.Extensions.Configuration;
 
 namespace AudioOrchestrator.OrchestratorTests;
 
@@ -81,6 +82,8 @@ public class StabilityTests
         scopeFactoryMock.Setup(s => s.CreateScope()).Returns(scopeMock.Object);
         scopeMock.Setup(s => s.ServiceProvider).Returns(serviceProviderMock.Object);
         serviceProviderMock.Setup(s => s.GetService(typeof(OrchestratorDbContext))).Returns(db);
+        serviceProviderMock.Setup(s => s.GetService(typeof(Microsoft.AspNetCore.SignalR.IHubContext<AudioHub, IAudioClient>))).Returns(_hubMock.Object);
+        serviceProviderMock.Setup(s => s.GetService(typeof(FullStateBuilder))).Returns(_builderMock.Object);
 
         var service = new ReconciliationService(
             new Mock<Docker.DotNet.IDockerClient>().Object,
@@ -130,6 +133,8 @@ public class StabilityTests
         scopeFactoryMock.Setup(s => s.CreateScope()).Returns(scopeMock.Object);
         scopeMock.Setup(s => s.ServiceProvider).Returns(serviceProviderMock.Object);
         serviceProviderMock.Setup(s => s.GetService(typeof(OrchestratorDbContext))).Returns(db);
+        serviceProviderMock.Setup(s => s.GetService(typeof(Microsoft.AspNetCore.SignalR.IHubContext<AudioHub, IAudioClient>))).Returns(_hubMock.Object);
+        serviceProviderMock.Setup(s => s.GetService(typeof(FullStateBuilder))).Returns(_builderMock.Object);
 
         var service = new ReconciliationService(
             new Mock<Docker.DotNet.IDockerClient>().Object,
@@ -290,6 +295,69 @@ public class StabilityTests
         Assert.Contains((HttpMethod.Post, $"http://localhost:{expectedPort}/api/v1/play-context"), requestedUrls);
         Assert.Contains((HttpMethod.Get, $"http://localhost:{expectedPort}/api/v1/status"), requestedUrls);
         Assert.Contains((HttpMethod.Get, $"http://localhost:{expectedPort}/api/v1/health"), requestedUrls);
+    }
+
+    [Fact]
+    public async Task ReconciliationService_UntaggedImage_SpawnsWithNullVersion()
+    {
+        using var db = GetDbContext();
+        var source = new SpotifySourceEntity
+        {
+            Id = "src-untagged",
+            Name = "Untagged Spotify",
+            CurrentVersion = "",
+            MaxVolume = 50
+        };
+        db.SpotifySources.Add(source);
+        await db.SaveChangesAsync();
+
+        var dockerClientMock = new Mock<Docker.DotNet.IDockerClient>();
+        dockerClientMock.Setup(d => d.Containers.ListContainersAsync(It.IsAny<Docker.DotNet.Models.ContainersListParameters>(), default))
+            .ReturnsAsync(new List<Docker.DotNet.Models.ContainerListResponse>());
+
+        var containerLifecycleMock = new Mock<IContainerLifecycleService>();
+        var fifoServiceMock = new Mock<IFifoService>();
+        var loggerMock = new Mock<ILogger<ReconciliationService>>();
+
+        var inMemorySettings = new Dictionary<string, string?>
+        {
+            { "SPOTIFY_NODE_IMAGE", "ghcr.io/slaesh/librespot-server" }
+        };
+        Microsoft.Extensions.Configuration.IConfiguration config = new Microsoft.Extensions.Configuration.ConfigurationBuilder()
+            .AddInMemoryCollection(inMemorySettings)
+            .Build();
+
+        var serviceProviderMock = new Mock<IServiceProvider>();
+        var scopeMock = new Mock<Microsoft.Extensions.DependencyInjection.IServiceScope>();
+        var scopeFactoryMock = new Mock<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>();
+        serviceProviderMock.Setup(s => s.GetService(typeof(Microsoft.Extensions.DependencyInjection.IServiceScopeFactory))).Returns(scopeFactoryMock.Object);
+        scopeFactoryMock.Setup(s => s.CreateScope()).Returns(scopeMock.Object);
+        scopeMock.Setup(s => s.ServiceProvider).Returns(serviceProviderMock.Object);
+        serviceProviderMock.Setup(s => s.GetService(typeof(OrchestratorDbContext))).Returns(db);
+        serviceProviderMock.Setup(s => s.GetService(typeof(Microsoft.AspNetCore.SignalR.IHubContext<AudioHub, IAudioClient>))).Returns(_hubMock.Object);
+        serviceProviderMock.Setup(s => s.GetService(typeof(FullStateBuilder))).Returns(_builderMock.Object);
+
+        var reconciliation = new ReconciliationService(
+            dockerClientMock.Object,
+            loggerMock.Object,
+            serviceProviderMock.Object,
+            containerLifecycleMock.Object,
+            fifoServiceMock.Object,
+            _snapMock.Object,
+            config
+        );
+
+        await reconciliation.ReconcileDockerOnStartupAsync();
+
+        // Must spawn with version: null so DockerLifecycleService preserves the untagged image reference verbatim
+        containerLifecycleMock.Verify(c => c.SpawnLibreSpotAsync(
+            "src-untagged",
+            "Untagged Spotify",
+            It.IsAny<string>(),
+            50,
+            It.IsAny<IList<Docker.DotNet.Models.ContainerListResponse>>(),
+            null
+        ), Times.Once);
     }
 
     private sealed class FakeHttpMessageHandler : HttpMessageHandler

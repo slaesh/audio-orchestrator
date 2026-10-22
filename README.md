@@ -112,7 +112,7 @@ Open `http://localhost:5000` in your browser to access the dashboard!
 | `SNAPCAST_PORT` | Port for Snapserver TCP JSON-RPC control | `1705` |
 | `ORCHESTRATOR_INTERNAL_URL` | Base URL used by dynamic Spotify and Radio containers to reach Orchestrator webhooks | `http://localhost:5000` |
 | `FIFO_BASE_DIR` | Host base path for named PCM audio pipes | `/tmp/audio_fifos` |
-| `SPOTIFY_NODE_IMAGE` | Docker image tag for Spotify Connect nodes | `ghcr.io/slaesh/librespot-server:0.3.0` |
+| `SPOTIFY_NODE_IMAGE` | Docker image tag for Spotify Connect nodes | `ghcr.io/slaesh/librespot-server:0.3.1` |
 | `DOCKER_FFMPEG_IMAGE` | Docker image used as fallback for streams without specialized plugins | `jrottenberg/ffmpeg:4.1-alpine` |
 | `DOCKER_RADIO_AUDALAXY_IMAGE` | Default Docker image for the Audalaxy radio metadata stream plugin | `ghcr.io/slaesh/radio-node-audalaxy:latest` |
 

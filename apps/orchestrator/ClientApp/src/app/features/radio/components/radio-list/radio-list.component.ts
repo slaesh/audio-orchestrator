@@ -130,7 +130,7 @@ export class RadioListComponent {
         type: 'radioPlugin',
         id: plugin.id,
         name: plugin.name,
-        currentVersion: plugin.currentVersion || '0.1.0',
+        currentVersion: plugin.currentVersion,
         targetVersion: plugin.latestCompatibleVersion || 'latest',
         repository: repo,
       } satisfies NodeUpgradeDialogData,
