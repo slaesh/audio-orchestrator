@@ -110,6 +110,60 @@ public class HomeAssistantMqttTests
     }
 
     [Fact]
+    public async Task UpdateSettings_ShouldSucceed_WhenMqttNotificationFails()
+    {
+        await using var db = new OrchestratorDbContext(_dbOptions);
+        var mockVolume = new Mock<VolumeOrchestratorService>(db, Mock.Of<ISnapcastService>(), Mock.Of<ILibrespotApiClient>(), Mock.Of<IHubContext<AudioHub, IAudioClient>>(), Mock.Of<ILogger<VolumeOrchestratorService>>());
+        var mockStateBuilder = new Mock<FullStateBuilder>(db, Mock.Of<ISnapcastService>(), null, null, null, null);
+        mockStateBuilder.Setup(s => s.BuildAsync()).ReturnsAsync(new FullStateDto(new List<GroupDto>(), new List<RoomDto>(), new List<StreamDto>(), new List<SpotifySourceDto>(), new List<StreamDto>(), null, VolumeProfile.Linear));
+
+        var mockClients = new Mock<IHubClients<IAudioClient>>();
+        var mockClientProxy = new Mock<IAudioClient>();
+        mockClients.Setup(c => c.All).Returns(mockClientProxy.Object);
+
+        var mockHub = new Mock<IHubContext<AudioHub, IAudioClient>>();
+        mockHub.Setup(h => h.Clients).Returns(mockClients.Object);
+
+        var mockMqtt = new Mock<IHomeAssistantMqttService>();
+        mockMqtt.Setup(m => m.IsConnected).Returns(true);
+        // Simulate broker connection drop / rejection during notification
+        mockMqtt.Setup(m => m.NotifyFullStateAsync(It.IsAny<FullStateDto>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Broker rejected publication"));
+
+        var mockLogger = new Mock<ILogger<SettingsController>>();
+
+        var controller = new SettingsController(db, mockVolume.Object, mockStateBuilder.Object, mockHub.Object, mockMqtt.Object, mockLogger.Object);
+
+        var req = new UpdateSettingsRequest(
+            VolumeProfile: VolumeProfile.Linear,
+            HomeAssistant: new HomeAssistantSettingsDto(
+                Enabled: true,
+                Host: "192.168.178.50",
+                Port: 1883,
+                Username: null,
+                Password: null,
+                HasPassword: false,
+                UseTls: false,
+                DiscoveryPrefix: "homeassistant",
+                BaseTopic: "audio_orchestrator",
+                IsConnected: true
+            )
+        );
+
+        // Act - should not throw 500 error
+        var result = await controller.UpdateSettings(req);
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        var settingsDto = Assert.IsType<SettingsDto>(okResult.Value);
+
+        Assert.Equal(VolumeProfile.Linear, settingsDto.VolumeProfile);
+        Assert.True(settingsDto.HomeAssistant.Enabled);
+
+        var savedEntity = await db.Settings.FirstOrDefaultAsync();
+        Assert.NotNull(savedEntity);
+        Assert.True(savedEntity.HomeAssistantEnabled);
+    }
+
+    [Fact]
     public async Task TestMqttConnection_ShouldDelegateToMqttService()
     {
         await using var db = new OrchestratorDbContext(_dbOptions);
@@ -1284,6 +1338,83 @@ public class HomeAssistantMqttTests
         // Discovery select entity MUST be republished because source list structured JSON changed
         mockClient.Verify(c => c.PublishAsync(
             It.Is<MqttApplicationMessage>(m => m.Topic.StartsWith("homeassistant/select/audio_orchestrator_g1/source/config")),
+            It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task ReloadConfigurationAsync_ShouldRetryCleanupOfOldPrefix_WhenInitialUnpublishFails()
+    {
+        var (sp, db, mockClient, service, _) = CreateTestContext(discoveryPrefix: "old_ha", baseTopic: "old_orch");
+
+        mockClient.Setup(c => c.ConnectAsync(It.IsAny<MqttClientOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientConnectResult());
+        mockClient.Setup(c => c.SubscribeAsync(It.IsAny<MqttClientSubscribeOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientSubscribeResult(
+                1,
+                new List<MqttClientSubscribeResultItem>
+                {
+                    new(new MqttTopicFilter { Topic = "old_orch/groups/+/set/#" }, MqttClientSubscribeResultCode.GrantedQoS0),
+                    new(new MqttTopicFilter { Topic = "old_ha/status" }, MqttClientSubscribeResultCode.GrantedQoS0)
+                },
+                string.Empty,
+                new List<MqttUserProperty>()
+            ));
+        mockClient.SetupGet(c => c.IsConnected).Returns(true);
+
+        // 1. Initial setup with group g1
+        var group = new GroupEntity { Id = "g1", Name = "Wohnzimmer", CurrentStreamId = "default" };
+        db.Groups.Add(group);
+        await db.SaveChangesAsync();
+
+        await service.EnsureConnectionAsync(CancellationToken.None);
+
+        // Verify g1 was discovered under old_ha
+        mockClient.Verify(c => c.PublishAsync(
+            It.Is<MqttApplicationMessage>(m => m.Topic.StartsWith("old_ha/select/audio_orchestrator_g1/source/config") && !string.IsNullOrEmpty(m.ConvertPayloadToString())),
+            It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+
+        // 2. Change discovery prefix to new_ha
+        var settings = await db.Settings.FirstAsync();
+        settings.MqttDiscoveryPrefix = "new_ha";
+        await db.SaveChangesAsync();
+
+        // Simulate publish failure on unpublishing old_ha config
+        mockClient.Setup(c => c.PublishAsync(
+                It.Is<MqttApplicationMessage>(m => m.Topic.StartsWith("old_ha/select/audio_orchestrator_g1")),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Broker disconnected during unpublish"));
+
+        // Subscription setup for new_ha
+        mockClient.Setup(c => c.SubscribeAsync(It.IsAny<MqttClientSubscribeOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientSubscribeResult(
+                2,
+                new List<MqttClientSubscribeResultItem>
+                {
+                    new(new MqttTopicFilter { Topic = "old_orch/groups/+/set/#" }, MqttClientSubscribeResultCode.GrantedQoS0),
+                    new(new MqttTopicFilter { Topic = "new_ha/status" }, MqttClientSubscribeResultCode.GrantedQoS0)
+                },
+                string.Empty,
+                new List<MqttUserProperty>()
+            ));
+
+        // Reload configuration while unpublish on old_ha fails
+        await service.ReloadConfigurationAsync(CancellationToken.None);
+
+        // 3. Broker recovers
+        mockClient.Setup(c => c.PublishAsync(It.IsAny<MqttApplicationMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientPublishResult(1, MqttClientPublishReasonCode.Success, string.Empty, Array.Empty<MqttUserProperty>()));
+
+        // Trigger next sync / heartbeat
+        await service.EnsureConnectionAsync(CancellationToken.None);
+
+        // The pending cleanup MUST have remembered old_ha and retried unpublishing it with empty payload!
+        mockClient.Verify(c => c.PublishAsync(
+            It.Is<MqttApplicationMessage>(m => m.Topic.StartsWith("old_ha/select/audio_orchestrator_g1/source/config") && string.IsNullOrEmpty(m.ConvertPayloadToString())),
+            It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+
+        // And new_ha was published
+        mockClient.Verify(c => c.PublishAsync(
+            It.Is<MqttApplicationMessage>(m => m.Topic.StartsWith("new_ha/select/audio_orchestrator_g1/source/config") && !string.IsNullOrEmpty(m.ConvertPayloadToString())),
             It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
 }

@@ -142,7 +142,14 @@ public class SettingsController : ControllerBase
         // Broadcast full state update to SignalR clients
         var fullState = await _stateBuilder.BuildAsync();
         await _hub.Clients.All.OnFullStateUpdate(fullState);
-        await _mqttService.NotifyFullStateAsync(fullState);
+        try
+        {
+            await _mqttService.NotifyFullStateAsync(fullState);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to notify Home Assistant MQTT service of full state after settings update");
+        }
 
         var haDto = new HomeAssistantSettingsDto(
             Enabled: settings.HomeAssistantEnabled,

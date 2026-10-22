@@ -27,10 +27,21 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
     private readonly IServiceProvider _serviceProvider;
     private readonly IMqttClientFactorySeam _mqttFactory;
 
+    private sealed class PendingDiscoveryCleanup
+    {
+        public string Host { get; init; } = string.Empty;
+        public int Port { get; init; }
+        public string DiscoveryPrefix { get; init; } = string.Empty;
+        public string BaseTopic { get; init; } = string.Empty;
+        public HashSet<string> GroupIds { get; } = new();
+        public bool ClearBridgeStatus { get; set; }
+    }
+
     private IMqttClient? _mqttClient;
     private OrchestratorSettingsEntity? _currentSettings;
     private FullStateDto? _lastFullState;
     private readonly HashSet<string> _discoveredGroupIds = new();
+    private readonly List<PendingDiscoveryCleanup> _pendingCleanups = new();
     private string _lastDiscoveryHash = string.Empty;
     private bool _forceDiscovery = true;
     private readonly SemaphoreSlim _connectionLock = new(1, 1);
@@ -153,6 +164,10 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             _lastFullState = state;
             await PublishDiscoveryAndStatesInternalAsync(state, ct);
         }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to publish full state to MQTT");
+        }
         finally
         {
             _publishLock.Release();
@@ -184,6 +199,8 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         await _publishLock.WaitAsync(ct);
         try
         {
+            await ProcessPendingCleanupsAsync(ct);
+
             using var scope = _serviceProvider.CreateScope();
             var stateBuilder = scope.ServiceProvider.GetRequiredService<FullStateBuilder>();
             var freshState = await stateBuilder.BuildAsync();
@@ -211,14 +228,38 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
 
             if (settings == null || !settings.HomeAssistantEnabled || string.IsNullOrWhiteSpace(settings.MqttHost))
             {
-                if (IsConnected)
+                if (IsConnected || _pendingCleanups.Count > 0)
                 {
                     await StopAndDrainCallbacksAsync();
                     await _publishLock.WaitAsync(ct);
                     try
                     {
-                        await CleanupOldDiscoveryIfPrefixChangedOrDisabledAsync(settings, ct);
-                        await DisconnectInternalAsync(publishOffline: false);
+                        if (_currentSettings != null && _discoveredGroupIds.Count > 0)
+                        {
+                            EnqueueDiscoveryCleanup(_currentSettings, null);
+                        }
+
+                        if (!IsConnected && _currentSettings != null && _pendingCleanups.Any(p =>
+                            string.Equals(p.Host, _currentSettings.MqttHost, StringComparison.OrdinalIgnoreCase)
+                            && p.Port == _currentSettings.MqttPort))
+                        {
+                            await ConnectClientAndSubscribeAsync(ct);
+                        }
+
+                        if (IsConnected)
+                        {
+                            await ProcessPendingCleanupsAsync(ct);
+                        }
+
+                        var hasPendingForCurrent = _currentSettings != null && _pendingCleanups.Any(p =>
+                            string.Equals(p.Host, _currentSettings.MqttHost, StringComparison.OrdinalIgnoreCase)
+                            && p.Port == _currentSettings.MqttPort);
+
+                        if (!hasPendingForCurrent)
+                        {
+                            await DisconnectInternalAsync(publishOffline: false);
+                            _currentSettings = null;
+                        }
                     }
                     finally
                     {
@@ -239,12 +280,26 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             await _publishLock.WaitAsync(ct);
             try
             {
+                if (_currentSettings != null)
+                {
+                    EnqueueDiscoveryCleanup(_currentSettings, settings);
+                }
+
+                if (IsConnected)
+                {
+                    await ProcessPendingCleanupsAsync(ct);
+                }
+
                 var oldBaseTopic = GetNormalizedBaseTopic(_currentSettings);
                 var newBaseTopic = GetNormalizedBaseTopic(settings);
-                await CleanupOldDiscoveryIfPrefixChangedOrDisabledAsync(settings, ct);
                 await DisconnectInternalAsync(publishOffline: oldBaseTopic == newBaseTopic);
                 _currentSettings = settings;
                 await ConnectClientAndSubscribeAsync(ct);
+
+                if (IsConnected)
+                {
+                    await ProcessPendingCleanupsAsync(ct);
+                }
             }
             finally
             {
@@ -292,12 +347,10 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
     private string GetNormalizedDiscoveryPrefix() => GetNormalizedDiscoveryPrefix(_currentSettings);
     private string GetNormalizedBaseTopic() => GetNormalizedBaseTopic(_currentSettings);
 
-    private async Task CleanupOldDiscoveryIfPrefixChangedOrDisabledAsync(OrchestratorSettingsEntity? newSettings, CancellationToken ct)
+    private void EnqueueDiscoveryCleanup(OrchestratorSettingsEntity oldSettings, OrchestratorSettingsEntity? newSettings)
     {
-        if (!IsConnected || _currentSettings == null || _mqttClient == null) return;
-
-        var oldDiscPrefix = GetNormalizedDiscoveryPrefix(_currentSettings);
-        var oldBaseTopic = GetNormalizedBaseTopic(_currentSettings);
+        var oldDiscPrefix = GetNormalizedDiscoveryPrefix(oldSettings);
+        var oldBaseTopic = GetNormalizedBaseTopic(oldSettings);
         var newDiscPrefix = GetNormalizedDiscoveryPrefix(newSettings);
         var newBaseTopic = GetNormalizedBaseTopic(newSettings);
 
@@ -306,32 +359,80 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
 
         if (!prefixOrTopicChanged && !isNewDisabled) return;
 
-        _logger.LogInformation(
-            "MQTT prefix, base topic or HA state changed (old: disc={OldDisc}, base={OldBase}; new: disc={NewDisc}, base={NewBase}, disabled={Disabled}). Cleaning up old retained discovery topics...",
-            oldDiscPrefix, oldBaseTopic, newDiscPrefix, newBaseTopic, isNewDisabled);
+        var host = oldSettings.MqttHost ?? string.Empty;
+        var port = oldSettings.MqttPort;
 
-        foreach (var groupId in _discoveredGroupIds.ToList())
+        var pending = _pendingCleanups.FirstOrDefault(p =>
+            string.Equals(p.Host, host, StringComparison.OrdinalIgnoreCase)
+            && p.Port == port
+            && p.DiscoveryPrefix == oldDiscPrefix
+            && p.BaseTopic == oldBaseTopic);
+
+        if (pending == null)
         {
-            try
+            pending = new PendingDiscoveryCleanup
             {
-                await UnpublishGroupDiscoveryAsync(oldDiscPrefix, oldBaseTopic, groupId, ct);
-                _discoveredGroupIds.Remove(groupId);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to unpublish discovery for group {GroupId} under old prefix {Prefix}", groupId, oldDiscPrefix);
-            }
+                Host = host,
+                Port = port,
+                DiscoveryPrefix = oldDiscPrefix,
+                BaseTopic = oldBaseTopic,
+                ClearBridgeStatus = (oldBaseTopic != newBaseTopic || isNewDisabled)
+            };
+            _pendingCleanups.Add(pending);
+        }
+        else if (oldBaseTopic != newBaseTopic || isNewDisabled)
+        {
+            pending.ClearBridgeStatus = true;
         }
 
-        if (oldBaseTopic != newBaseTopic || isNewDisabled)
+        foreach (var groupId in _discoveredGroupIds)
         {
-            try
+            pending.GroupIds.Add(groupId);
+        }
+    }
+
+    private async Task ProcessPendingCleanupsAsync(CancellationToken ct)
+    {
+        if (!IsConnected || _mqttClient == null || _currentSettings == null) return;
+
+        var matchingCleanups = _pendingCleanups
+            .Where(p => string.Equals(p.Host, _currentSettings.MqttHost, StringComparison.OrdinalIgnoreCase) && p.Port == _currentSettings.MqttPort)
+            .ToList();
+
+        foreach (var pending in matchingCleanups)
+        {
+            foreach (var groupId in pending.GroupIds.ToList())
             {
-                await PublishAsync($"{oldBaseTopic}/bridge/status", string.Empty, retain: true, ct);
+                try
+                {
+                    await UnpublishGroupDiscoveryAsync(pending.DiscoveryPrefix, pending.BaseTopic, groupId, ct);
+                    pending.GroupIds.Remove(groupId);
+                    _discoveredGroupIds.Remove(groupId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to unpublish discovery for group {GroupId} under prefix {Prefix} on {Host}:{Port}",
+                        groupId, pending.DiscoveryPrefix, pending.Host, pending.Port);
+                }
             }
-            catch (Exception ex)
+
+            if (pending.ClearBridgeStatus)
             {
-                _logger.LogWarning(ex, "Failed to clear old bridge status topic {Topic}", $"{oldBaseTopic}/bridge/status");
+                try
+                {
+                    await PublishAsync($"{pending.BaseTopic}/bridge/status", string.Empty, retain: true, ct);
+                    pending.ClearBridgeStatus = false;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to clear bridge status topic {Topic} on {Host}:{Port}",
+                        $"{pending.BaseTopic}/bridge/status", pending.Host, pending.Port);
+                }
+            }
+
+            if (pending.GroupIds.Count == 0 && !pending.ClearBridgeStatus)
+            {
+                _pendingCleanups.Remove(pending);
             }
         }
     }
