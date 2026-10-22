@@ -175,6 +175,11 @@ export class SettingsDialogComponent implements OnInit {
     }
 
     if (this.haEnabled()) {
+      if (!this.haHost().trim()) {
+        this.toast.error('Bitte Broker Host / IP angeben');
+        return;
+      }
+
       const port = this.haPort() || 1883;
       if (port < 1 || port > 65535) {
         this.toast.error('Ungültiger Port (1-65535)');

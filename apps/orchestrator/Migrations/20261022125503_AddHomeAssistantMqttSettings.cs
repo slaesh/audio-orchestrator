@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
@@ -48,7 +48,7 @@ namespace AudioOrchestrator.Migrations
                 table: "Settings",
                 type: "INTEGER",
                 nullable: false,
-                defaultValue: 0);
+                defaultValue: 1883);
 
             migrationBuilder.AddColumn<bool>(
                 name: "MqttUseTls",

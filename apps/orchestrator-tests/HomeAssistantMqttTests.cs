@@ -400,4 +400,63 @@ public class HomeAssistantMqttTests
         // Password should NOT be populated because Port differed!
         Assert.Null(capturedRequest.Password);
     }
+
+    [Fact]
+    public async Task UpdateSettings_ShouldRejectEmptyBrokerHost_WhenMqttEnabled()
+    {
+        await using var db = new OrchestratorDbContext(_dbOptions);
+        var mockVolume = new Mock<VolumeOrchestratorService>(db, Mock.Of<ISnapcastService>(), Mock.Of<ILibrespotApiClient>(), Mock.Of<IHubContext<AudioHub, IAudioClient>>(), Mock.Of<ILogger<VolumeOrchestratorService>>());
+        var mockStateBuilder = new Mock<FullStateBuilder>(db, Mock.Of<ISnapcastService>(), null, null, null, null);
+        var mockHub = new Mock<IHubContext<AudioHub, IAudioClient>>();
+        var mockMqtt = new Mock<IHomeAssistantMqttService>();
+
+        var controller = new SettingsController(db, mockVolume.Object, mockStateBuilder.Object, mockHub.Object, mockMqtt.Object, Mock.Of<ILogger<SettingsController>>());
+
+        var req = new UpdateSettingsRequest(
+            VolumeProfile: VolumeProfile.Linear,
+            HomeAssistant: new HomeAssistantSettingsDto(
+                Enabled: true,
+                Host: "   ", // Blank host
+                Port: 1883,
+                Username: null,
+                Password: null,
+                HasPassword: false,
+                UseTls: false,
+                DiscoveryPrefix: "homeassistant",
+                BaseTopic: "audio_orchestrator",
+                IsConnected: false
+            )
+        );
+
+        var result = await controller.UpdateSettings(req);
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result.Result);
+        Assert.Contains("Broker Host / IP darf nicht leer sein", badRequest.Value?.ToString());
+    }
+
+    [Fact]
+    public async Task GetSettings_ShouldReturnDefaultPort1883_WhenStoredPortIsZero()
+    {
+        await using var db = new OrchestratorDbContext(_dbOptions);
+        db.Settings.Add(new OrchestratorSettingsEntity
+        {
+            Id = "default",
+            HomeAssistantEnabled = false,
+            MqttHost = null,
+            MqttPort = 0 // Migrated row with default 0
+        });
+        await db.SaveChangesAsync();
+
+        var mockVolume = new Mock<VolumeOrchestratorService>(db, Mock.Of<ISnapcastService>(), Mock.Of<ILibrespotApiClient>(), Mock.Of<IHubContext<AudioHub, IAudioClient>>(), Mock.Of<ILogger<VolumeOrchestratorService>>());
+        var mockStateBuilder = new Mock<FullStateBuilder>(db, Mock.Of<ISnapcastService>(), null, null, null, null);
+        var mockHub = new Mock<IHubContext<AudioHub, IAudioClient>>();
+        var mockMqtt = new Mock<IHomeAssistantMqttService>();
+
+        var controller = new SettingsController(db, mockVolume.Object, mockStateBuilder.Object, mockHub.Object, mockMqtt.Object, Mock.Of<ILogger<SettingsController>>());
+
+        var result = await controller.GetSettings();
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        var settingsDto = Assert.IsType<SettingsDto>(okResult.Value);
+
+        Assert.Equal(1883, settingsDto.HomeAssistant.Port);
+    }
 }

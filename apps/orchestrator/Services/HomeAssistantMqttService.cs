@@ -197,31 +197,29 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
 
     private async Task EnsureConnectionAsync(CancellationToken ct)
     {
-        using var scope = _serviceProvider.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<OrchestratorDbContext>();
-        var settings = await db.Settings.FirstOrDefaultAsync(ct);
-
-        if (settings == null || !settings.HomeAssistantEnabled || string.IsNullOrWhiteSpace(settings.MqttHost))
-        {
-            if (IsConnected)
-            {
-                await _connectionLock.WaitAsync(ct);
-                try { await DisconnectInternalAsync(); }
-                finally { _connectionLock.Release(); }
-            }
-            return;
-        }
-
-        if (IsConnected && HasSameConfig(_currentSettings, settings))
-        {
-            // Heartbeat: refresh snapshot to pick up structural or external updates, then publish
-            await RefreshAndPublishAsync(ct);
-            return;
-        }
-
         await _connectionLock.WaitAsync(ct);
         try
         {
+            using var scope = _serviceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<OrchestratorDbContext>();
+            var settings = await db.Settings.FirstOrDefaultAsync(ct);
+
+            if (settings == null || !settings.HomeAssistantEnabled || string.IsNullOrWhiteSpace(settings.MqttHost))
+            {
+                if (IsConnected)
+                {
+                    await DisconnectInternalAsync();
+                }
+                return;
+            }
+
+            if (IsConnected && HasSameConfig(_currentSettings, settings))
+            {
+                // Heartbeat: refresh snapshot to pick up structural or external updates, then publish
+                await RefreshAndPublishAsync(ct);
+                return;
+            }
+
             await DisconnectInternalAsync();
             _currentSettings = settings;
             await ConnectInternalAsync(ct);
@@ -302,20 +300,34 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                 return;
             }
 
-            _logger.LogInformation("MQTT connected successfully. Publishing bridge online status.");
-
-            _forceDiscovery = true;
-
-            // 1. Publish birth message
-            await PublishAsync(statusTopic, "online", retain: true, ct);
-
-            // 2. Subscribe to command topics & HA status topic
+            // 1. Subscribe to command topics & HA status topic
             var subOptions = _mqttFactory.CreateSubscribeOptionsBuilder()
                 .WithTopicFilter($"{baseTopic}/groups/+/set/#")
                 .WithTopicFilter($"{discPrefix}/status")
                 .Build();
 
-            await _mqttClient.SubscribeAsync(subOptions, ct);
+            var subResult = await _mqttClient.SubscribeAsync(subOptions, ct);
+            var failedSubscriptions = subResult.Items.Where(i =>
+                i.ResultCode != MqttClientSubscribeResultCode.GrantedQoS0
+                && i.ResultCode != MqttClientSubscribeResultCode.GrantedQoS1
+                && i.ResultCode != MqttClientSubscribeResultCode.GrantedQoS2).ToList();
+
+            if (failedSubscriptions.Count > 0)
+            {
+                foreach (var failed in failedSubscriptions)
+                {
+                    _logger.LogError("MQTT subscription failed for filter: {ResultCode}", failed.ResultCode);
+                }
+                await DisconnectInternalAsync();
+                return;
+            }
+
+            _logger.LogInformation("MQTT connected and subscribed successfully. Publishing bridge online status.");
+
+            _forceDiscovery = true;
+
+            // 2. Publish birth message
+            await PublishAsync(statusTopic, "online", retain: true, ct);
 
             // 3. Initial sync
             await RefreshAndPublishAsync(ct, forceDiscovery: true);
@@ -496,7 +508,10 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                 await PublishAsync(transportAvailabilityTopic, isSpotify ? "online" : "offline", retain: true, ct);
 
                 // Publish Group State JSON
-                var roomNames = group.Rooms.Select(r => r.FriendlyName ?? r.Name).Where(n => !string.IsNullOrWhiteSpace(n)).ToList();
+                var roomNames = group.Rooms
+                    .Select(r => !string.IsNullOrWhiteSpace(r.FriendlyName) ? r.FriendlyName : r.Name)
+                    .Where(n => !string.IsNullOrWhiteSpace(n))
+                    .ToList();
 
                 var rawTrackInfo = string.IsNullOrWhiteSpace(mediaTitle)
                     ? (string.IsNullOrWhiteSpace(mediaChannel) ? currentSourceName : mediaChannel)

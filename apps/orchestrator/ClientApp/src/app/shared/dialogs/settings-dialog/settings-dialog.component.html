@@ -1,13 +1,13 @@
 <div
-  class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm animate-in fade-in duration-200"
+  class="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto bg-background/80 backdrop-blur-sm animate-in fade-in duration-200"
   (click)="close()"
 >
   <div
-    class="relative w-full max-w-2xl overflow-hidden rounded-2xl border border-border bg-card p-6 shadow-2xl animate-in zoom-in-95 duration-200"
+    class="relative w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden rounded-2xl border border-border bg-card p-6 shadow-2xl animate-in zoom-in-95 duration-200"
     (click)="$event.stopPropagation()"
   >
     <!-- Header -->
-    <div class="flex items-center justify-between mb-6">
+    <div class="flex items-center justify-between mb-4 shrink-0">
       <div class="flex items-center gap-3">
         <div class="size-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
           <ng-icon name="lucideSettings" size="1.25rem" />
@@ -30,7 +30,7 @@
     </div>
 
     <!-- Content -->
-    <div class="space-y-6 max-h-[75vh] overflow-y-auto pr-1">
+    <div class="space-y-6 flex-1 min-h-0 overflow-y-auto pr-1">
       <!-- Volume Profile Selection -->
       <div>
         <div class="flex items-center justify-between mb-2">
@@ -334,7 +334,7 @@
     </div>
 
     <!-- Footer Actions -->
-    <div class="flex flex-col-reverse sm:flex-row sm:justify-end gap-3 mt-8 pt-4 border-t border-border/40">
+    <div class="flex flex-col-reverse sm:flex-row sm:justify-end gap-3 mt-4 pt-4 border-t border-border/40 shrink-0">
       <z-button zType="outline" (click)="close()" class="sm:px-6">
         Abbrechen
       </z-button>

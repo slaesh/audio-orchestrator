@@ -44,7 +44,7 @@ public class SettingsController : ControllerBase
         var haDto = new HomeAssistantSettingsDto(
             Enabled: settings?.HomeAssistantEnabled ?? false,
             Host: settings?.MqttHost,
-            Port: settings?.MqttPort ?? 1883,
+            Port: (settings?.MqttPort is > 0 and <= 65535) ? settings.MqttPort : 1883,
             Username: settings?.MqttUsername,
             Password: null,
             HasPassword: !string.IsNullOrEmpty(settings?.MqttPassword),
@@ -71,6 +71,11 @@ public class SettingsController : ControllerBase
 
         if (req.HomeAssistant != null)
         {
+            if (req.HomeAssistant.Enabled && string.IsNullOrWhiteSpace(req.HomeAssistant.Host))
+            {
+                return BadRequest("Broker Host / IP darf nicht leer sein, wenn die MQTT-Integration aktiviert ist.");
+            }
+
             var port = req.HomeAssistant.Port == 0 ? 1883 : req.HomeAssistant.Port;
             if (port is < 1 or > 65535)
             {
