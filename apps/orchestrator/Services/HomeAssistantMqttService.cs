@@ -35,6 +35,10 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
     private bool _forceDiscovery = true;
     private readonly SemaphoreSlim _connectionLock = new(1, 1);
     private readonly SemaphoreSlim _publishLock = new(1, 1);
+    private readonly object _callbackSync = new();
+    private CancellationTokenSource? _sessionCts;
+    private int _activeCallbacks = 0;
+    private TaskCompletionSource? _drainTcs;
 
     public bool IsConnected => _mqttClient?.IsConnected ?? false;
 
@@ -139,6 +143,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         await _connectionLock.WaitAsync(ct);
         try
         {
+            await StopAndDrainCallbacksAsync();
             await _publishLock.WaitAsync(ct);
             try
             {
@@ -234,6 +239,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             {
                 if (IsConnected)
                 {
+                    await StopAndDrainCallbacksAsync();
                     await _publishLock.WaitAsync(ct);
                     try
                     {
@@ -254,6 +260,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                 return;
             }
 
+            await StopAndDrainCallbacksAsync();
             await _publishLock.WaitAsync(ct);
             try
             {
@@ -336,6 +343,14 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                 optionsBuilder.WithTlsOptions(o => o.UseTls());
             }
 
+            lock (_callbackSync)
+            {
+                _sessionCts?.Dispose();
+                _sessionCts = new CancellationTokenSource();
+                _drainTcs = null;
+                _activeCallbacks = 0;
+            }
+
             _mqttClient.ApplicationMessageReceivedAsync += HandleIncomingMessageAsync;
 
             _logger.LogInformation("Connecting to MQTT broker at {Host}:{Port}...", _currentSettings.MqttHost, _currentSettings.MqttPort);
@@ -384,6 +399,33 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         }
     }
 
+    private async Task StopAndDrainCallbacksAsync()
+    {
+        Task? drainTask = null;
+        lock (_callbackSync)
+        {
+            if (_sessionCts != null)
+            {
+                try
+                {
+                    _sessionCts.Cancel();
+                }
+                catch (ObjectDisposedException) { }
+            }
+
+            if (_activeCallbacks > 0)
+            {
+                _drainTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                drainTask = _drainTcs.Task;
+            }
+        }
+
+        if (drainTask != null)
+        {
+            await Task.WhenAny(drainTask, Task.Delay(5000));
+        }
+    }
+
     private async Task DisconnectInternalAsync()
     {
         if (_mqttClient != null)
@@ -407,15 +449,21 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                 _mqttClient = null;
                 _lastDiscoveryHash = string.Empty;
                 _forceDiscovery = true;
+                lock (_callbackSync)
+                {
+                    _sessionCts?.Dispose();
+                    _sessionCts = null;
+                }
             }
         }
     }
 
-    private async Task DisconnectAsync()
+    internal async Task DisconnectAsync()
     {
         await _connectionLock.WaitAsync();
         try
         {
+            await StopAndDrainCallbacksAsync();
             await _publishLock.WaitAsync();
             try
             {
@@ -829,6 +877,45 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
 
     internal async Task HandleIncomingMessageAsync(MqttApplicationMessageReceivedEventArgs e)
     {
+        CancellationToken ct;
+        lock (_callbackSync)
+        {
+            if (_sessionCts != null && _sessionCts.IsCancellationRequested)
+            {
+                return;
+            }
+            _sessionCts ??= new CancellationTokenSource();
+            ct = _sessionCts.Token;
+            _activeCallbacks++;
+        }
+
+        try
+        {
+            await HandleIncomingMessageInternalAsync(e, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogDebug("MQTT incoming message processing was cancelled.");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to process incoming MQTT message for topic {Topic}", e.ApplicationMessage.Topic);
+        }
+        finally
+        {
+            lock (_callbackSync)
+            {
+                _activeCallbacks--;
+                if (_activeCallbacks == 0 && _drainTcs != null)
+                {
+                    _drainTcs.TrySetResult();
+                }
+            }
+        }
+    }
+
+    private async Task HandleIncomingMessageInternalAsync(MqttApplicationMessageReceivedEventArgs e, CancellationToken ct)
+    {
         var topic = e.ApplicationMessage.Topic;
         var rawPayload = e.ApplicationMessage.ConvertPayloadToString() ?? string.Empty;
         var payload = rawPayload.Trim();
@@ -845,7 +932,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             {
                 _logger.LogInformation("Home Assistant reported online. Re-publishing all discovery configs and states.");
                 _forceDiscovery = true;
-                await RefreshAndPublishAsync(CancellationToken.None, forceDiscovery: true);
+                await RefreshAndPublishAsync(ct, forceDiscovery: true);
             }
             return;
         }
@@ -861,19 +948,12 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         var groupId = parts[0];
         var action = parts[2].ToLowerInvariant();
 
-        try
-        {
-            // Preserve raw payload for source selection to retain exact whitespace in source names
-            var commandPayload = action == "source" ? rawPayload : payload;
-            await ProcessGroupCommandAsync(groupId, action, commandPayload);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to process MQTT command {Action} for group {GroupId} (Payload: {Payload})", action, groupId, payload);
-        }
+        // Preserve raw payload for source selection to retain exact whitespace in source names
+        var commandPayload = action == "source" ? rawPayload : payload;
+        await ProcessGroupCommandAsync(groupId, action, commandPayload, ct);
     }
 
-    private async Task ProcessGroupCommandAsync(string groupId, string action, string payload)
+    private async Task ProcessGroupCommandAsync(string groupId, string action, string payload, CancellationToken ct)
     {
         using var scope = _serviceProvider.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<OrchestratorDbContext>();
@@ -883,7 +963,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         var stateBuilder = scope.ServiceProvider.GetRequiredService<FullStateBuilder>();
         var hubContext = scope.ServiceProvider.GetRequiredService<Microsoft.AspNetCore.SignalR.IHubContext<Hubs.AudioHub, IAudioClient>>();
 
-        var group = await db.Groups.FirstOrDefaultAsync(g => g.Id == groupId || g.SnapcastGroupId == groupId);
+        var group = await db.Groups.FirstOrDefaultAsync(g => g.Id == groupId || g.SnapcastGroupId == groupId, ct);
         if (group == null)
         {
             _logger.LogWarning("MQTT Command target group {GroupId} not found.", groupId);
@@ -909,8 +989,8 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                 break;
 
             case "source":
-                var radios = await db.RadioStreams.ToListAsync();
-                var spotifies = await db.SpotifySources.ToListAsync();
+                var radios = await db.RadioStreams.ToListAsync(ct);
+                var spotifies = await db.SpotifySources.ToListAsync(ct);
                 var targetStreamId = ResolveSourceToStreamId(
                     payload,
                     radios.Select(r => (r.Id, r.Name)),
@@ -935,7 +1015,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         // Broadcast updated state to SignalR and MQTT
         var freshState = await stateBuilder.BuildAsync();
         await hubContext.Clients.All.OnFullStateUpdate(freshState);
-        await NotifyFullStateAsync(freshState, CancellationToken.None);
+        await NotifyFullStateAsync(freshState, ct);
     }
 
     public record SourceMappingResult(
@@ -965,6 +1045,31 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         return new SourceMappingResult(sourceList, idToLabel, labelToId);
     }
 
+    private const int MaxHaLabelLength = 255;
+
+    public static string CreateBoundedLabel(string prefix, string name, string suffix = "")
+    {
+        var availableForSuffix = MaxHaLabelLength - prefix.Length - 1;
+        if (suffix.Length > availableForSuffix && availableForSuffix > 0)
+        {
+            suffix = suffix[..availableForSuffix];
+        }
+
+        var availableForName = MaxHaLabelLength - prefix.Length - suffix.Length;
+        if (availableForName >= name.Length)
+        {
+            return $"{prefix}{name}{suffix}";
+        }
+
+        if (availableForName > 0)
+        {
+            return $"{prefix}{name[..availableForName]}{suffix}";
+        }
+
+        var combined = $"{prefix}{suffix}";
+        return combined.Length > MaxHaLabelLength ? combined[..MaxHaLabelLength] : combined;
+    }
+
     private static void PopulateSourceCategory(
         IEnumerable<(string Id, string Name)> rawItems,
         string idPrefix,
@@ -983,7 +1088,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                     ? x.Id[idPrefix.Length..]
                     : x.Id;
                 var streamId = $"{idPrefix}{rawId}";
-                return (OriginalId: x.Id, RawId: rawId, StreamId: streamId, Name: x.Name);
+                return (OriginalId: x.Id, RawId: rawId, StreamId: streamId, Name: x.Name.Trim());
             })
             .ToList();
 
@@ -1001,11 +1106,11 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         {
             var isDup = duplicateNames.Contains(item.Name);
             currentLabels[item.StreamId] = isDup
-                ? $"{labelPrefix}{item.Name} ({item.RawId})"
-                : $"{labelPrefix}{item.Name}";
+                ? CreateBoundedLabel(labelPrefix, item.Name, $" ({item.RawId})")
+                : CreateBoundedLabel(labelPrefix, item.Name);
         }
 
-        // 2. Collision resolution: if any label collides (e.g. literal name was "Office (id1)" while generated was "Office (id1)")
+        // 2. Collision resolution: if any label collides (e.g. literal name was "Office (id1)" while generated was "Office (id1)", or shortening caused overlap)
         while (true)
         {
             var collisions = currentLabels
@@ -1028,15 +1133,16 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                     foreach (var kvp in unassigned)
                     {
                         var item = items.First(i => i.StreamId.Equals(kvp.Key, StringComparison.OrdinalIgnoreCase));
-                        currentLabels[kvp.Key] = $"{kvp.Value} ({item.RawId})";
+                        currentLabels[kvp.Key] = CreateBoundedLabel(labelPrefix, item.Name, $" ({item.RawId})");
                     }
                 }
                 else
                 {
+                    var counter = 2;
                     foreach (var kvp in group.Skip(1))
                     {
                         var item = items.First(i => i.StreamId.Equals(kvp.Key, StringComparison.OrdinalIgnoreCase));
-                        currentLabels[kvp.Key] = $"{kvp.Value}_{item.OriginalId}";
+                        currentLabels[kvp.Key] = CreateBoundedLabel(labelPrefix, item.Name, $" ({item.RawId}_{counter++})");
                     }
                 }
             }
@@ -1054,7 +1160,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         }
     }
 
-    private static string ResolveSourceToStreamId(
+    public static string ResolveSourceToStreamId(
         string sourceInput,
         IEnumerable<(string Id, string Name)> radios,
         IEnumerable<(string Id, string Name)> spotifies)
@@ -1079,6 +1185,13 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             || sourceInput.StartsWith(OrchestratorConstants.SpotifyPrefix, StringComparison.OrdinalIgnoreCase))
         {
             return sourceInput;
+        }
+
+        // 3. Raw ID without prefix passed (e.g. "r1")
+        if (mapping.StreamIdToLabel.TryGetValue(sourceInput, out var labelByRawId)
+            && mapping.LabelToStreamId.TryGetValue(labelByRawId, out var streamIdByRawId))
+        {
+            return streamIdByRawId;
         }
 
         // 3. Fallback: Parse prefix and match by ID or Name

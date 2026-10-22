@@ -819,4 +819,136 @@ public class HomeAssistantMqttTests
         Assert.True(service.IsConnected);
         mockClient.Verify(c => c.PublishAsync(It.Is<MqttApplicationMessage>(m => m.Topic == "audio_orchestrator/bridge/status"), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
+
+    [Fact]
+    public async Task DisconnectAsync_ShouldAvoidDeadlock_WhenIncomingCallbackIsBlockedOnPublishLock()
+    {
+        var (sp, db, mockClient, service, _) = CreateTestContext();
+
+        mockClient.Setup(c => c.ConnectAsync(It.IsAny<MqttClientOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientConnectResult());
+        mockClient.Setup(c => c.SubscribeAsync(It.IsAny<MqttClientSubscribeOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientSubscribeResult(
+                1,
+                new List<MqttClientSubscribeResultItem>
+                {
+                    new(new MqttTopicFilter { Topic = "audio_orchestrator/groups/+/set/#" }, MqttClientSubscribeResultCode.GrantedQoS0),
+                    new(new MqttTopicFilter { Topic = "homeassistant/status" }, MqttClientSubscribeResultCode.GrantedQoS0)
+                },
+                string.Empty,
+                new List<MqttUserProperty>()
+            ));
+        mockClient.SetupGet(c => c.IsConnected).Returns(true);
+
+        await service.EnsureConnectionAsync(CancellationToken.None);
+
+        db.Groups.Add(new GroupEntity { Id = "g1", Name = "Wohnzimmer", CurrentStreamId = "default" });
+        await db.SaveChangesAsync();
+
+        var publishBlockedTcs = new TaskCompletionSource();
+        var allowPublishFinishTcs = new TaskCompletionSource();
+
+        // When NotifyFullStateAsync publishes state, hold the publish lock
+        mockClient.Setup(c => c.PublishAsync(
+                It.Is<MqttApplicationMessage>(m => m.Topic == "audio_orchestrator/groups/g1/state"),
+                It.IsAny<CancellationToken>()))
+            .Returns(async () =>
+            {
+                publishBlockedTcs.TrySetResult();
+                await allowPublishFinishTcs.Task;
+                return new MqttClientPublishResult(1, MqttClientPublishReasonCode.Success, string.Empty, Array.Empty<MqttUserProperty>());
+            });
+
+        // 1. Start background publication that acquires and holds _publishLock
+        var dummyState = new FullStateDto(
+            new List<GroupDto> { new("g1", "Wohnzimmer", "default", new List<RoomDto>(), 50, false) },
+            new List<RoomDto>(),
+            new List<StreamDto>(),
+            new List<SpotifySourceDto>(),
+            new List<StreamDto>(),
+            null,
+            VolumeProfile.Linear
+        );
+
+        var publishTask = Task.Run(() => service.NotifyFullStateAsync(dummyState, CancellationToken.None));
+        await publishBlockedTcs.Task.WaitAsync(TimeSpan.FromSeconds(3));
+
+        // 2. Trigger an incoming callback that tries to acquire _publishLock (e.g. HA status online)
+        var haOnlineMsg = new MqttApplicationMessageBuilder()
+            .WithTopic("homeassistant/status")
+            .WithPayload("online")
+            .Build();
+        var args = new MqttApplicationMessageReceivedEventArgs("c1", haOnlineMsg, new MqttPublishPacket(), (_, _) => Task.CompletedTask);
+
+        var callbackTask = Task.Run(() => service.HandleIncomingMessageAsync(args));
+
+        // Give the callback task a moment to enter and block on _publishLock
+        await Task.Delay(50);
+
+        // 3. Initiate DisconnectAsync while the callback is blocked on _publishLock.
+        // In vulnerable code, Disconnect held _publishLock while MQTTnet waited on the callback -> deadlock.
+        // In fixed code, StopAndDrainCallbacksAsync cancels the session token, unblocking the callback immediately.
+        var disconnectTask = Task.Run(() => service.DisconnectAsync());
+
+        // Callback must be unblocked and complete promptly even before allowPublishFinishTcs is set!
+        await callbackTask.WaitAsync(TimeSpan.FromSeconds(3));
+
+        // Now allow original publisher to complete
+        allowPublishFinishTcs.TrySetResult();
+        await publishTask.WaitAsync(TimeSpan.FromSeconds(3));
+
+        // Disconnect must finish cleanly without deadlock
+        await disconnectTask.WaitAsync(TimeSpan.FromSeconds(3));
+
+        Assert.False(service.IsConnected);
+        mockClient.Verify(c => c.DisconnectAsync(It.IsAny<MqttClientDisconnectOptions>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public void BuildSourceMapping_ShouldBoundLabelsTo255Characters_AndResolveCollisionsDeterministically()
+    {
+        var longNameA = new string('A', 300);
+        var longNameB = new string('A', 248) + "XYZ";
+        var longNameC = new string('A', 248) + "123";
+        var longSpotify = new string('S', 300);
+
+        var radios = new List<(string Id, string Name)>
+        {
+            ("r1", longNameA),
+            ("r2", longNameA), // duplicate name
+            ("r3", longNameB), // collides with longNameC when shortened to 248
+            ("r4", longNameC)
+        };
+
+        var spotifies = new List<(string Id, string Name)>
+        {
+            ("s1", longSpotify),
+            ("s2", longSpotify)
+        };
+
+        var result = HomeAssistantMqttService.BuildSourceMapping(radios, spotifies);
+
+        // 1. Every label must strictly be <= 255 characters (Home Assistant maximum limit)
+        foreach (var label in result.SourceList)
+        {
+            Assert.True(label.Length <= 255, $"Label '{label}' exceeds 255 chars (Length: {label.Length})");
+        }
+
+        // 2. Every label in SourceList must be unique
+        Assert.Equal(result.SourceList.Count, result.SourceList.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+
+        // 3. Round-trip resolution: each advertised label must resolve back to its corresponding stream ID
+        foreach (var (label, expectedStreamId) in result.LabelToStreamId)
+        {
+            Assert.True(label.Length <= 255);
+            var resolvedId = HomeAssistantMqttService.ResolveSourceToStreamId(label, radios, spotifies);
+            Assert.Equal(expectedStreamId, resolvedId);
+        }
+
+        // 4. Raw IDs and stream IDs must also resolve
+        Assert.Equal("radio_r1", HomeAssistantMqttService.ResolveSourceToStreamId("r1", radios, spotifies));
+        Assert.Equal("radio_r1", HomeAssistantMqttService.ResolveSourceToStreamId("radio_r1", radios, spotifies));
+        Assert.Equal("spotify_s1", HomeAssistantMqttService.ResolveSourceToStreamId("s1", radios, spotifies));
+        Assert.Equal("spotify_s1", HomeAssistantMqttService.ResolveSourceToStreamId("spotify_s1", radios, spotifies));
+    }
 }
