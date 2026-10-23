@@ -17,6 +17,7 @@ public class SettingsController : ControllerBase
     private readonly VolumeOrchestratorService _volumeOrchestrator;
     private readonly FullStateBuilder _stateBuilder;
     private readonly IHubContext<AudioHub, IAudioClient> _hub;
+    private readonly IHomeAssistantMqttService _mqttService;
     private readonly ILogger<SettingsController> _logger;
 
     public SettingsController(
@@ -24,46 +25,174 @@ public class SettingsController : ControllerBase
         VolumeOrchestratorService volumeOrchestrator,
         FullStateBuilder stateBuilder,
         IHubContext<AudioHub, IAudioClient> hub,
+        IHomeAssistantMqttService mqttService,
         ILogger<SettingsController> logger)
     {
         _db = db;
         _volumeOrchestrator = volumeOrchestrator;
         _stateBuilder = stateBuilder;
         _hub = hub;
+        _mqttService = mqttService;
         _logger = logger;
     }
 
     [HttpGet]
-    public async Task<IActionResult> GetSettings()
+    public async Task<ActionResult<SettingsDto>> GetSettings()
     {
         var settings = await _db.Settings.FirstOrDefaultAsync();
         var profile = settings?.VolumeProfile ?? VolumeProfile.Cubic;
-        return Ok(new { volumeProfile = profile });
+        var haDto = new HomeAssistantSettingsDto(
+            Enabled: settings?.HomeAssistantEnabled ?? false,
+            Host: settings?.MqttHost,
+            Port: (settings?.MqttPort is > 0 and <= 65535) ? settings.MqttPort : 1883,
+            Username: settings?.MqttUsername,
+            Password: null,
+            HasPassword: !string.IsNullOrEmpty(settings?.MqttPassword),
+            UseTls: settings?.MqttUseTls ?? false,
+            DiscoveryPrefix: settings?.MqttDiscoveryPrefix ?? "homeassistant",
+            BaseTopic: settings?.MqttBaseTopic ?? "audio_orchestrator",
+            IsConnected: _mqttService.IsConnected
+        );
+
+        return Ok(new SettingsDto(profile, haDto));
     }
 
     [HttpPut]
-    public async Task<IActionResult> UpdateSettings([FromBody] UpdateSettingsRequest req)
+    public async Task<ActionResult<SettingsDto>> UpdateSettings([FromBody] UpdateSettingsRequest req)
     {
         var settings = await _db.Settings.FirstOrDefaultAsync();
         if (settings == null)
         {
-            settings = new OrchestratorSettingsEntity { Id = "default", VolumeProfile = req.VolumeProfile };
+            settings = new OrchestratorSettingsEntity { Id = "default" };
             _db.Settings.Add(settings);
         }
-        else
+
+        settings.VolumeProfile = req.VolumeProfile;
+
+        if (req.HomeAssistant != null)
         {
-            settings.VolumeProfile = req.VolumeProfile;
+            if (req.HomeAssistant.Enabled && string.IsNullOrWhiteSpace(req.HomeAssistant.Host))
+            {
+                return BadRequest("Broker Host / IP darf nicht leer sein, wenn die MQTT-Integration aktiviert ist.");
+            }
+
+            var port = req.HomeAssistant.Port == 0 ? 1883 : req.HomeAssistant.Port;
+            if (port is < 1 or > 65535)
+            {
+                return BadRequest("Ungültiger Port (1-65535).");
+            }
+
+            var discoveryPrefix = string.IsNullOrWhiteSpace(req.HomeAssistant.DiscoveryPrefix) ? "homeassistant" : req.HomeAssistant.DiscoveryPrefix.Trim().TrimEnd('/');
+            var baseTopic = string.IsNullOrWhiteSpace(req.HomeAssistant.BaseTopic) ? "audio_orchestrator" : req.HomeAssistant.BaseTopic.Trim().TrimEnd('/');
+
+            if (!IsValidMqttTopic(discoveryPrefix))
+            {
+                return BadRequest("Ungültiger Discovery-Präfix: Wildcards (+, #) oder ungültige Zeichen sind nicht erlaubt.");
+            }
+
+            if (!IsValidMqttTopic(baseTopic))
+            {
+                return BadRequest("Ungültiges Basis-Topic: Wildcards (+, #) oder ungültige Zeichen sind nicht erlaubt.");
+            }
+
+            // Prevent saved-password reuse when connection settings change
+            bool hostOrPortOrTlsChanged = !string.Equals(settings.MqttHost, req.HomeAssistant.Host, StringComparison.OrdinalIgnoreCase)
+                || settings.MqttPort != port
+                || settings.MqttUseTls != req.HomeAssistant.UseTls;
+
+            bool usernameChanged = !string.Equals(settings.MqttUsername ?? string.Empty, req.HomeAssistant.Username ?? string.Empty, StringComparison.Ordinal);
+
+            if (hostOrPortOrTlsChanged && req.HomeAssistant.Password == null && !string.IsNullOrEmpty(settings.MqttPassword))
+            {
+                return BadRequest("Verbindungsdaten geändert: Bei Änderung von Host, Port oder TLS muss das Passwort neu angegeben oder explizit gelöscht werden.");
+            }
+
+            if (usernameChanged && !string.IsNullOrWhiteSpace(req.HomeAssistant.Username) && req.HomeAssistant.Password == null && !string.IsNullOrEmpty(settings.MqttPassword))
+            {
+                return BadRequest("Verbindungsdaten geändert: Bei Änderung des Benutzernamens muss das Passwort neu angegeben oder explizit gelöscht werden.");
+            }
+
+            settings.HomeAssistantEnabled = req.HomeAssistant.Enabled;
+            settings.MqttHost = req.HomeAssistant.Host;
+            settings.MqttPort = port;
+            settings.MqttUsername = string.IsNullOrWhiteSpace(req.HomeAssistant.Username) ? null : req.HomeAssistant.Username.Trim();
+            if (string.IsNullOrWhiteSpace(req.HomeAssistant.Username))
+            {
+                // Removing username switches to anonymous MQTT; automatically clear any stored password
+                settings.MqttPassword = null;
+            }
+            else if (req.HomeAssistant.Password != null)
+            {
+                settings.MqttPassword = req.HomeAssistant.Password;
+            }
+            settings.MqttUseTls = req.HomeAssistant.UseTls;
+            settings.MqttDiscoveryPrefix = discoveryPrefix;
+            settings.MqttBaseTopic = baseTopic;
         }
 
         await _db.SaveChangesAsync();
-        _logger.LogInformation("Volume profile updated to {Profile}. Recalculating all volumes...", req.VolumeProfile);
+        _logger.LogInformation("Settings updated. VolumeProfile: {Profile}, HA MQTT Enabled: {HaEnabled}", req.VolumeProfile, settings.HomeAssistantEnabled);
 
         // Recalculate hardware output for all active groups and unassigned rooms
         await _volumeOrchestrator.RecalculateAllAsync();
 
-        // Broadcast full state update to SignalR clients
-        await _hub.Clients.All.OnFullStateUpdate(await _stateBuilder.BuildAsync());
+        // Reload MQTT connection in background
+        _ = _mqttService.ReloadConfigurationAsync();
 
-        return Ok(new { volumeProfile = req.VolumeProfile });
+        // Broadcast full state update to SignalR clients
+        var fullState = await _stateBuilder.BuildAsync();
+        await _hub.Clients.All.OnFullStateUpdate(fullState);
+        try
+        {
+            await _mqttService.NotifyFullStateAsync(fullState);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to notify Home Assistant MQTT service of full state after settings update");
+        }
+
+        var haDto = new HomeAssistantSettingsDto(
+            Enabled: settings.HomeAssistantEnabled,
+            Host: settings.MqttHost,
+            Port: settings.MqttPort,
+            Username: settings.MqttUsername,
+            Password: null,
+            HasPassword: !string.IsNullOrEmpty(settings.MqttPassword),
+            UseTls: settings.MqttUseTls,
+            DiscoveryPrefix: settings.MqttDiscoveryPrefix,
+            BaseTopic: settings.MqttBaseTopic,
+            IsConnected: _mqttService.IsConnected
+        );
+
+        return Ok(new SettingsDto(settings.VolumeProfile, haDto));
+    }
+
+    [HttpPost("mqtt/test")]
+    public async Task<ActionResult<TestMqttConnectionResponse>> TestMqttConnection([FromBody] TestMqttConnectionRequest req)
+    {
+        var requestToUse = req;
+        if (req.Password == null)
+        {
+            var settings = await _db.Settings.FirstOrDefaultAsync();
+            if (settings != null
+                && !string.IsNullOrEmpty(settings.MqttPassword)
+                && string.Equals(settings.MqttHost, req.Host, StringComparison.OrdinalIgnoreCase)
+                && settings.MqttPort == req.Port
+                && string.Equals(settings.MqttUsername ?? string.Empty, req.Username ?? string.Empty, StringComparison.Ordinal)
+                && settings.MqttUseTls == req.UseTls)
+            {
+                requestToUse = req with { Password = settings.MqttPassword };
+            }
+        }
+        var result = await _mqttService.TestConnectionAsync(requestToUse);
+        return Ok(result);
+    }
+
+    private static bool IsValidMqttTopic(string topic)
+    {
+        if (string.IsNullOrWhiteSpace(topic)) return false;
+        if (topic.Contains('+') || topic.Contains('#') || topic.Contains('\0')) return false;
+        if (topic.Any(char.IsWhiteSpace)) return false;
+        return true;
     }
 }

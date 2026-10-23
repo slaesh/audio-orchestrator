@@ -1110,7 +1110,24 @@
         ],
         "responses": {
           "200": {
-            "description": "OK"
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsDto"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsDto"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsDto"
+                }
+              }
+            }
           }
         }
       },
@@ -1140,7 +1157,73 @@
         },
         "responses": {
           "200": {
-            "description": "OK"
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsDto"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsDto"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/Settings/mqtt/test": {
+      "post": {
+        "tags": [
+          "Settings"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestMqttConnectionRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestMqttConnectionRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestMqttConnectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestMqttConnectionResponse"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestMqttConnectionResponse"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestMqttConnectionResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -1760,6 +1843,63 @@
           }
         }
       },
+      "HomeAssistantSettingsDto": {
+        "required": [
+          "enabled",
+          "host",
+          "port",
+          "username",
+          "password",
+          "hasPassword",
+          "useTls",
+          "discoveryPrefix",
+          "baseTopic",
+          "isConnected"
+        ],
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "host": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "username": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "password": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "hasPassword": {
+            "type": "boolean"
+          },
+          "useTls": {
+            "type": "boolean"
+          },
+          "discoveryPrefix": {
+            "type": "string"
+          },
+          "baseTopic": {
+            "type": "string"
+          },
+          "isConnected": {
+            "type": "boolean"
+          }
+        }
+      },
       "NodeReleaseDto": {
         "required": [
           "tagName",
@@ -2063,6 +2203,21 @@
         "properties": {
           "streamId": {
             "type": "string"
+          }
+        }
+      },
+      "SettingsDto": {
+        "required": [
+          "volumeProfile",
+          "homeAssistant"
+        ],
+        "type": "object",
+        "properties": {
+          "volumeProfile": {
+            "$ref": "#/components/schemas/VolumeProfile"
+          },
+          "homeAssistant": {
+            "$ref": "#/components/schemas/HomeAssistantSettingsDto"
           }
         }
       },
@@ -2382,6 +2537,55 @@
           "playing"
         ]
       },
+      "TestMqttConnectionRequest": {
+        "required": [
+          "host",
+          "port",
+          "username",
+          "password",
+          "useTls"
+        ],
+        "type": "object",
+        "properties": {
+          "host": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "username": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "password": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "useTls": {
+            "type": "boolean"
+          }
+        }
+      },
+      "TestMqttConnectionResponse": {
+        "required": [
+          "success",
+          "message"
+        ],
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
       "UpdateSettingsRequest": {
         "required": [
           "volumeProfile"
@@ -2390,6 +2594,16 @@
         "properties": {
           "volumeProfile": {
             "$ref": "#/components/schemas/VolumeProfile"
+          },
+          "homeAssistant": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HomeAssistantSettingsDto"
+              }
+            ]
           }
         }
       },

@@ -95,7 +95,45 @@ public record SpotifyReleaseDto(
 );
 
 [TranspilationSource]
-public record UpdateSettingsRequest(VolumeProfile VolumeProfile);
+public record HomeAssistantSettingsDto(
+    bool Enabled,
+    string? Host,
+    int Port,
+    string? Username,
+    string? Password,
+    bool HasPassword,
+    bool UseTls,
+    string DiscoveryPrefix,
+    string BaseTopic,
+    bool IsConnected
+);
+
+[TranspilationSource]
+public record TestMqttConnectionRequest(
+    string Host,
+    int Port,
+    string? Username,
+    string? Password,
+    bool UseTls
+);
+
+[TranspilationSource]
+public record TestMqttConnectionResponse(
+    bool Success,
+    string Message
+);
+
+[TranspilationSource]
+public record SettingsDto(
+    VolumeProfile VolumeProfile,
+    HomeAssistantSettingsDto HomeAssistant
+);
+
+[TranspilationSource]
+public record UpdateSettingsRequest(
+    VolumeProfile VolumeProfile,
+    HomeAssistantSettingsDto? HomeAssistant = null
+);
 
 [TranspilationSource]
 public record NodeUpgradeRequest(string? TargetVersion = null);

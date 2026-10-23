@@ -17,6 +17,7 @@ import {
   SpotifyReleaseDto,
   NodeReleaseDto,
   SettingsService,
+  TestMqttConnectionRequest,
   UpdateSettingsRequest,
   VolumeProfile,
 } from '@api';
@@ -500,6 +501,23 @@ export class DataService {
     } catch (e) {
       this.toast.error('Fehler beim Aktualisieren des Lautstärkeprofils');
     }
+  }
+
+  async getSettings() {
+    return await firstValueFrom(this.settingsApi.apiSettingsGet());
+  }
+
+  async updateSettings(req: UpdateSettingsRequest) {
+    const res = await firstValueFrom(this.settingsApi.apiSettingsPut(req));
+    const curr = this.stateSignal();
+    if (curr) {
+      this.stateSignal.set({ ...curr, volumeProfile: res.volumeProfile });
+    }
+    return res;
+  }
+
+  async testMqttConnection(req: TestMqttConnectionRequest) {
+    return await firstValueFrom(this.settingsApi.apiSettingsMqttTestPost(req));
   }
 
   async setGroupVolume(id: string, percent: number, muted: boolean) {

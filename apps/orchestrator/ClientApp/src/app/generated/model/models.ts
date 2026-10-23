@@ -11,4 +11,4 @@ export * from './setVolumeRequest';
 export * from './updateSourceRequest';
 export * from './volumeRequest';
 export * from './webhookEventPayload';
-export type { FullStateDto, GroupDto, NodeReleaseDto, NodeType, NodeUpgradeRequest, RadioEventPayload, RadioPluginCreateRequest, RadioPluginDto, RadioPluginUpdateRequest, RoomDto, SpotifyEventDto, SpotifyMetadataDto, SpotifyRecentContextDto, SpotifyReleaseDto, SpotifySourceDto, StreamDto, StreamStatus, UpdateSettingsRequest, UpgradePhase, UpgradeSpotifySourceRequest, VolumeProfile } from '@contracts';
+export type { FullStateDto, GroupDto, HomeAssistantSettingsDto, NodeReleaseDto, NodeType, NodeUpgradeRequest, RadioEventPayload, RadioPluginCreateRequest, RadioPluginDto, RadioPluginUpdateRequest, RoomDto, SettingsDto, SpotifyEventDto, SpotifyMetadataDto, SpotifyRecentContextDto, SpotifyReleaseDto, SpotifySourceDto, StreamDto, StreamStatus, TestMqttConnectionRequest, TestMqttConnectionResponse, UpdateSettingsRequest, UpgradePhase, UpgradeSpotifySourceRequest, VolumeProfile } from '@contracts';

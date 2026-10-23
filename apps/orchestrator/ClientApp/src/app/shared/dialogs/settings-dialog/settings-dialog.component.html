@@ -1,13 +1,13 @@
 <div
-  class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm animate-in fade-in duration-200"
+  class="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto bg-background/80 backdrop-blur-sm animate-in fade-in duration-200"
   (click)="close()"
 >
   <div
-    class="relative w-full max-w-lg overflow-hidden rounded-2xl border border-border bg-card p-6 shadow-2xl animate-in zoom-in-95 duration-200"
+    class="relative w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden rounded-2xl border border-border bg-card p-6 shadow-2xl animate-in zoom-in-95 duration-200"
     (click)="$event.stopPropagation()"
   >
     <!-- Header -->
-    <div class="flex items-center justify-between mb-6">
+    <div class="flex items-center justify-between mb-4 shrink-0">
       <div class="flex items-center gap-3">
         <div class="size-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
           <ng-icon name="lucideSettings" size="1.25rem" />
@@ -30,7 +30,7 @@
     </div>
 
     <!-- Content -->
-    <div class="space-y-6">
+    <div class="space-y-6 flex-1 min-h-0 overflow-y-auto pr-1">
       <!-- Volume Profile Selection -->
       <div>
         <div class="flex items-center justify-between mb-2">
@@ -106,6 +106,206 @@
         </div>
       </div>
 
+      <!-- Home Assistant MQTT Integration -->
+      <div class="pt-4 border-t border-border/50">
+        <div class="flex items-center justify-between mb-2">
+          <label class="text-[0.7rem] uppercase font-bold tracking-wider text-muted-foreground/80 flex items-center gap-1.5">
+            <ng-icon name="lucideRadio" size="0.85rem" />
+            Home Assistant (MQTT)
+          </label>
+          @if (haEnabled()) {
+            <span
+              class="text-[10px] px-2 py-0.5 rounded-full font-medium flex items-center gap-1"
+              [class.bg-emerald-500/10]="haIsConnected()"
+              [class.text-emerald-500]="haIsConnected()"
+              [class.bg-amber-500/10]="!haIsConnected()"
+              [class.text-amber-500]="!haIsConnected()"
+            >
+              <span class="size-1.5 rounded-full" [class.bg-emerald-500]="haIsConnected()" [class.bg-amber-500]="!haIsConnected()"></span>
+              {{ haIsConnected() ? 'Verbunden' : 'Nicht verbunden' }}
+            </span>
+          }
+        </div>
+        <p class="text-xs text-muted-foreground mb-3">
+          Veröffentlicht jede Audiogruppe automatisch via MQTT Auto-Discovery als steuerbares Home Assistant Gerät.
+        </p>
+
+        <!-- Toggle Checkbox -->
+        <label
+          class="flex items-start gap-3 p-3 rounded-xl border border-border/60 hover:border-primary/40 bg-muted/20 cursor-pointer transition-colors"
+        >
+          <input
+            type="checkbox"
+            id="haEnabledCheckbox"
+            [ngModel]="haEnabled()"
+            (ngModelChange)="haEnabled.set($event)"
+            class="mt-0.5 rounded border-input text-primary focus:ring-primary size-4 cursor-pointer"
+          />
+          <div class="flex flex-col gap-0.5 select-none">
+            <span class="text-xs font-semibold cursor-pointer">
+              Home Assistant MQTT-Integration aktivieren
+            </span>
+            <p class="text-[11px] text-muted-foreground leading-snug">
+              Sendet Live-Zustände, Metadaten und Cover-Art und nimmt Steuerbefehle für Lautstärke, Quelle & Wiedergabe an.
+            </p>
+          </div>
+        </label>
+
+        <!-- MQTT Form Fields -->
+        @if (haEnabled()) {
+          <div class="mt-3 p-4 rounded-xl border border-border bg-card/60 space-y-3.5 animate-in fade-in duration-200">
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div class="sm:col-span-2">
+                <label for="mqttHost" class="block text-[11px] font-medium text-muted-foreground mb-1">
+                  Broker Host / IP *
+                </label>
+                <input
+                  type="text"
+                  id="mqttHost"
+                  placeholder="z.B. 192.168.178.10 oder homeassistant"
+                  [ngModel]="haHost()"
+                  (ngModelChange)="haHost.set($event)"
+                  class="w-full text-xs px-3 py-2 rounded-lg border border-input bg-background focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+              <div>
+                <label for="mqttPort" class="block text-[11px] font-medium text-muted-foreground mb-1">
+                  Port
+                </label>
+                <input
+                  type="number"
+                  id="mqttPort"
+                  min="1"
+                  max="65535"
+                  placeholder="1883"
+                  [ngModel]="haPort()"
+                  (ngModelChange)="haPort.set($event)"
+                  class="w-full text-xs px-3 py-2 rounded-lg border border-input bg-background focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label for="mqttUser" class="block text-[11px] font-medium text-muted-foreground mb-1">
+                  Benutzername (optional)
+                </label>
+                <input
+                  type="text"
+                  id="mqttUser"
+                  placeholder="z.B. mqtt-user"
+                  [ngModel]="haUsername()"
+                  (ngModelChange)="haUsername.set($event)"
+                  class="w-full text-xs px-3 py-2 rounded-lg border border-input bg-background focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+              <div>
+                <div class="flex items-center justify-between gap-2 mb-1">
+                  <label for="mqttPassword" class="block text-[11px] font-medium text-muted-foreground whitespace-nowrap">
+                    Passwort (optional)
+                  </label>
+                  @if (haUsername().trim() && haHasPassword() && !haPassword()) {
+                    <button
+                      type="button"
+                      (click)="clearPassword()"
+                      class="text-[10px] text-destructive hover:underline font-normal cursor-pointer whitespace-nowrap"
+                    >
+                      Gespeichertes Passwort entfernen
+                    </button>
+                  }
+                </div>
+                <input
+                  type="password"
+                  id="mqttPassword"
+                  [placeholder]="!haUsername().trim() ? 'Kein Passwort (anonym)' : (haHasPassword() && !haPassword() ? '•••••••• (gespeichert)' : '••••••••')"
+                  [disabled]="!haUsername().trim()"
+                  [ngModel]="haPassword()"
+                  (ngModelChange)="onPasswordChange($event)"
+                  class="w-full text-xs px-3 py-2 rounded-lg border border-input bg-background focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                />
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 border-t border-border/40">
+              <div>
+                <label for="mqttDiscoveryPrefix" class="block text-[11px] font-medium text-muted-foreground mb-1">
+                  Discovery-Präfix
+                </label>
+                <input
+                  type="text"
+                  id="mqttDiscoveryPrefix"
+                  placeholder="homeassistant"
+                  [ngModel]="haDiscoveryPrefix()"
+                  (ngModelChange)="haDiscoveryPrefix.set($event)"
+                  class="w-full text-xs px-3 py-2 rounded-lg border border-input bg-background focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+              <div>
+                <label for="mqttBaseTopic" class="block text-[11px] font-medium text-muted-foreground mb-1">
+                  Basis-Topic
+                </label>
+                <input
+                  type="text"
+                  id="mqttBaseTopic"
+                  placeholder="audio_orchestrator"
+                  [ngModel]="haBaseTopic()"
+                  (ngModelChange)="haBaseTopic.set($event)"
+                  class="w-full text-xs px-3 py-2 rounded-lg border border-input bg-background focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+            </div>
+
+            <div class="flex items-center justify-between pt-1">
+              <label class="flex items-center gap-2 cursor-pointer select-none text-xs text-muted-foreground">
+                <input
+                  type="checkbox"
+                  [ngModel]="haUseTls()"
+                  (ngModelChange)="haUseTls.set($event)"
+                  class="rounded border-input text-primary focus:ring-primary size-3.5 cursor-pointer"
+                />
+                TLS / SSL Verschlüsselung
+              </label>
+
+              <button
+                type="button"
+                (click)="testConnection()"
+                [disabled]="testingMqtt() || !haHost().trim()"
+                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-xs font-medium hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+              >
+                @if (testingMqtt()) {
+                  <ng-icon name="lucideLoaderCircle" class="animate-spin" size="0.85rem" />
+                  Prüfe...
+                } @else {
+                  <ng-icon name="lucideActivity" size="0.85rem" />
+                  Verbindung testen
+                }
+              </button>
+            </div>
+
+            <!-- Test Feedback Result Banner -->
+            @if (testResult(); as res) {
+              <div
+                class="p-2.5 rounded-lg text-xs flex items-start gap-2 animate-in fade-in duration-150"
+                [class.bg-emerald-500/10]="res.success"
+                [class.text-emerald-500]="res.success"
+                [class.border]="true"
+                [class.border-emerald-500/20]="res.success"
+                [class.bg-destructive/10]="!res.success"
+                [class.text-destructive]="!res.success"
+                [class.border-destructive/20]="!res.success"
+              >
+                <ng-icon
+                  [name]="res.success ? 'lucideCircleCheck' : 'lucideCircleAlert'"
+                  class="mt-0.5 shrink-0"
+                  size="0.95rem"
+                />
+                <span class="leading-relaxed">{{ res.message }}</span>
+              </div>
+            }
+          </div>
+        }
+      </div>
+
       <!-- Debug Option -->
       <div class="pt-4 border-t border-border/50">
         <label class="text-[0.7rem] uppercase font-bold tracking-wider text-muted-foreground/80 flex items-center gap-1.5 mb-2">
@@ -135,7 +335,7 @@
     </div>
 
     <!-- Footer Actions -->
-    <div class="flex flex-col-reverse sm:flex-row sm:justify-end gap-3 mt-8 pt-4 border-t border-border/40">
+    <div class="flex flex-col-reverse sm:flex-row sm:justify-end gap-3 mt-4 pt-4 border-t border-border/40 shrink-0">
       <z-button zType="outline" (click)="close()" class="sm:px-6">
         Abbrechen
       </z-button>

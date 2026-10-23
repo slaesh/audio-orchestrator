@@ -48,6 +48,32 @@ namespace AudioOrchestrator.Migrations
                     b.Property<string>("Id")
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("HomeAssistantEnabled")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("MqttBaseTopic")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("MqttDiscoveryPrefix")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("MqttHost")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("MqttPassword")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("MqttPort")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("MqttUseTls")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("MqttUsername")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("VolumeProfile")
                         .IsRequired()
                         .HasColumnType("TEXT");

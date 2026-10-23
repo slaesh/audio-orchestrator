@@ -15,6 +15,7 @@ public class VolumeOrchestratorService
     private readonly ISnapcastService _snapcast;
     private readonly ILibrespotApiClient _librespotApi;
     private readonly IHubContext<AudioHub, IAudioClient> _hub;
+    private readonly IServiceProvider? _serviceProvider;
     private readonly ILogger<VolumeOrchestratorService> _logger;
 
     public VolumeOrchestratorService(
@@ -23,11 +24,23 @@ public class VolumeOrchestratorService
         ILibrespotApiClient librespotApi,
         IHubContext<AudioHub, IAudioClient> hub,
         ILogger<VolumeOrchestratorService> logger)
+        : this(db, snapcast, librespotApi, hub, null, logger)
+    {
+    }
+
+    public VolumeOrchestratorService(
+        OrchestratorDbContext db,
+        ISnapcastService snapcast,
+        ILibrespotApiClient librespotApi,
+        IHubContext<AudioHub, IAudioClient> hub,
+        IServiceProvider? serviceProvider,
+        ILogger<VolumeOrchestratorService> logger)
     {
         _db = db;
         _snapcast = snapcast;
         _librespotApi = librespotApi;
         _hub = hub;
+        _serviceProvider = serviceProvider;
         _logger = logger;
     }
 
@@ -41,7 +54,7 @@ public class VolumeOrchestratorService
 
         await _db.SaveChangesAsync();
         await _hub.Clients.All.OnGroupVolumeChanged(group.Id, group.MasterVolume, group.IsMuted);
-        
+
         // If the group is listening to a Spotify source, sync with that source and all sibling groups
         if (!string.IsNullOrEmpty(group.CurrentStreamId) && group.CurrentStreamId.StartsWith(OrchestratorConstants.SpotifyPrefix))
         {
@@ -82,6 +95,15 @@ public class VolumeOrchestratorService
                 {
                     _logger.LogWarning("Could not push volume to Spotify source {SourceId} (node might still be starting or offline): {Message}", sourceId, ex.Message);
                 }
+            }
+        }
+
+        if (_serviceProvider != null)
+        {
+            var mqtt = _serviceProvider.GetService<IHomeAssistantMqttService>();
+            if (mqtt != null)
+            {
+                _ = mqtt.NotifyGroupVolumeChangedAsync(group.Id, group.MasterVolume, group.IsMuted);
             }
         }
 

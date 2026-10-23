@@ -130,6 +130,12 @@ public class SnapcastTcpListenerService : BackgroundService
             var stateBuilder = scope.ServiceProvider.GetRequiredService<FullStateBuilder>();
             var state = await stateBuilder.BuildAsync();
             await _hub.Clients.All.OnFullStateUpdate(state);
+
+            var mqtt = scope.ServiceProvider.GetService<IHomeAssistantMqttService>();
+            if (mqtt != null)
+            {
+                _ = mqtt.NotifyFullStateAsync(state);
+            }
         }
         catch (Exception ex)
         {
