@@ -257,6 +257,19 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                             await ConnectClientForCleanupOnlyAsync(ct);
                         }
 
+                        if (IsConnected && _currentSettings != null)
+                        {
+                            var baseTopic = GetNormalizedBaseTopic(_currentSettings);
+                            try
+                            {
+                                await PublishAsync($"{baseTopic}/bridge/status", "offline", retain: true, ct);
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogWarning(ex, "Failed to publish bridge offline status while disabling MQTT");
+                            }
+                        }
+
                         if (IsConnected)
                         {
                             await ProcessPendingCleanupsAsync(ct, activeBaseTopic: null);
@@ -291,27 +304,34 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             await _publishLock.WaitAsync(ct);
             try
             {
+                var oldHost = _currentSettings?.MqttHost ?? string.Empty;
+                var oldPort = _currentSettings?.MqttPort ?? 0;
+                var newHost = settings.MqttHost ?? string.Empty;
+                var newPort = settings.MqttPort;
+                var brokerChanged = _currentSettings != null && (!string.Equals(oldHost, newHost, StringComparison.OrdinalIgnoreCase) || oldPort != newPort);
+
                 if (_currentSettings != null)
                 {
                     EnqueueDiscoveryCleanup(_currentSettings, settings);
                 }
 
-                var activeBaseTopic = settings.HomeAssistantEnabled ? GetNormalizedBaseTopic(settings) : null;
+                var activeBaseTopicOnOld = (!brokerChanged && settings.HomeAssistantEnabled) ? GetNormalizedBaseTopic(settings) : null;
 
                 if (IsConnected)
                 {
-                    await ProcessPendingCleanupsAsync(ct, activeBaseTopic);
+                    await ProcessPendingCleanupsAsync(ct, activeBaseTopicOnOld);
                 }
 
                 var oldBaseTopic = GetNormalizedBaseTopic(_currentSettings);
                 var newBaseTopic = GetNormalizedBaseTopic(settings);
-                await DisconnectInternalAsync(publishOffline: oldBaseTopic == newBaseTopic);
+                await DisconnectInternalAsync(publishOffline: !brokerChanged && oldBaseTopic == newBaseTopic);
                 _currentSettings = settings;
                 await ConnectClientAndSubscribeAsync(ct);
 
                 if (IsConnected)
                 {
-                    await ProcessPendingCleanupsAsync(ct, activeBaseTopic);
+                    var activeBaseTopicOnNew = settings.HomeAssistantEnabled ? GetNormalizedBaseTopic(settings) : null;
+                    await ProcessPendingCleanupsAsync(ct, activeBaseTopicOnNew);
                 }
             }
             finally
@@ -368,9 +388,14 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         var newBaseTopic = GetNormalizedBaseTopic(newSettings);
 
         var isNewDisabled = newSettings == null || !newSettings.HomeAssistantEnabled || string.IsNullOrWhiteSpace(newSettings.MqttHost);
+        var oldHost = oldSettings.MqttHost ?? string.Empty;
+        var oldPort = oldSettings.MqttPort;
+        var newHost = newSettings?.MqttHost ?? string.Empty;
+        var newPort = newSettings?.MqttPort ?? 0;
+        var brokerChanged = newSettings != null && (!string.Equals(oldHost, newHost, StringComparison.OrdinalIgnoreCase) || oldPort != newPort);
         var prefixOrTopicChanged = oldDiscPrefix != newDiscPrefix || oldBaseTopic != newBaseTopic;
 
-        if (!prefixOrTopicChanged && !isNewDisabled) return;
+        if (!prefixOrTopicChanged && !isNewDisabled && !brokerChanged) return;
 
         var host = oldSettings.MqttHost ?? string.Empty;
         var port = oldSettings.MqttPort;
@@ -381,6 +406,8 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             && p.DiscoveryPrefix == oldDiscPrefix
             && p.BaseTopic == oldBaseTopic);
 
+        var shouldClearBridgeStatus = oldBaseTopic != newBaseTopic || brokerChanged;
+
         if (pending == null)
         {
             pending = new PendingDiscoveryCleanup
@@ -389,11 +416,11 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                 Port = port,
                 DiscoveryPrefix = oldDiscPrefix,
                 BaseTopic = oldBaseTopic,
-                ClearBridgeStatus = (oldBaseTopic != newBaseTopic || isNewDisabled)
+                ClearBridgeStatus = shouldClearBridgeStatus
             };
             _pendingCleanups.Add(pending);
         }
-        else if (oldBaseTopic != newBaseTopic || isNewDisabled)
+        else if (shouldClearBridgeStatus)
         {
             pending.ClearBridgeStatus = true;
         }
@@ -412,11 +439,15 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             .Where(p => string.Equals(p.Host, _currentSettings.MqttHost, StringComparison.OrdinalIgnoreCase) && p.Port == _currentSettings.MqttPort)
             .ToList();
 
+        if (matchingCleanups.Any(p => p.GroupIds.Count > 0))
+        {
+            _forceDiscovery = true;
+        }
+
         foreach (var pending in matchingCleanups)
         {
             foreach (var groupId in pending.GroupIds.ToList())
             {
-                _discoveredGroupIds.Remove(groupId);
                 try
                 {
                     await UnpublishGroupDiscoveryAsync(pending.DiscoveryPrefix, pending.BaseTopic, groupId, ct);
@@ -833,7 +864,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                     : (string.IsNullOrWhiteSpace(mediaArtist) ? mediaTitle : $"{mediaArtist} - {mediaTitle}");
 
                 // Home Assistant state strings must not exceed 255 characters
-                var trackInfo = rawTrackInfo.Length > 255 ? rawTrackInfo.Substring(0, 255) : rawTrackInfo;
+                var trackInfo = rawTrackInfo.Length > 255 ? TruncateUtf16(rawTrackInfo, 255) : rawTrackInfo;
 
                 var statePayload = new JsonObject
                 {
@@ -1266,12 +1297,25 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
 
     private const int MaxHaLabelLength = 255;
 
+    public static string TruncateUtf16(string str, int maxLength)
+    {
+        if (str.Length <= maxLength) return str;
+        if (maxLength <= 0) return string.Empty;
+
+        if (char.IsHighSurrogate(str[maxLength - 1]))
+        {
+            maxLength--;
+        }
+
+        return str[..maxLength];
+    }
+
     public static string CreateBoundedLabel(string prefix, string name, string suffix = "")
     {
         var availableForSuffix = MaxHaLabelLength - prefix.Length - 1;
         if (suffix.Length > availableForSuffix && availableForSuffix > 0)
         {
-            suffix = suffix[..availableForSuffix];
+            suffix = TruncateUtf16(suffix, availableForSuffix);
         }
 
         var availableForName = MaxHaLabelLength - prefix.Length - suffix.Length;
@@ -1282,11 +1326,12 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
 
         if (availableForName > 0)
         {
-            return $"{prefix}{name[..availableForName]}{suffix}";
+            var truncatedName = TruncateUtf16(name, availableForName);
+            return $"{prefix}{truncatedName}{suffix}";
         }
 
         var combined = $"{prefix}{suffix}";
-        return combined.Length > MaxHaLabelLength ? combined[..MaxHaLabelLength] : combined;
+        return combined.Length > MaxHaLabelLength ? TruncateUtf16(combined, MaxHaLabelLength) : combined;
     }
 
     private static void PopulateSourceCategory(

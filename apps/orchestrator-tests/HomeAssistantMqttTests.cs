@@ -1,3 +1,4 @@
+using System.Text.Json;
 using AudioOrchestrator.Contracts;
 using AudioOrchestrator.Controllers;
 using AudioOrchestrator.Data;
@@ -1716,6 +1717,187 @@ public class HomeAssistantMqttTests
         // Verify discovery configs for new_base were restored with non-empty payload
         mockClient.Verify(c => c.PublishAsync(
             It.Is<MqttApplicationMessage>(m => m.Topic.StartsWith("homeassistant/select/audio_orchestrator_g1/source/config") && !string.IsNullOrEmpty(m.ConvertPayloadToString())),
+            It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public void BuildSourceMapping_ShouldPreserveSurrogatePairs_WhenTruncatingRadioLabels()
+    {
+        var emoji = "😀";
+        var asciiPart = new string('a', 247);
+        var longName = asciiPart + emoji;
+
+        var radios = new List<(string Id, string Name)> { ("radio1", longName) };
+        var spotifies = new List<(string Id, string Name)>();
+
+        var mapping = HomeAssistantMqttService.BuildSourceMapping(radios, spotifies);
+        var label = mapping.StreamIdToLabel["radio_radio1"];
+
+        Assert.False(char.IsHighSurrogate(label[^1]));
+        Assert.True(label.Length <= 255);
+
+        var json = JsonSerializer.Serialize(label);
+        Assert.DoesNotContain("\uFFFD", json);
+        var deserialized = JsonSerializer.Deserialize<string>(json);
+        Assert.Equal(label, deserialized);
+
+        Assert.True(mapping.LabelToStreamId.TryGetValue(deserialized!, out var resolvedStreamId));
+        Assert.Equal("radio_radio1", resolvedStreamId);
+    }
+
+    [Fact]
+    public async Task EnsureConnectionAsync_ShouldPublishOffline_BeforeDiscoveryCleanup_WhenDisabled()
+    {
+        var (sp, db, mockClient, service, _) = CreateTestContext();
+
+        mockClient.Setup(c => c.ConnectAsync(It.IsAny<MqttClientOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientConnectResult());
+        mockClient.Setup(c => c.SubscribeAsync(It.IsAny<MqttClientSubscribeOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientSubscribeResult(
+                1,
+                new List<MqttClientSubscribeResultItem>
+                {
+                    new(new MqttTopicFilter { Topic = "audio_orchestrator/groups/+/set/#" }, MqttClientSubscribeResultCode.GrantedQoS0),
+                    new(new MqttTopicFilter { Topic = "homeassistant/status" }, MqttClientSubscribeResultCode.GrantedQoS0)
+                },
+                string.Empty,
+                new List<MqttUserProperty>()
+            ));
+        mockClient.SetupGet(c => c.IsConnected).Returns(true);
+
+        var group = new GroupEntity { Id = "g1", Name = "Wohnzimmer", CurrentStreamId = "default" };
+        db.Groups.Add(group);
+        await db.SaveChangesAsync();
+
+        await service.EnsureConnectionAsync(CancellationToken.None);
+        mockClient.Invocations.Clear();
+
+        // Make unpublishing discovery fail
+        mockClient.Setup(c => c.PublishAsync(
+                It.Is<MqttApplicationMessage>(m => m.Topic.Contains("audio_orchestrator_g1")),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Broker disconnected during unpublish"));
+
+        // Disable HA
+        var settings = await db.Settings.FirstAsync();
+        settings.HomeAssistantEnabled = false;
+        await db.SaveChangesAsync();
+
+        await service.EnsureConnectionAsync(CancellationToken.None);
+
+        // Verify offline status was published before unpublish threw
+        mockClient.Verify(c => c.PublishAsync(
+            It.Is<MqttApplicationMessage>(m => m.Topic == "audio_orchestrator/bridge/status" && m.ConvertPayloadToString() == "offline"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ReloadConfigurationAsync_ShouldCleanUpDiscovery_WhenBrokerIdentityChanges()
+    {
+        var (sp, db, mockClient, service, _) = CreateTestContext();
+
+        mockClient.Setup(c => c.ConnectAsync(It.IsAny<MqttClientOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientConnectResult());
+        mockClient.Setup(c => c.SubscribeAsync(It.IsAny<MqttClientSubscribeOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientSubscribeResult(
+                1,
+                new List<MqttClientSubscribeResultItem>
+                {
+                    new(new MqttTopicFilter { Topic = "audio_orchestrator/groups/+/set/#" }, MqttClientSubscribeResultCode.GrantedQoS0),
+                    new(new MqttTopicFilter { Topic = "homeassistant/status" }, MqttClientSubscribeResultCode.GrantedQoS0)
+                },
+                string.Empty,
+                new List<MqttUserProperty>()
+            ));
+        mockClient.SetupGet(c => c.IsConnected).Returns(true);
+
+        var group = new GroupEntity { Id = "g1", Name = "Wohnzimmer", CurrentStreamId = "default" };
+        db.Groups.Add(group);
+        await db.SaveChangesAsync();
+
+        // 1. Initial connection on 127.0.0.1
+        await service.EnsureConnectionAsync(CancellationToken.None);
+        mockClient.Invocations.Clear();
+
+        // 2. Change broker host
+        var settings = await db.Settings.FirstAsync();
+        settings.MqttHost = "192.168.1.100";
+        await db.SaveChangesAsync();
+
+        await service.ReloadConfigurationAsync(CancellationToken.None);
+
+        // Verify old broker was cleaned up: unpublish g1 discovery config with empty payload
+        mockClient.Verify(c => c.PublishAsync(
+            It.Is<MqttApplicationMessage>(m => m.Topic.StartsWith("homeassistant/select/audio_orchestrator_g1/source/config") && string.IsNullOrEmpty(m.ConvertPayloadToString())),
+            It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+
+        // Verify bridge status on old broker was cleared
+        mockClient.Verify(c => c.PublishAsync(
+            It.Is<MqttApplicationMessage>(m => m.Topic == "audio_orchestrator/bridge/status" && string.IsNullOrEmpty(m.ConvertPayloadToString())),
+            It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task EnsureConnectionAsync_ShouldUnpublishActivePrefix_WhenGroupDeletedDuringOutageAndOldPrefixCleanupPending()
+    {
+        var (sp, db, mockClient, service, _) = CreateTestContext(discoveryPrefix: "old_ha", baseTopic: "audio_orchestrator");
+
+        mockClient.Setup(c => c.ConnectAsync(It.IsAny<MqttClientOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientConnectResult());
+        mockClient.Setup(c => c.SubscribeAsync(It.IsAny<MqttClientSubscribeOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientSubscribeResult(
+                1,
+                new List<MqttClientSubscribeResultItem>
+                {
+                    new(new MqttTopicFilter { Topic = "audio_orchestrator/groups/+/set/#" }, MqttClientSubscribeResultCode.GrantedQoS0),
+                    new(new MqttTopicFilter { Topic = "new_ha/status" }, MqttClientSubscribeResultCode.GrantedQoS0)
+                },
+                string.Empty,
+                new List<MqttUserProperty>()
+            ));
+        mockClient.SetupGet(c => c.IsConnected).Returns(true);
+
+        var group = new GroupEntity { Id = "g1", Name = "Wohnzimmer", CurrentStreamId = "default" };
+        db.Groups.Add(group);
+        await db.SaveChangesAsync();
+
+        // 1. Initial connection with old_ha
+        await service.EnsureConnectionAsync(CancellationToken.None);
+
+        // 2. Switch prefix to new_ha while unpublish on old_ha fails
+        var settings = await db.Settings.FirstAsync();
+        settings.MqttDiscoveryPrefix = "new_ha";
+        await db.SaveChangesAsync();
+
+        mockClient.Setup(c => c.PublishAsync(
+                It.Is<MqttApplicationMessage>(m => m.Topic.StartsWith("old_ha/")),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Broker timeout during old_ha unpublish"));
+
+        await service.ReloadConfigurationAsync(CancellationToken.None);
+
+        // Verify g1 was discovered under new_ha
+        mockClient.Verify(c => c.PublishAsync(
+            It.Is<MqttApplicationMessage>(m => m.Topic.StartsWith("new_ha/select/audio_orchestrator_g1/source/config") && !string.IsNullOrEmpty(m.ConvertPayloadToString())),
+            It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+
+        // 3. Broker outage happens, group g1 is deleted from DB
+        mockClient.SetupGet(c => c.IsConnected).Returns(false);
+        db.Groups.Remove(group);
+        await db.SaveChangesAsync();
+
+        // 4. Broker recovers
+        mockClient.SetupGet(c => c.IsConnected).Returns(true);
+        mockClient.Invocations.Clear();
+        mockClient.Setup(c => c.PublishAsync(It.IsAny<MqttApplicationMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientPublishResult(1, MqttClientPublishReasonCode.Success, string.Empty, Array.Empty<MqttUserProperty>()));
+
+        // Trigger heartbeat
+        await service.EnsureConnectionAsync(CancellationToken.None);
+
+        // MUST unpublish g1 under active new_ha prefix!
+        mockClient.Verify(c => c.PublishAsync(
+            It.Is<MqttApplicationMessage>(m => m.Topic.StartsWith("new_ha/select/audio_orchestrator_g1/source/config") && string.IsNullOrEmpty(m.ConvertPayloadToString())),
             It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
 }
