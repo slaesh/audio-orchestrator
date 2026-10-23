@@ -144,17 +144,42 @@ public class BroadcastService : IHostedService, IBroadcastService
                     ?? LoggerFactory.Create(b => b.AddConsole()).CreateLogger<DefaultAudioPlayerProcessRunner>());
     }
 
-    public Task StartAsync(CancellationToken cancellationToken)
+    public async Task StartAsync(CancellationToken cancellationToken)
     {
         _logger.LogInformation("Starting BroadcastService background queue worker.");
+
+        try
+        {
+            using var scope = _serviceProvider.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<OrchestratorDbContext>();
+            var orphanedJobs = await db.BroadcastJobs
+                .Where(j => j.Status == BroadcastJobStatus.Queued || j.Status == BroadcastJobStatus.Playing)
+                .ToListAsync(cancellationToken);
+
+            foreach (var job in orphanedJobs)
+            {
+                job.Status = BroadcastJobStatus.Cancelled;
+                job.CompletedAt = DateTime.UtcNow;
+                job.ErrorMessage = "Abgebrochen durch Neustart des Orchestrators.";
+            }
+
+            if (orphanedJobs.Count > 0)
+            {
+                await db.SaveChangesAsync(cancellationToken);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to clean up orphaned broadcast jobs on startup.");
+        }
+
         _workerCts = new CancellationTokenSource();
         _workerTask = Task.Run(() => ProcessQueueAsync(_workerCts.Token), CancellationToken.None);
-        return Task.CompletedTask;
     }
 
-    public async Task StopAsync(CancellationToken cancellationToken)
+    async Task IHostedService.StopAsync(CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Stopping BroadcastService and cancelling active broadcasts.");
+        _logger.LogInformation("Shutting down BroadcastService worker.");
         await CancelActiveBroadcastInternalAsync();
 
         if (_workerCts != null)
@@ -174,6 +199,13 @@ public class BroadcastService : IHostedService, IBroadcastService
             }
             catch { /* Ignore cancellation */ }
         }
+    }
+
+    public async Task StopAsync(CancellationToken ct = default)
+    {
+        _logger.LogInformation("Stopping active broadcasts on user request.");
+        await CancelActiveBroadcastInternalAsync();
+        EnsureWorkerRunning();
     }
 
     public BroadcastStatusDto GetStatus()
