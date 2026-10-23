@@ -17,7 +17,7 @@ public class DefaultAudioPlayerProcessRunner : IAudioPlayerProcessRunner
         _logger = logger;
     }
 
-    public async Task<int> StreamToFifoAsync(string inputSource, string fifoPath, Stream? stdinStream, CancellationToken ct)
+    public async Task<ProcessRunResult> StreamToFifoAsync(string inputSource, string fifoPath, Stream? stdinStream, CancellationToken ct)
     {
         var inputArg = stdinStream != null ? "pipe:0" : $"\"{inputSource}\"";
         var arguments = $"-hide_banner -loglevel error -i {inputArg} -f s16le -acodec pcm_s16le -ac 2 -ar 44100 -y \"{fifoPath}\"";
@@ -89,7 +89,7 @@ public class DefaultAudioPlayerProcessRunner : IAudioPlayerProcessRunner
             _logger.LogWarning("ffmpeg exited with code {ExitCode}. Stderr: {Stderr}", process.ExitCode, stderr);
         }
 
-        return process.ExitCode;
+        return new ProcessRunResult(process.ExitCode, stderr?.Trim() ?? string.Empty);
     }
 }
 
@@ -321,7 +321,7 @@ public class BroadcastService : IBroadcastService
             }
 
             // 7. Stream audio into FIFO using ffmpeg process runner
-            var exitCode = await _processRunner.StreamToFifoAsync(
+            var runResult = await _processRunner.StreamToFifoAsync(
                 inputSource,
                 OrchestratorConstants.AnnouncementFifoPath,
                 stdinStream,
@@ -331,9 +331,20 @@ public class BroadcastService : IBroadcastService
             // 8. Snapcast audio buffer delay (~500ms) to ensure audio finishes playback on physical clients
             await Task.Delay(500, linkedCts.Token);
 
+            if (runResult.ExitCode != 0)
+            {
+                var firstErrLine = runResult.Stderr.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+                var detail = !string.IsNullOrWhiteSpace(firstErrLine) ? $": {firstErrLine}" : "";
+                return new BroadcastPlayResult(
+                    Success: false,
+                    Message: $"ffmpeg beendet mit Code {runResult.ExitCode}{detail}",
+                    DurationMs: (int)stopwatch.ElapsedMilliseconds
+                );
+            }
+
             return new BroadcastPlayResult(
-                Success: exitCode == 0,
-                Message: exitCode == 0 ? "Durchsage erfolgreich abgespielt." : $"ffmpeg beendet mit Code {exitCode}",
+                Success: true,
+                Message: "Durchsage erfolgreich abgespielt.",
                 DurationMs: (int)stopwatch.ElapsedMilliseconds
             );
         }

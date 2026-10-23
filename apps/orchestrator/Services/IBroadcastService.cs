@@ -2,9 +2,11 @@ using AudioOrchestrator.Contracts;
 
 namespace AudioOrchestrator.Services;
 
+public record ProcessRunResult(int ExitCode, string Stderr);
+
 public interface IAudioPlayerProcessRunner
 {
-    Task<int> StreamToFifoAsync(string inputSource, string fifoPath, Stream? stdinStream, CancellationToken ct);
+    Task<ProcessRunResult> StreamToFifoAsync(string inputSource, string fifoPath, Stream? stdinStream, CancellationToken ct);
 }
 
 public interface IBroadcastService

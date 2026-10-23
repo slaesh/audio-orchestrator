@@ -35,7 +35,7 @@ case "$1" in
     TARGET="${2:-}"
     echo "Playing gentle announcement with 1.5s volume fade-out and fade-in..."
     JSON_BODY=$(jq -n \
-      --arg url "https://actions.google.com/sounds/v1/ambiences/daytime_forest_bonfire.ogg" \
+      --arg url "https://actions.google.com/sounds/v1/alarms/bugle_tune.ogg" \
       --arg target "$TARGET" \
       '{
         audioUrl: $url,

@@ -35,7 +35,7 @@ public class BroadcastServiceTests
         var mockLibrespot = new Mock<ILibrespotApiClient>();
         var mockRunner = new Mock<IAudioPlayerProcessRunner>();
         mockRunner.Setup(r => r.StreamToFifoAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<Stream?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(0);
+            .ReturnsAsync(new ProcessRunResult(0, ""));
 
         var mockLogger = new Mock<ILogger<BroadcastService>>();
         var mockHub = new Mock<IHubContext<AudioHub, IAudioClient>>();
@@ -295,7 +295,7 @@ public class BroadcastServiceTests
             .Returns<string, string, Stream?, CancellationToken>(async (_, _, _, ct) =>
             {
                 await Task.Delay(10000, ct);
-                return 0;
+                return new ProcessRunResult(0, "");
             });
 
         var request = new BroadcastPlayRequest(
