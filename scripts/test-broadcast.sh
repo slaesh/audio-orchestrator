@@ -51,19 +51,23 @@ case "$1" in
 
   chime)
     TARGET="${2:-}"
+    VOL="${3:-}"
     if [ "$TARGET" = "--wait" ]; then TARGET=""; fi
+    if [ "$VOL" = "--wait" ]; then VOL=""; fi
     check_wait_flag "$@"
 
-    echo "Submitting instant chime (low-latency, no fade) [wait: ${WAIT_PARAM:-false}]..."
+    echo "Submitting instant chime (low-latency, no fade) [wait: ${WAIT_PARAM:-false}, vol: ${VOL:-current}]..."
     JSON_BODY=$(jq -n \
       --arg url "https://actions.google.com/sounds/v1/alarms/beep_short.ogg" \
       --arg target "$TARGET" \
+      --arg vol "$VOL" \
       '{
         audioUrl: $url,
-        volume: 80,
         fadeDurationMs: 0,
         pausePlayback: false
-      } + (if $target != "" then { groupIds: [$target] } else {} end)')
+      }
+      + (if $target != "" then { groupIds: [$target] } else {} end)
+      + (if $vol != "" then { volume: ($vol | tonumber) } else {} end)')
     
     curl -s -X POST "$BASE_URL/api/broadcast/play$WAIT_PARAM" \
       -H "Content-Type: application/json" \
@@ -72,20 +76,24 @@ case "$1" in
 
   fading)
     TARGET="${2:-}"
+    VOL="${3:-}"
     if [ "$TARGET" = "--wait" ]; then TARGET=""; fi
+    if [ "$VOL" = "--wait" ]; then VOL=""; fi
     check_wait_flag "$@"
 
-    echo "Submitting gentle announcement with 1.5s volume fade-out and fade-in [wait: ${WAIT_PARAM:-false}]..."
+    echo "Submitting gentle announcement with 1.5s volume fade-out and fade-in [wait: ${WAIT_PARAM:-false}, vol: ${VOL:-current}]..."
     JSON_BODY=$(jq -n \
       --arg url "https://actions.google.com/sounds/v1/alarms/bugle_tune.ogg" \
       --arg target "$TARGET" \
+      --arg vol "$VOL" \
       '{
         audioUrl: $url,
-        volume: 75,
         fadeDurationMs: 1500,
         timeoutSeconds: 15,
         pausePlayback: false
-      } + (if $target != "" then { groupIds: [$target] } else {} end)')
+      }
+      + (if $target != "" then { groupIds: [$target] } else {} end)
+      + (if $vol != "" then { volume: ($vol | tonumber) } else {} end)')
     
     curl -s -X POST "$BASE_URL/api/broadcast/play$WAIT_PARAM" \
       -H "Content-Type: application/json" \
@@ -93,35 +101,48 @@ case "$1" in
     ;;
 
   alarm)
+    VOL="${2:-90}"
+    if [ "$VOL" = "--wait" ]; then VOL="90"; fi
     check_wait_flag "$@"
-    echo "Submitting alarm siren across ALL groups (whole-house alert) [wait: ${WAIT_PARAM:-false}]..."
+
+    echo "Submitting alarm siren across ALL groups (whole-house alert) [wait: ${WAIT_PARAM:-false}, vol: $VOL]..."
+    JSON_BODY=$(jq -n \
+      --arg vol "$VOL" \
+      '{
+        audioUrl: "https://actions.google.com/sounds/v1/alarms/mechanical_clock_ring.ogg",
+        fadeDurationMs: 0,
+        timeoutSeconds: 20,
+        interrupt: true,
+        volume: ($vol | tonumber)
+      }')
+
     curl -s -X POST "$BASE_URL/api/broadcast/play$WAIT_PARAM" \
       -H "Content-Type: application/json" \
-      -d '{
-        "audioUrl": "https://actions.google.com/sounds/v1/alarms/mechanical_clock_ring.ogg",
-        "volume": 90,
-        "fadeDurationMs": 0,
-        "timeoutSeconds: 20,
-        "interrupt": true
-      }' | jq .
+      -d "$JSON_BODY" | jq .
     ;;
 
   upload)
     FILE="${2:-}"
     if [ -z "$FILE" ] || [ ! -f "$FILE" ]; then
-      echo "Usage: $0 upload <path-to-audio-file> [groupId] [--wait]"
+      echo "Usage: $0 upload <path-to-audio-file> [groupId] [volume] [--wait]"
       exit 1
     fi
     TARGET="${3:-}"
+    VOL="${4:-}"
     if [ "$TARGET" = "--wait" ]; then TARGET=""; fi
+    if [ "$VOL" = "--wait" ]; then VOL=""; fi
     check_wait_flag "$@"
 
-    echo "Uploading and streaming local audio file: $FILE [wait: ${WAIT_PARAM:-false}]"
-    curl -s -X POST "$BASE_URL/api/broadcast/play-file$WAIT_PARAM" \
-      -F "file=@$FILE" \
-      -F "groupIds=$TARGET" \
-      -F "volume=80" \
-      -F "fadeDurationMs=500" | jq .
+    echo "Uploading and streaming local audio file: $FILE [wait: ${WAIT_PARAM:-false}, vol: ${VOL:-current}]"
+    CURL_ARGS=(
+      -s -X POST "$BASE_URL/api/broadcast/play-file$WAIT_PARAM"
+      -F "file=@$FILE"
+      -F "fadeDurationMs=500"
+    )
+    if [ -n "$TARGET" ]; then CURL_ARGS+=(-F "groupIds=$TARGET"); fi
+    if [ -n "$VOL" ]; then CURL_ARGS+=(-F "volume=$VOL"); fi
+
+    curl "${CURL_ARGS[@]}" | jq .
     ;;
 
   stop)
@@ -134,18 +155,20 @@ case "$1" in
     echo "Usage: $0 <command> [args]"
     echo ""
     echo "Commands:"
-    echo "  chime [groupId] [--wait]     Play instant chime/doorbell (0ms fade, vol 80)"
-    echo "  fading [groupId] [--wait]    Play gentle clip with 1.5s volume fade-in/out"
-    echo "  alarm [--wait]               Trigger whole-house emergency alarm (vol 90, interrupt)"
-    echo "  upload <file> [grp] [--wait] Upload and stream a local MP3/WAV file directly"
-    echo "  jobs [limit]                 List recent broadcast jobs from database"
-    echo "  job <jobId>                  Inspect a specific broadcast job details and status"
-    echo "  cancel <jobId>               Cancel a queued or active broadcast job"
-    echo "  stop                         Stop and cancel active broadcast immediately"
-    echo "  status                       Check whether a broadcast is currently playing"
+    echo "  chime [groupId] [vol] [--wait]   Instant chime/doorbell (default: current group volume)"
+    echo "  fading [groupId] [vol] [--wait]  Gentle clip with 1.5s volume fade (default: current group vol)"
+    echo "  alarm [vol] [--wait]             Whole-house emergency alarm (default: vol 90)"
+    echo "  upload <file> [grp] [vol] [--wait] Upload and stream local MP3/WAV directly"
+    echo "  jobs [limit]                     List recent broadcast jobs from database"
+    echo "  job <jobId>                      Inspect specific broadcast job details and status"
+    echo "  cancel <jobId>                   Cancel a queued or active broadcast job"
+    echo "  stop                             Stop and cancel active broadcast immediately"
+    echo "  status                           Check whether a broadcast is currently playing"
     echo ""
-    echo "Example: $0 chime Wohnzimmer"
-    echo "Example: $0 chime Wohnzimmer --wait"
-    echo "Example: $0 jobs"
+    echo "Examples:"
+    echo "  $0 fading                        # Plays with current group volume"
+    echo "  $0 fading g1 80                  # Plays on group 'g1' at 80% volume"
+    echo "  $0 chime Wohnzimmer --wait       # Chime on Wohnzimmer, waits for completion"
+    echo "  $0 jobs                          # View history of recent broadcasts"
     ;;
 esac
