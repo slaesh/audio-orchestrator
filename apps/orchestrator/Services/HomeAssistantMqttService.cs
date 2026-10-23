@@ -662,6 +662,18 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
     {
         if (_mqttClient != null)
         {
+            lock (_callbackSync)
+            {
+                if (_sessionCts != null)
+                {
+                    try
+                    {
+                        _sessionCts.Cancel();
+                    }
+                    catch (ObjectDisposedException) { }
+                }
+            }
+
             try
             {
                 if (publishOffline && _mqttClient.IsConnected && _currentSettings != null)
@@ -1271,6 +1283,11 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                     radios.Select(r => (r.Id, r.Name)),
                     spotifies.Select(s => (s.Id, s.Name))
                 );
+                if (targetStreamId == null)
+                {
+                    _logger.LogWarning("Rejecting unknown source label '{Payload}' for group {GroupId}", payload, group.Id);
+                    return;
+                }
                 await SetGroupStreamInternalAsync(group, targetStreamId, db, snapcast, volumeOrchestrator);
                 break;
 
@@ -1449,7 +1466,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         }
     }
 
-    public static string ResolveSourceToStreamId(
+    public static string? ResolveSourceToStreamId(
         string sourceInput,
         IEnumerable<(string Id, string Name)> radios,
         IEnumerable<(string Id, string Name)> spotifies)
@@ -1469,25 +1486,59 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             return mappedStreamId;
         }
 
+        var radioList = radios.ToList();
+        var spotList = spotifies.ToList();
+
         // 2. Direct stream ID passed (e.g. "radio_xyz" or "spotify_xyz")
-        if (sourceInput.StartsWith(OrchestratorConstants.RadioPrefix, StringComparison.OrdinalIgnoreCase)
-            || sourceInput.StartsWith(OrchestratorConstants.SpotifyPrefix, StringComparison.OrdinalIgnoreCase))
+        if (sourceInput.StartsWith(OrchestratorConstants.RadioPrefix, StringComparison.OrdinalIgnoreCase))
         {
-            return sourceInput;
+            var raw = sourceInput[OrchestratorConstants.RadioPrefix.Length..];
+            if (radioList.Any(r => string.Equals(r.Id, raw, StringComparison.OrdinalIgnoreCase)
+                                   || string.Equals(r.Id, sourceInput, StringComparison.OrdinalIgnoreCase)))
+            {
+                return sourceInput;
+            }
+        }
+
+        if (sourceInput.StartsWith(OrchestratorConstants.SpotifyPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            var raw = sourceInput[OrchestratorConstants.SpotifyPrefix.Length..];
+            if (spotList.Any(s => string.Equals(s.Id, raw, StringComparison.OrdinalIgnoreCase)
+                                  || string.Equals(s.Id, sourceInput, StringComparison.OrdinalIgnoreCase)))
+            {
+                return sourceInput;
+            }
         }
 
         // 3. Raw ID without prefix passed (e.g. "r1")
-        if (mapping.StreamIdToLabel.TryGetValue(sourceInput, out var labelByRawId)
-            && mapping.LabelToStreamId.TryGetValue(labelByRawId, out var streamIdByRawId))
+        var matchedRadio = radioList.FirstOrDefault(r =>
+            string.Equals(r.Id, sourceInput, StringComparison.OrdinalIgnoreCase)
+            || (r.Id.StartsWith(OrchestratorConstants.RadioPrefix, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(r.Id[OrchestratorConstants.RadioPrefix.Length..], sourceInput, StringComparison.OrdinalIgnoreCase)));
+        if (!string.IsNullOrEmpty(matchedRadio.Id))
         {
-            return streamIdByRawId;
+            var rawId = matchedRadio.Id.StartsWith(OrchestratorConstants.RadioPrefix, StringComparison.OrdinalIgnoreCase)
+                ? matchedRadio.Id[OrchestratorConstants.RadioPrefix.Length..]
+                : matchedRadio.Id;
+            return $"{OrchestratorConstants.RadioPrefix}{rawId}";
         }
 
-        // 3. Fallback: Parse prefix and match by ID or Name
+        var matchedSpot = spotList.FirstOrDefault(s =>
+            string.Equals(s.Id, sourceInput, StringComparison.OrdinalIgnoreCase)
+            || (s.Id.StartsWith(OrchestratorConstants.SpotifyPrefix, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(s.Id[OrchestratorConstants.SpotifyPrefix.Length..], sourceInput, StringComparison.OrdinalIgnoreCase)));
+        if (!string.IsNullOrEmpty(matchedSpot.Id))
+        {
+            var rawId = matchedSpot.Id.StartsWith(OrchestratorConstants.SpotifyPrefix, StringComparison.OrdinalIgnoreCase)
+                ? matchedSpot.Id[OrchestratorConstants.SpotifyPrefix.Length..]
+                : matchedSpot.Id;
+            return $"{OrchestratorConstants.SpotifyPrefix}{rawId}";
+        }
+
+        // 4. Fallback: Parse prefix and match by ID or Name
         if (sourceInput.StartsWith("Radio: ", StringComparison.OrdinalIgnoreCase))
         {
             var clean = sourceInput.Substring("Radio: ".Length).Trim();
-            var radioList = radios.ToList();
             var radio = radioList.FirstOrDefault(r => {
                 var rawId = r.Id.StartsWith(OrchestratorConstants.RadioPrefix, StringComparison.OrdinalIgnoreCase)
                     ? r.Id[OrchestratorConstants.RadioPrefix.Length..]
@@ -1503,13 +1554,12 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                     : radio.Id;
                 return $"{OrchestratorConstants.RadioPrefix}{rawId}";
             }
-            return "default";
+            return null;
         }
 
         if (sourceInput.StartsWith("Spotify: ", StringComparison.OrdinalIgnoreCase))
         {
             var clean = sourceInput.Substring("Spotify: ".Length).Trim();
-            var spotList = spotifies.ToList();
             var spot = spotList.FirstOrDefault(s => {
                 var rawId = s.Id.StartsWith(OrchestratorConstants.SpotifyPrefix, StringComparison.OrdinalIgnoreCase)
                     ? s.Id[OrchestratorConstants.SpotifyPrefix.Length..]
@@ -1525,10 +1575,10 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                     : spot.Id;
                 return $"{OrchestratorConstants.SpotifyPrefix}{rawId}";
             }
-            return "default";
+            return null;
         }
 
-        return "default";
+        return null;
     }
 
     private async Task SetGroupStreamInternalAsync(

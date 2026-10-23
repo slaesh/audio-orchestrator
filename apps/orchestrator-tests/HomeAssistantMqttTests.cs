@@ -2048,4 +2048,95 @@ public class HomeAssistantMqttTests
             It.Is<MqttApplicationMessage>(m => m.Topic == "audio_orchestrator/groups/g2/state" && !string.IsNullOrEmpty(m.ConvertPayloadToString())),
             It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
+
+    [Fact]
+    public async Task HandleIncomingMessage_ShouldRejectUnknownSource_AndPreserveCurrentPlayback()
+    {
+        var (sp, db, mockClient, service, _) = CreateTestContext();
+
+        mockClient.Setup(c => c.ConnectAsync(It.IsAny<MqttClientOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientConnectResult());
+        mockClient.Setup(c => c.SubscribeAsync(It.IsAny<MqttClientSubscribeOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientSubscribeResult(
+                1,
+                new List<MqttClientSubscribeResultItem>
+                {
+                    new(new MqttTopicFilter { Topic = "audio_orchestrator/groups/+/set/#" }, MqttClientSubscribeResultCode.GrantedQoS0),
+                    new(new MqttTopicFilter { Topic = "homeassistant/status" }, MqttClientSubscribeResultCode.GrantedQoS0)
+                },
+                string.Empty,
+                new List<MqttUserProperty>()
+            ));
+        mockClient.SetupGet(c => c.IsConnected).Returns(true);
+
+        var group = new GroupEntity { Id = "g1", Name = "Wohnzimmer", CurrentStreamId = "spotify_s1" };
+        var radio = new RadioStreamEntity { Id = "r1", Name = "Antenne Bayern" };
+        db.Groups.Add(group);
+        db.RadioStreams.Add(radio);
+        await db.SaveChangesAsync();
+
+        await service.EnsureConnectionAsync(CancellationToken.None);
+
+        // 1. Send invalid / unknown source label
+        var msg = new MqttApplicationMessageBuilder()
+            .WithTopic("audio_orchestrator/groups/g1/set/source")
+            .WithPayload("Radio: Old Station Name")
+            .Build();
+
+        await service.HandleIncomingMessageAsync(new MqttApplicationMessageReceivedEventArgs("c1", msg, new MqttPublishPacket(), null));
+
+        // Group stream MUST remain spotify_s1 and NOT switch to default / silence
+        var updatedGroup = await db.Groups.FindAsync("g1");
+        Assert.Equal("spotify_s1", updatedGroup!.CurrentStreamId);
+
+        // 2. Sending supported off input "Aus (Stille)" switches to default
+        var offMsg = new MqttApplicationMessageBuilder()
+            .WithTopic("audio_orchestrator/groups/g1/set/source")
+            .WithPayload("Aus (Stille)")
+            .Build();
+
+        await service.HandleIncomingMessageAsync(new MqttApplicationMessageReceivedEventArgs("c1", offMsg, new MqttPublishPacket(), null));
+
+        db.ChangeTracker.Clear();
+        updatedGroup = await db.Groups.FindAsync("g1");
+        Assert.Equal("default", updatedGroup!.CurrentStreamId);
+    }
+
+    [Fact]
+    public async Task EnsureConnectionAsync_ShouldNotDeadlock_WhenSubscriptionFailsAndCallbackIsBlocked()
+    {
+        var (sp, db, mockClient, service, _) = CreateTestContext();
+
+        mockClient.Setup(c => c.ConnectAsync(It.IsAny<MqttClientOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientConnectResult());
+
+        // When subscribing, fire a retained homeassistant/status => online message which blocks on _publishLock held by EnsureConnectionAsync
+        mockClient.Setup(c => c.SubscribeAsync(It.IsAny<MqttClientSubscribeOptions>(), It.IsAny<CancellationToken>()))
+            .Callback<MqttClientSubscribeOptions, CancellationToken>((_, _) =>
+            {
+                var msg = new MqttApplicationMessageBuilder()
+                    .WithTopic("homeassistant/status")
+                    .WithPayload("online")
+                    .Build();
+                _ = service.HandleIncomingMessageAsync(new MqttApplicationMessageReceivedEventArgs("c1", msg, new MqttPublishPacket(), null));
+            })
+            .ReturnsAsync(new MqttClientSubscribeResult(
+                1,
+                new List<MqttClientSubscribeResultItem>
+                {
+                    new(new MqttTopicFilter { Topic = "audio_orchestrator/groups/+/set/#" }, MqttClientSubscribeResultCode.UnspecifiedError),
+                    new(new MqttTopicFilter { Topic = "homeassistant/status" }, MqttClientSubscribeResultCode.GrantedQoS0)
+                },
+                string.Empty,
+                new List<MqttUserProperty>()
+            ));
+        mockClient.SetupGet(c => c.IsConnected).Returns(true);
+
+        // Disconnect should cancel the session and complete within timeout without deadlocking
+        var ensureTask = service.EnsureConnectionAsync(CancellationToken.None);
+        var completedTask = await Task.WhenAny(ensureTask, Task.Delay(5000));
+
+        Assert.Same(ensureTask, completedTask);
+        await ensureTask;
+    }
 }
