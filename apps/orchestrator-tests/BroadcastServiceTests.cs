@@ -332,15 +332,37 @@ public class BroadcastServiceTests
 
         var controller = new BroadcastController(service, Mock.Of<ILogger<BroadcastController>>());
 
+        // 1. Asynchronous play (wait = false)
         var req = new BroadcastPlayRequest(AudioUrl: "http://example.com/chime.wav", GroupIds: new List<string> { "g1" });
-        var playResult = await controller.Play(req);
-        var okResult = Assert.IsType<OkObjectResult>(playResult.Result);
-        var res = Assert.IsType<BroadcastPlayResult>(okResult.Value);
-        Assert.True(res.Success);
+        var playResult = await controller.Play(req, wait: false);
+        var acceptedResult = Assert.IsType<AcceptedAtActionResult>(playResult.Result);
+        var job = Assert.IsType<BroadcastJobDto>(acceptedResult.Value);
+        Assert.NotNull(job.Id);
 
+        // 2. Query job status by ID
+        var jobResult = await controller.GetJob(job.Id);
+        var okJob = Assert.IsType<OkObjectResult>(jobResult.Result);
+        var retrievedJob = Assert.IsType<BroadcastJobDto>(okJob.Value);
+        Assert.Equal(job.Id, retrievedJob.Id);
+
+        // 3. Query recent jobs list
+        var jobsListResult = await controller.GetRecentJobs(10);
+        var okJobsList = Assert.IsType<OkObjectResult>(jobsListResult.Result);
+        var jobsList = Assert.IsType<List<BroadcastJobDto>>(okJobsList.Value);
+        Assert.Contains(jobsList, j => j.Id == job.Id);
+
+        // 4. Synchronous play (wait = true)
+        var waitReq = new BroadcastPlayRequest(AudioUrl: "http://example.com/chime.wav", GroupIds: new List<string> { "g1" });
+        var syncResult = await controller.Play(waitReq, wait: true);
+        var okSync = Assert.IsType<OkObjectResult>(syncResult.Result);
+        var finishedJob = Assert.IsType<BroadcastJobDto>(okSync.Value);
+        Assert.Equal(BroadcastJobStatus.Completed, finishedJob.Status);
+
+        // 5. Stop broadcast
         var stopResult = await controller.Stop();
         Assert.IsType<OkResult>(stopResult);
 
+        // 6. Broadcast status
         var statusResult = controller.GetStatus();
         var okStatus = Assert.IsType<OkObjectResult>(statusResult.Result);
         var status = Assert.IsType<BroadcastStatusDto>(okStatus.Value);

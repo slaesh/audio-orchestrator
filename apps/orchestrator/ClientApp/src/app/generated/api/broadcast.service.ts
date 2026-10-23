@@ -16,9 +16,8 @@ import { HttpClient, HttpHeaders, HttpParams,
 import { Observable }                                        from 'rxjs';
 import { OpenApiHttpParams, QueryParamStyle } from '../query.params';
 
-
 // @ts-ignore
-import { BroadcastPlayRequest, BroadcastPlayResult, BroadcastStatusDto } from '@contracts';
+import { BroadcastJobDto, BroadcastPlayRequest, BroadcastStatusDto } from '@contracts';
 
 // @ts-ignore
 import { BASE_PATH, COLLECTION_FORMATS }                     from '../variables';
@@ -37,7 +36,188 @@ export class BroadcastService extends BaseService {
     }
 
     /**
+     * @endpoint get /api/Broadcast/jobs
+     * @param limit 
+     * @param observe set whether or not to return the data Observable as the body, response or events. defaults to returning the body.
+     * @param reportProgress flag to report request and response progress.
+     * @param options additional options
+     */
+    public apiBroadcastJobsGet(limit?: number, observe?: 'body', reportProgress?: boolean, options?: {httpHeaderAccept?: 'text/plain' | 'application/json' | 'text/json', context?: HttpContext, transferCache?: boolean}): Observable<Array<BroadcastJobDto>>;
+    public apiBroadcastJobsGet(limit?: number, observe?: 'response', reportProgress?: boolean, options?: {httpHeaderAccept?: 'text/plain' | 'application/json' | 'text/json', context?: HttpContext, transferCache?: boolean}): Observable<HttpResponse<Array<BroadcastJobDto>>>;
+    public apiBroadcastJobsGet(limit?: number, observe?: 'events', reportProgress?: boolean, options?: {httpHeaderAccept?: 'text/plain' | 'application/json' | 'text/json', context?: HttpContext, transferCache?: boolean}): Observable<HttpEvent<Array<BroadcastJobDto>>>;
+    public apiBroadcastJobsGet(limit?: number, observe: any = 'body', reportProgress: boolean = false, options?: {httpHeaderAccept?: 'text/plain' | 'application/json' | 'text/json', context?: HttpContext, transferCache?: boolean}): Observable<any> {
+
+        let localVarQueryParameters = new OpenApiHttpParams(this.encoder);
+
+        localVarQueryParameters = this.addToHttpParams(
+            localVarQueryParameters,
+            'limit',
+            <any>limit,
+            QueryParamStyle.Form,
+            true,
+        );
+
+
+        let localVarHeaders = this.defaultHeaders;
+
+        const localVarHttpHeaderAcceptSelected: string | undefined = options?.httpHeaderAccept ?? this.configuration.selectHeaderAccept([
+            'text/plain',
+            'application/json',
+            'text/json'
+        ]);
+        if (localVarHttpHeaderAcceptSelected !== undefined) {
+            localVarHeaders = localVarHeaders.set('Accept', localVarHttpHeaderAcceptSelected);
+        }
+
+        const localVarHttpContext: HttpContext = options?.context ?? new HttpContext();
+
+        const localVarTransferCache: boolean = options?.transferCache ?? true;
+
+
+        let responseType_: 'text' | 'json' | 'blob' = 'json';
+        if (localVarHttpHeaderAcceptSelected) {
+            if (localVarHttpHeaderAcceptSelected.startsWith('text')) {
+                responseType_ = 'text';
+            } else if (this.configuration.isJsonMime(localVarHttpHeaderAcceptSelected)) {
+                responseType_ = 'json';
+            } else {
+                responseType_ = 'blob';
+            }
+        }
+
+        let localVarPath = `/api/Broadcast/jobs`;
+        const { basePath, withCredentials } = this.configuration;
+        return this.httpClient.request<Array<BroadcastJobDto>>('get', `${basePath}${localVarPath}`,
+            {
+                context: localVarHttpContext,
+                params: localVarQueryParameters.toHttpParams(),
+                responseType: <any>responseType_,
+                ...(withCredentials ? { withCredentials } : {}),
+                headers: localVarHeaders,
+                observe: observe,
+                ...(localVarTransferCache !== undefined ? { transferCache: localVarTransferCache } : {}),
+                reportProgress: reportProgress
+            }
+        );
+    }
+
+    /**
+     * @endpoint post /api/Broadcast/jobs/{id}/cancel
+     * @param id 
+     * @param observe set whether or not to return the data Observable as the body, response or events. defaults to returning the body.
+     * @param reportProgress flag to report request and response progress.
+     * @param options additional options
+     */
+    public apiBroadcastJobsIdCancelPost(id: string, observe?: 'body', reportProgress?: boolean, options?: {httpHeaderAccept?: 'text/plain' | 'application/json' | 'text/json', context?: HttpContext, transferCache?: boolean}): Observable<boolean>;
+    public apiBroadcastJobsIdCancelPost(id: string, observe?: 'response', reportProgress?: boolean, options?: {httpHeaderAccept?: 'text/plain' | 'application/json' | 'text/json', context?: HttpContext, transferCache?: boolean}): Observable<HttpResponse<boolean>>;
+    public apiBroadcastJobsIdCancelPost(id: string, observe?: 'events', reportProgress?: boolean, options?: {httpHeaderAccept?: 'text/plain' | 'application/json' | 'text/json', context?: HttpContext, transferCache?: boolean}): Observable<HttpEvent<boolean>>;
+    public apiBroadcastJobsIdCancelPost(id: string, observe: any = 'body', reportProgress: boolean = false, options?: {httpHeaderAccept?: 'text/plain' | 'application/json' | 'text/json', context?: HttpContext, transferCache?: boolean}): Observable<any> {
+        if (id === null || id === undefined) {
+            throw new Error('Required parameter id was null or undefined when calling apiBroadcastJobsIdCancelPost.');
+        }
+
+        let localVarHeaders = this.defaultHeaders;
+
+        const localVarHttpHeaderAcceptSelected: string | undefined = options?.httpHeaderAccept ?? this.configuration.selectHeaderAccept([
+            'text/plain',
+            'application/json',
+            'text/json'
+        ]);
+        if (localVarHttpHeaderAcceptSelected !== undefined) {
+            localVarHeaders = localVarHeaders.set('Accept', localVarHttpHeaderAcceptSelected);
+        }
+
+        const localVarHttpContext: HttpContext = options?.context ?? new HttpContext();
+
+        const localVarTransferCache: boolean = options?.transferCache ?? true;
+
+
+        let responseType_: 'text' | 'json' | 'blob' = 'json';
+        if (localVarHttpHeaderAcceptSelected) {
+            if (localVarHttpHeaderAcceptSelected.startsWith('text')) {
+                responseType_ = 'text';
+            } else if (this.configuration.isJsonMime(localVarHttpHeaderAcceptSelected)) {
+                responseType_ = 'json';
+            } else {
+                responseType_ = 'blob';
+            }
+        }
+
+        let localVarPath = `/api/Broadcast/jobs/${this.configuration.encodeParam({name: "id", value: id, in: "path", style: "simple", explode: false, dataType: "string", dataFormat: undefined})}/cancel`;
+        const { basePath, withCredentials } = this.configuration;
+        return this.httpClient.request<boolean>('post', `${basePath}${localVarPath}`,
+            {
+                context: localVarHttpContext,
+                responseType: <any>responseType_,
+                ...(withCredentials ? { withCredentials } : {}),
+                headers: localVarHeaders,
+                observe: observe,
+                ...(localVarTransferCache !== undefined ? { transferCache: localVarTransferCache } : {}),
+                reportProgress: reportProgress
+            }
+        );
+    }
+
+    /**
+     * @endpoint get /api/Broadcast/jobs/{id}
+     * @param id 
+     * @param observe set whether or not to return the data Observable as the body, response or events. defaults to returning the body.
+     * @param reportProgress flag to report request and response progress.
+     * @param options additional options
+     */
+    public apiBroadcastJobsIdGet(id: string, observe?: 'body', reportProgress?: boolean, options?: {httpHeaderAccept?: 'text/plain' | 'application/json' | 'text/json', context?: HttpContext, transferCache?: boolean}): Observable<BroadcastJobDto>;
+    public apiBroadcastJobsIdGet(id: string, observe?: 'response', reportProgress?: boolean, options?: {httpHeaderAccept?: 'text/plain' | 'application/json' | 'text/json', context?: HttpContext, transferCache?: boolean}): Observable<HttpResponse<BroadcastJobDto>>;
+    public apiBroadcastJobsIdGet(id: string, observe?: 'events', reportProgress?: boolean, options?: {httpHeaderAccept?: 'text/plain' | 'application/json' | 'text/json', context?: HttpContext, transferCache?: boolean}): Observable<HttpEvent<BroadcastJobDto>>;
+    public apiBroadcastJobsIdGet(id: string, observe: any = 'body', reportProgress: boolean = false, options?: {httpHeaderAccept?: 'text/plain' | 'application/json' | 'text/json', context?: HttpContext, transferCache?: boolean}): Observable<any> {
+        if (id === null || id === undefined) {
+            throw new Error('Required parameter id was null or undefined when calling apiBroadcastJobsIdGet.');
+        }
+
+        let localVarHeaders = this.defaultHeaders;
+
+        const localVarHttpHeaderAcceptSelected: string | undefined = options?.httpHeaderAccept ?? this.configuration.selectHeaderAccept([
+            'text/plain',
+            'application/json',
+            'text/json'
+        ]);
+        if (localVarHttpHeaderAcceptSelected !== undefined) {
+            localVarHeaders = localVarHeaders.set('Accept', localVarHttpHeaderAcceptSelected);
+        }
+
+        const localVarHttpContext: HttpContext = options?.context ?? new HttpContext();
+
+        const localVarTransferCache: boolean = options?.transferCache ?? true;
+
+
+        let responseType_: 'text' | 'json' | 'blob' = 'json';
+        if (localVarHttpHeaderAcceptSelected) {
+            if (localVarHttpHeaderAcceptSelected.startsWith('text')) {
+                responseType_ = 'text';
+            } else if (this.configuration.isJsonMime(localVarHttpHeaderAcceptSelected)) {
+                responseType_ = 'json';
+            } else {
+                responseType_ = 'blob';
+            }
+        }
+
+        let localVarPath = `/api/Broadcast/jobs/${this.configuration.encodeParam({name: "id", value: id, in: "path", style: "simple", explode: false, dataType: "string", dataFormat: undefined})}`;
+        const { basePath, withCredentials } = this.configuration;
+        return this.httpClient.request<BroadcastJobDto>('get', `${basePath}${localVarPath}`,
+            {
+                context: localVarHttpContext,
+                responseType: <any>responseType_,
+                ...(withCredentials ? { withCredentials } : {}),
+                headers: localVarHeaders,
+                observe: observe,
+                ...(localVarTransferCache !== undefined ? { transferCache: localVarTransferCache } : {}),
+                reportProgress: reportProgress
+            }
+        );
+    }
+
+    /**
      * @endpoint post /api/Broadcast/play-file
+     * @param wait 
      * @param contentType 
      * @param contentDisposition 
      * @param headers 
@@ -55,10 +235,21 @@ export class BroadcastService extends BaseService {
      * @param reportProgress flag to report request and response progress.
      * @param options additional options
      */
-    public apiBroadcastPlayFilePost(contentType?: string, contentDisposition?: string, headers?: { [key: string]: Array<string>; }, length?: number, name?: string, fileName?: string, groupIds?: string, roomIds?: string, volume?: number, fadeDurationMs?: number, pausePlayback?: boolean, timeoutSeconds?: number, interrupt?: boolean, observe?: 'body', reportProgress?: boolean, options?: {httpHeaderAccept?: 'text/plain' | 'application/json' | 'text/json', context?: HttpContext, transferCache?: boolean}): Observable<BroadcastPlayResult>;
-    public apiBroadcastPlayFilePost(contentType?: string, contentDisposition?: string, headers?: { [key: string]: Array<string>; }, length?: number, name?: string, fileName?: string, groupIds?: string, roomIds?: string, volume?: number, fadeDurationMs?: number, pausePlayback?: boolean, timeoutSeconds?: number, interrupt?: boolean, observe?: 'response', reportProgress?: boolean, options?: {httpHeaderAccept?: 'text/plain' | 'application/json' | 'text/json', context?: HttpContext, transferCache?: boolean}): Observable<HttpResponse<BroadcastPlayResult>>;
-    public apiBroadcastPlayFilePost(contentType?: string, contentDisposition?: string, headers?: { [key: string]: Array<string>; }, length?: number, name?: string, fileName?: string, groupIds?: string, roomIds?: string, volume?: number, fadeDurationMs?: number, pausePlayback?: boolean, timeoutSeconds?: number, interrupt?: boolean, observe?: 'events', reportProgress?: boolean, options?: {httpHeaderAccept?: 'text/plain' | 'application/json' | 'text/json', context?: HttpContext, transferCache?: boolean}): Observable<HttpEvent<BroadcastPlayResult>>;
-    public apiBroadcastPlayFilePost(contentType?: string, contentDisposition?: string, headers?: { [key: string]: Array<string>; }, length?: number, name?: string, fileName?: string, groupIds?: string, roomIds?: string, volume?: number, fadeDurationMs?: number, pausePlayback?: boolean, timeoutSeconds?: number, interrupt?: boolean, observe: any = 'body', reportProgress: boolean = false, options?: {httpHeaderAccept?: 'text/plain' | 'application/json' | 'text/json', context?: HttpContext, transferCache?: boolean}): Observable<any> {
+    public apiBroadcastPlayFilePost(wait?: boolean, contentType?: string, contentDisposition?: string, headers?: { [key: string]: Array<string>; }, length?: number, name?: string, fileName?: string, groupIds?: string, roomIds?: string, volume?: number, fadeDurationMs?: number, pausePlayback?: boolean, timeoutSeconds?: number, interrupt?: boolean, observe?: 'body', reportProgress?: boolean, options?: {httpHeaderAccept?: 'text/plain' | 'application/json' | 'text/json', context?: HttpContext, transferCache?: boolean}): Observable<BroadcastJobDto>;
+    public apiBroadcastPlayFilePost(wait?: boolean, contentType?: string, contentDisposition?: string, headers?: { [key: string]: Array<string>; }, length?: number, name?: string, fileName?: string, groupIds?: string, roomIds?: string, volume?: number, fadeDurationMs?: number, pausePlayback?: boolean, timeoutSeconds?: number, interrupt?: boolean, observe?: 'response', reportProgress?: boolean, options?: {httpHeaderAccept?: 'text/plain' | 'application/json' | 'text/json', context?: HttpContext, transferCache?: boolean}): Observable<HttpResponse<BroadcastJobDto>>;
+    public apiBroadcastPlayFilePost(wait?: boolean, contentType?: string, contentDisposition?: string, headers?: { [key: string]: Array<string>; }, length?: number, name?: string, fileName?: string, groupIds?: string, roomIds?: string, volume?: number, fadeDurationMs?: number, pausePlayback?: boolean, timeoutSeconds?: number, interrupt?: boolean, observe?: 'events', reportProgress?: boolean, options?: {httpHeaderAccept?: 'text/plain' | 'application/json' | 'text/json', context?: HttpContext, transferCache?: boolean}): Observable<HttpEvent<BroadcastJobDto>>;
+    public apiBroadcastPlayFilePost(wait?: boolean, contentType?: string, contentDisposition?: string, headers?: { [key: string]: Array<string>; }, length?: number, name?: string, fileName?: string, groupIds?: string, roomIds?: string, volume?: number, fadeDurationMs?: number, pausePlayback?: boolean, timeoutSeconds?: number, interrupt?: boolean, observe: any = 'body', reportProgress: boolean = false, options?: {httpHeaderAccept?: 'text/plain' | 'application/json' | 'text/json', context?: HttpContext, transferCache?: boolean}): Observable<any> {
+
+        let localVarQueryParameters = new OpenApiHttpParams(this.encoder);
+
+        localVarQueryParameters = this.addToHttpParams(
+            localVarQueryParameters,
+            'wait',
+            <any>wait,
+            QueryParamStyle.Form,
+            true,
+        );
+
 
         let localVarHeaders = this.defaultHeaders;
 
@@ -144,10 +335,11 @@ export class BroadcastService extends BaseService {
 
         let localVarPath = `/api/Broadcast/play-file`;
         const { basePath, withCredentials } = this.configuration;
-        return this.httpClient.request<BroadcastPlayResult>('post', `${basePath}${localVarPath}`,
+        return this.httpClient.request<BroadcastJobDto>('post', `${basePath}${localVarPath}`,
             {
                 context: localVarHttpContext,
                 body: localVarConvertFormParamsToString ? localVarFormParams.toString() : localVarFormParams,
+                params: localVarQueryParameters.toHttpParams(),
                 responseType: <any>responseType_,
                 ...(withCredentials ? { withCredentials } : {}),
                 headers: localVarHeaders,
@@ -161,17 +353,29 @@ export class BroadcastService extends BaseService {
     /**
      * @endpoint post /api/Broadcast/play
      * @param broadcastPlayRequest 
+     * @param wait 
      * @param observe set whether or not to return the data Observable as the body, response or events. defaults to returning the body.
      * @param reportProgress flag to report request and response progress.
      * @param options additional options
      */
-    public apiBroadcastPlayPost(broadcastPlayRequest: BroadcastPlayRequest, observe?: 'body', reportProgress?: boolean, options?: {httpHeaderAccept?: 'text/plain' | 'application/json' | 'text/json', context?: HttpContext, transferCache?: boolean}): Observable<BroadcastPlayResult>;
-    public apiBroadcastPlayPost(broadcastPlayRequest: BroadcastPlayRequest, observe?: 'response', reportProgress?: boolean, options?: {httpHeaderAccept?: 'text/plain' | 'application/json' | 'text/json', context?: HttpContext, transferCache?: boolean}): Observable<HttpResponse<BroadcastPlayResult>>;
-    public apiBroadcastPlayPost(broadcastPlayRequest: BroadcastPlayRequest, observe?: 'events', reportProgress?: boolean, options?: {httpHeaderAccept?: 'text/plain' | 'application/json' | 'text/json', context?: HttpContext, transferCache?: boolean}): Observable<HttpEvent<BroadcastPlayResult>>;
-    public apiBroadcastPlayPost(broadcastPlayRequest: BroadcastPlayRequest, observe: any = 'body', reportProgress: boolean = false, options?: {httpHeaderAccept?: 'text/plain' | 'application/json' | 'text/json', context?: HttpContext, transferCache?: boolean}): Observable<any> {
+    public apiBroadcastPlayPost(broadcastPlayRequest: BroadcastPlayRequest, wait?: boolean, observe?: 'body', reportProgress?: boolean, options?: {httpHeaderAccept?: 'text/plain' | 'application/json' | 'text/json', context?: HttpContext, transferCache?: boolean}): Observable<BroadcastJobDto>;
+    public apiBroadcastPlayPost(broadcastPlayRequest: BroadcastPlayRequest, wait?: boolean, observe?: 'response', reportProgress?: boolean, options?: {httpHeaderAccept?: 'text/plain' | 'application/json' | 'text/json', context?: HttpContext, transferCache?: boolean}): Observable<HttpResponse<BroadcastJobDto>>;
+    public apiBroadcastPlayPost(broadcastPlayRequest: BroadcastPlayRequest, wait?: boolean, observe?: 'events', reportProgress?: boolean, options?: {httpHeaderAccept?: 'text/plain' | 'application/json' | 'text/json', context?: HttpContext, transferCache?: boolean}): Observable<HttpEvent<BroadcastJobDto>>;
+    public apiBroadcastPlayPost(broadcastPlayRequest: BroadcastPlayRequest, wait?: boolean, observe: any = 'body', reportProgress: boolean = false, options?: {httpHeaderAccept?: 'text/plain' | 'application/json' | 'text/json', context?: HttpContext, transferCache?: boolean}): Observable<any> {
         if (broadcastPlayRequest === null || broadcastPlayRequest === undefined) {
             throw new Error('Required parameter broadcastPlayRequest was null or undefined when calling apiBroadcastPlayPost.');
         }
+
+        let localVarQueryParameters = new OpenApiHttpParams(this.encoder);
+
+        localVarQueryParameters = this.addToHttpParams(
+            localVarQueryParameters,
+            'wait',
+            <any>wait,
+            QueryParamStyle.Form,
+            true,
+        );
+
 
         let localVarHeaders = this.defaultHeaders;
 
@@ -213,10 +417,11 @@ export class BroadcastService extends BaseService {
 
         let localVarPath = `/api/Broadcast/play`;
         const { basePath, withCredentials } = this.configuration;
-        return this.httpClient.request<BroadcastPlayResult>('post', `${basePath}${localVarPath}`,
+        return this.httpClient.request<BroadcastJobDto>('post', `${basePath}${localVarPath}`,
             {
                 context: localVarHttpContext,
                 body: broadcastPlayRequest,
+                params: localVarQueryParameters.toHttpParams(),
                 responseType: <any>responseType_,
                 ...(withCredentials ? { withCredentials } : {}),
                 headers: localVarHeaders,

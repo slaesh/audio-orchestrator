@@ -1,4 +1,7 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Text.Json;
+using System.Threading.Channels;
 using AudioOrchestrator.Contracts;
 using AudioOrchestrator.Data;
 using AudioOrchestrator.Data.Entities;
@@ -89,11 +92,11 @@ public class DefaultAudioPlayerProcessRunner : IAudioPlayerProcessRunner
             _logger.LogWarning("ffmpeg exited with code {ExitCode}. Stderr: {Stderr}", process.ExitCode, stderr);
         }
 
-        return new ProcessRunResult(process.ExitCode, stderr?.Trim() ?? string.Empty);
+        return new ProcessRunResult(process.ExitCode, stderr);
     }
 }
 
-public class BroadcastService : IBroadcastService
+public class BroadcastService : IHostedService, IBroadcastService
 {
     private readonly ILogger<BroadcastService> _logger;
     private readonly IServiceProvider _serviceProvider;
@@ -101,10 +104,26 @@ public class BroadcastService : IBroadcastService
     private readonly IFifoService _fifoService;
     private readonly ILibrespotApiClient _librespotApi;
     private readonly IAudioPlayerProcessRunner _processRunner;
-    private readonly SemaphoreSlim _lock = new(1, 1);
 
-    private CancellationTokenSource? _activeBroadcastCts;
-    private string? _currentAnnouncementId;
+    private sealed record QueuedBroadcastItem(
+        string JobId,
+        BroadcastPlayRequest Request,
+        string InputSource,
+        string? TempFilePath,
+        TaskCompletionSource<BroadcastPlayResult> Tcs
+    );
+
+    private readonly Channel<QueuedBroadcastItem> _queue = Channel.CreateUnbounded<QueuedBroadcastItem>(new UnboundedChannelOptions
+    {
+        SingleReader = true
+    });
+
+    private readonly ConcurrentDictionary<string, CancellationTokenSource> _activeCtsMap = new();
+    private readonly ConcurrentDictionary<string, TaskCompletionSource<BroadcastPlayResult>> _waiters = new();
+
+    private CancellationTokenSource? _workerCts;
+    private Task? _workerTask;
+    private string? _currentJobId;
     private readonly List<string> _activeTargetGroupIds = new();
 
     public BroadcastService(
@@ -121,8 +140,40 @@ public class BroadcastService : IBroadcastService
         _fifoService = fifoService;
         _librespotApi = librespotApi;
         _processRunner = processRunner ?? new DefaultAudioPlayerProcessRunner(
-            logger: serviceProvider.GetService<ILogger<DefaultAudioPlayerProcessRunner>>() 
+            logger: serviceProvider.GetService<ILogger<DefaultAudioPlayerProcessRunner>>()
                     ?? LoggerFactory.Create(b => b.AddConsole()).CreateLogger<DefaultAudioPlayerProcessRunner>());
+    }
+
+    public Task StartAsync(CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Starting BroadcastService background queue worker.");
+        _workerCts = new CancellationTokenSource();
+        _workerTask = Task.Run(() => ProcessQueueAsync(_workerCts.Token), CancellationToken.None);
+        return Task.CompletedTask;
+    }
+
+    public async Task StopAsync(CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Stopping BroadcastService and cancelling active broadcasts.");
+        await CancelActiveBroadcastInternalAsync();
+
+        if (_workerCts != null)
+        {
+            try
+            {
+                _workerCts.Cancel();
+            }
+            catch (ObjectDisposedException) { }
+        }
+
+        if (_workerTask != null)
+        {
+            try
+            {
+                await Task.WhenAny(_workerTask, Task.Delay(2000, cancellationToken));
+            }
+            catch { /* Ignore cancellation */ }
+        }
     }
 
     public BroadcastStatusDto GetStatus()
@@ -130,47 +181,78 @@ public class BroadcastService : IBroadcastService
         lock (_activeTargetGroupIds)
         {
             return new BroadcastStatusDto(
-                IsPlaying: _currentAnnouncementId != null,
-                CurrentAnnouncementId: _currentAnnouncementId,
+                IsPlaying: _currentJobId != null,
+                CurrentAnnouncementId: _currentJobId,
                 ActiveTargetGroupIds: _activeTargetGroupIds.ToList()
             );
         }
     }
 
-    public async Task StopAsync(CancellationToken ct = default)
+    public async Task<BroadcastJobDto> EnqueuePlayUrlAsync(BroadcastPlayRequest request, CancellationToken ct = default)
     {
-        _logger.LogInformation("Stop broadcast requested.");
-        CancellationTokenSource? ctsToCancel;
-        lock (_activeTargetGroupIds)
+        if (string.IsNullOrWhiteSpace(request.AudioUrl))
         {
-            ctsToCancel = _activeBroadcastCts;
+            throw new ArgumentException("AudioUrl darf nicht leer sein.", nameof(request));
         }
 
-        if (ctsToCancel != null)
+        return await EnqueueJobInternalAsync(request, inputSource: request.AudioUrl, tempFilePath: null, sourceType: "url", ct);
+    }
+
+    public async Task<BroadcastJobDto> EnqueuePlayFileAsync(Stream fileStream, string fileExtension, BroadcastPlayRequest request, CancellationToken ct = default)
+    {
+        if (fileStream == null || fileStream.Length == 0)
         {
-            try
+            throw new ArgumentException("Dateistream ist leer.", nameof(fileStream));
+        }
+
+        var tempFileName = $"/tmp/audio_broadcast_{Guid.NewGuid():N}{fileExtension}";
+        using (var fs = new FileStream(tempFileName, FileMode.Create, FileAccess.Write, FileShare.None))
+        {
+            await fileStream.CopyToAsync(fs, ct);
+        }
+
+        return await EnqueueJobInternalAsync(request, inputSource: tempFileName, tempFilePath: tempFileName, sourceType: "upload", ct);
+    }
+
+    public async Task<BroadcastPlayResult> WaitForJobAsync(string jobId, CancellationToken ct = default)
+    {
+        using (var scope = _serviceProvider.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<OrchestratorDbContext>();
+            var job = await db.BroadcastJobs.FindAsync(new object[] { jobId }, ct);
+            if (job != null && job.Status != BroadcastJobStatus.Queued && job.Status != BroadcastJobStatus.Playing)
             {
-                ctsToCancel.Cancel();
+                return new BroadcastPlayResult(
+                    Success: job.Status == BroadcastJobStatus.Completed,
+                    Message: job.ErrorMessage ?? (job.Status == BroadcastJobStatus.Completed ? "Durchsage erfolgreich abgespielt." : $"Status: {job.Status}"),
+                    DurationMs: job.DurationMs,
+                    JobId: job.Id
+                );
             }
-            catch (ObjectDisposedException) { }
         }
 
-        // Wait briefly for the lock to be released (indicating cleanup completed)
-        var acquired = await _lock.WaitAsync(TimeSpan.FromSeconds(3), ct);
-        if (acquired)
+        var tcs = _waiters.GetOrAdd(jobId, _ => new TaskCompletionSource<BroadcastPlayResult>(TaskCreationOptions.RunContinuationsAsynchronously));
+
+        using var reg = ct.Register(() => tcs.TrySetCanceled(ct));
+        try
         {
-            _lock.Release();
+            return await tcs.Task;
+        }
+        finally
+        {
+            _waiters.TryRemove(jobId, out _);
         }
     }
 
     public async Task<BroadcastPlayResult> PlayUrlAsync(BroadcastPlayRequest request, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(request.AudioUrl))
+        if (request == null || string.IsNullOrWhiteSpace(request.AudioUrl))
         {
             return new BroadcastPlayResult(false, "AudioUrl darf nicht leer sein.");
         }
 
-        return await ExecuteBroadcastAsync(request.AudioUrl, stdinStream: null, request, ct);
+        var job = await EnqueuePlayUrlAsync(request, ct);
+        return await WaitForJobAsync(job.Id, ct);
     }
 
     public async Task<BroadcastPlayResult> PlayFileAsync(Stream fileStream, string fileExtension, BroadcastPlayRequest request, CancellationToken ct = default)
@@ -180,49 +262,177 @@ public class BroadcastService : IBroadcastService
             return new BroadcastPlayResult(false, "Dateistream ist leer.");
         }
 
-        return await ExecuteBroadcastAsync(inputSource: "-", stdinStream: fileStream, request, ct);
+        var job = await EnqueuePlayFileAsync(fileStream, fileExtension, request, ct);
+        return await WaitForJobAsync(job.Id, ct);
     }
 
-    private sealed class GroupSnapshot
+    public async Task<BroadcastJobDto?> GetJobAsync(string jobId, CancellationToken ct = default)
     {
-        public string GroupId { get; init; } = string.Empty;
-        public string SnapcastGroupId { get; init; } = string.Empty;
-        public string OriginalStreamId { get; init; } = "default";
-        public int OriginalVolume { get; init; } = 100;
-        public bool OriginalIsMuted { get; init; }
-        public string? PausedSpotifySourceId { get; set; }
-        public List<(string ClientId, int Volume, bool Muted)> UnselectedClients { get; } = new();
+        using var scope = _serviceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<OrchestratorDbContext>();
+        var job = await db.BroadcastJobs.FindAsync(new object[] { jobId }, ct);
+        return job != null ? MapToDto(job) : null;
     }
 
-    private async Task<BroadcastPlayResult> ExecuteBroadcastAsync(
-        string inputSource,
-        Stream? stdinStream,
+    public async Task<List<BroadcastJobDto>> GetRecentJobsAsync(int limit = 50, CancellationToken ct = default)
+    {
+        limit = Math.Clamp(limit, 1, 200);
+        using var scope = _serviceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<OrchestratorDbContext>();
+        var jobs = await db.BroadcastJobs
+            .AsNoTracking()
+            .OrderByDescending(j => j.CreatedAt)
+            .Take(limit)
+            .ToListAsync(ct);
+
+        return jobs.Select(MapToDto).ToList();
+    }
+
+    public async Task<bool> CancelJobAsync(string jobId, CancellationToken ct = default)
+    {
+        if (_activeCtsMap.TryGetValue(jobId, out var cts))
+        {
+            try
+            {
+                cts.Cancel();
+                return true;
+            }
+            catch (ObjectDisposedException) { }
+        }
+
+        using var scope = _serviceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<OrchestratorDbContext>();
+        var job = await db.BroadcastJobs.FindAsync(new object[] { jobId }, ct);
+        if (job != null && job.Status == BroadcastJobStatus.Queued)
+        {
+            job.Status = BroadcastJobStatus.Cancelled;
+            job.CompletedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync(ct);
+            return true;
+        }
+
+        return false;
+    }
+
+    private async Task<BroadcastJobDto> EnqueueJobInternalAsync(
         BroadcastPlayRequest request,
+        string inputSource,
+        string? tempFilePath,
+        string sourceType,
         CancellationToken ct)
     {
         if (request.Interrupt)
         {
-            await StopAsync(ct);
+            await CancelActiveBroadcastInternalAsync();
         }
 
-        var timeoutSec = Math.Clamp(request.TimeoutSeconds ?? 60, 1, 600);
-        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        linkedCts.CancelAfter(TimeSpan.FromSeconds(timeoutSec));
-
-        var acquired = await _lock.WaitAsync(TimeSpan.FromSeconds(10), linkedCts.Token);
-        if (!acquired)
+        var jobId = Guid.NewGuid().ToString("N");
+        var jobEntity = new BroadcastJobEntity
         {
-            return new BroadcastPlayResult(false, "Wiedergabe konnte nicht gestartet werden (Kanal blockiert).");
-        }
+            Id = jobId,
+            CreatedAt = DateTime.UtcNow,
+            AudioUrl = request.AudioUrl,
+            SourceType = sourceType,
+            TargetGroupIdsJson = request.GroupIds != null && request.GroupIds.Count > 0 ? JsonSerializer.Serialize(request.GroupIds) : null,
+            TargetRoomIdsJson = request.RoomIds != null && request.RoomIds.Count > 0 ? JsonSerializer.Serialize(request.RoomIds) : null,
+            Volume = request.Volume,
+            FadeDurationMs = request.FadeDurationMs,
+            PausePlayback = request.PausePlayback,
+            TimeoutSeconds = request.TimeoutSeconds ?? 60,
+            Interrupt = request.Interrupt,
+            Status = BroadcastJobStatus.Queued
+        };
 
-        var announcementId = Guid.NewGuid().ToString("N");
-        lock (_activeTargetGroupIds)
+        using (var scope = _serviceProvider.CreateScope())
         {
-            _activeBroadcastCts = linkedCts;
-            _currentAnnouncementId = announcementId;
-            _activeTargetGroupIds.Clear();
+            var db = scope.ServiceProvider.GetRequiredService<OrchestratorDbContext>();
+            db.BroadcastJobs.Add(jobEntity);
+            await db.SaveChangesAsync(ct);
         }
 
+        var tcs = new TaskCompletionSource<BroadcastPlayResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _waiters[jobId] = tcs;
+
+        var queuedItem = new QueuedBroadcastItem(jobId, request, inputSource, tempFilePath, tcs);
+        await _queue.Writer.WriteAsync(queuedItem, ct);
+
+        // Ensure background worker is running (in case StartAsync was not triggered by host)
+        EnsureWorkerRunning();
+
+        return MapToDto(jobEntity);
+    }
+
+    private void EnsureWorkerRunning()
+    {
+        if (_workerTask == null || _workerTask.IsCompleted)
+        {
+            _workerCts ??= new CancellationTokenSource();
+            _workerTask = Task.Run(() => ProcessQueueAsync(_workerCts.Token), CancellationToken.None);
+        }
+    }
+
+    private async Task CancelActiveBroadcastInternalAsync()
+    {
+        foreach (var kvp in _activeCtsMap.ToArray())
+        {
+            try
+            {
+                kvp.Value.Cancel();
+            }
+            catch (ObjectDisposedException) { }
+        }
+        await Task.Yield();
+    }
+
+    private async Task ProcessQueueAsync(CancellationToken workerStoppingToken)
+    {
+        _logger.LogInformation("BroadcastQueue worker loop started.");
+
+        while (!workerStoppingToken.IsCancellationRequested)
+        {
+            QueuedBroadcastItem item;
+            try
+            {
+                item = await _queue.Reader.ReadAsync(workerStoppingToken);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+
+            var timeoutSec = Math.Clamp(item.Request.TimeoutSeconds ?? 60, 1, 600);
+            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSec));
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(workerStoppingToken, timeoutCts.Token);
+
+            _activeCtsMap[item.JobId] = linkedCts;
+            lock (_activeTargetGroupIds)
+            {
+                _currentJobId = item.JobId;
+            }
+
+            var result = await ExecuteSingleBroadcastAsync(item, linkedCts.Token);
+
+            _activeCtsMap.TryRemove(item.JobId, out _);
+            lock (_activeTargetGroupIds)
+            {
+                _currentJobId = null;
+                _activeTargetGroupIds.Clear();
+            }
+
+            // Cleanup temp file if upload
+            if (!string.IsNullOrEmpty(item.TempFilePath) && File.Exists(item.TempFilePath))
+            {
+                try { File.Delete(item.TempFilePath); } catch { /* Ignore */ }
+            }
+
+            item.Tcs.TrySetResult(result);
+        }
+
+        _logger.LogInformation("BroadcastQueue worker loop stopped.");
+    }
+
+    private async Task<BroadcastPlayResult> ExecuteSingleBroadcastAsync(QueuedBroadcastItem item, CancellationToken ct)
+    {
         var stopwatch = Stopwatch.StartNew();
         var snapshots = new List<GroupSnapshot>();
 
@@ -233,15 +443,30 @@ public class BroadcastService : IBroadcastService
         var stateBuilder = scope.ServiceProvider.GetRequiredService<FullStateBuilder>();
         var mqtt = scope.ServiceProvider.GetService<IHomeAssistantMqttService>();
 
+        var jobEntity = await db.BroadcastJobs.FindAsync(item.JobId);
+        if (jobEntity == null)
+        {
+            return new BroadcastPlayResult(false, "Job nicht in Datenbank gefunden.", 0, item.JobId);
+        }
+
+        if (jobEntity.Status == BroadcastJobStatus.Cancelled)
+        {
+            return new BroadcastPlayResult(false, "Job wurde vor der Ausführung abgebrochen.", 0, item.JobId);
+        }
+
+        jobEntity.Status = BroadcastJobStatus.Playing;
+        jobEntity.StartedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync(CancellationToken.None);
+
         try
         {
             await _fifoService.EnsureFifoAsync(OrchestratorConstants.AnnouncementFifoPath);
 
             // 1. Resolve Targets
-            snapshots = await ResolveTargetSnapshotsAsync(request, db);
+            snapshots = await ResolveTargetSnapshotsAsync(item.Request, db);
             if (snapshots.Count == 0)
             {
-                return new BroadcastPlayResult(false, "Keine Zielgruppen für die Durchsage gefunden.");
+                throw new InvalidOperationException("Keine Zielgruppen für die Durchsage gefunden.");
             }
 
             lock (_activeTargetGroupIds)
@@ -250,7 +475,7 @@ public class BroadcastService : IBroadcastService
             }
 
             // 2. Optional Pause active Spotify playback
-            if (request.PausePlayback)
+            if (item.Request.PausePlayback)
             {
                 foreach (var s in snapshots)
                 {
@@ -271,10 +496,10 @@ public class BroadcastService : IBroadcastService
             }
 
             // 3. Fade down current volume (if requested)
-            var fadeMs = Math.Clamp(request.FadeDurationMs ?? 0, 0, 5000);
+            var fadeMs = Math.Clamp(item.Request.FadeDurationMs ?? 0, 0, 5000);
             if (fadeMs > 0)
             {
-                await FadeGroupsVolumeAsync(snapshots, targetZero: true, fadeMs, volumeOrchestrator, linkedCts.Token);
+                await FadeGroupsVolumeAsync(snapshots, targetZero: true, fadeMs, volumeOrchestrator, ct);
             }
 
             // 4. Temporarily mute unselected rooms within target groups
@@ -309,7 +534,7 @@ public class BroadcastService : IBroadcastService
             // 6. Set announcement playback volume
             foreach (var s in snapshots)
             {
-                var targetVol = request.Volume.HasValue ? Math.Clamp(request.Volume.Value, 0, 100) : s.OriginalVolume;
+                var targetVol = item.Request.Volume.HasValue ? Math.Clamp(item.Request.Volume.Value, 0, 100) : s.OriginalVolume;
                 try
                 {
                     await volumeOrchestrator.SetGroupVolumeAsync(s.GroupId, targetVol, isMuted: false);
@@ -322,48 +547,65 @@ public class BroadcastService : IBroadcastService
 
             // 7. Stream audio into FIFO using ffmpeg process runner
             var runResult = await _processRunner.StreamToFifoAsync(
-                inputSource,
+                item.InputSource,
                 OrchestratorConstants.AnnouncementFifoPath,
-                stdinStream,
-                linkedCts.Token
+                stdinStream: null,
+                ct
             );
 
             // 8. Snapcast audio buffer delay (~500ms) to ensure audio finishes playback on physical clients
-            await Task.Delay(500, linkedCts.Token);
+            await Task.Delay(500, ct);
 
+            var duration = (int)stopwatch.ElapsedMilliseconds;
             if (runResult.ExitCode != 0)
             {
                 var firstErrLine = runResult.Stderr.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
                 var detail = !string.IsNullOrWhiteSpace(firstErrLine) ? $": {firstErrLine}" : "";
-                return new BroadcastPlayResult(
-                    Success: false,
-                    Message: $"ffmpeg beendet mit Code {runResult.ExitCode}{detail}",
-                    DurationMs: (int)stopwatch.ElapsedMilliseconds
-                );
+                var msg = $"ffmpeg beendet mit Code {runResult.ExitCode}{detail}";
+
+                jobEntity.Status = BroadcastJobStatus.Failed;
+                jobEntity.ErrorMessage = msg;
+                jobEntity.CompletedAt = DateTime.UtcNow;
+                jobEntity.DurationMs = duration;
+                await db.SaveChangesAsync(CancellationToken.None);
+
+                return new BroadcastPlayResult(false, msg, duration, item.JobId);
             }
 
-            return new BroadcastPlayResult(
-                Success: true,
-                Message: "Durchsage erfolgreich abgespielt.",
-                DurationMs: (int)stopwatch.ElapsedMilliseconds
-            );
+            jobEntity.Status = BroadcastJobStatus.Completed;
+            jobEntity.CompletedAt = DateTime.UtcNow;
+            jobEntity.DurationMs = duration;
+            await db.SaveChangesAsync(CancellationToken.None);
+
+            return new BroadcastPlayResult(true, "Durchsage erfolgreich abgespielt.", duration, item.JobId);
         }
-        catch (OperationCanceledException) when (linkedCts.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
-            _logger.LogInformation("Broadcast {Id} was cancelled or timed out.", announcementId);
-            return new BroadcastPlayResult(false, "Durchsage abgebrochen oder Zeitüberschreitung.", (int)stopwatch.ElapsedMilliseconds);
+            var duration = (int)stopwatch.ElapsedMilliseconds;
+            jobEntity.Status = BroadcastJobStatus.Cancelled;
+            jobEntity.CompletedAt = DateTime.UtcNow;
+            jobEntity.DurationMs = duration;
+            jobEntity.ErrorMessage = "Durchsage abgebrochen oder Zeitüberschreitung.";
+            await db.SaveChangesAsync(CancellationToken.None);
+
+            return new BroadcastPlayResult(false, "Durchsage abgebrochen oder Zeitüberschreitung.", duration, item.JobId);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Broadcast {Id} failed unexpectedly", announcementId);
-            return new BroadcastPlayResult(false, $"Fehler bei Durchsage: {ex.Message}", (int)stopwatch.ElapsedMilliseconds);
+            var duration = (int)stopwatch.ElapsedMilliseconds;
+            jobEntity.Status = BroadcastJobStatus.Failed;
+            jobEntity.CompletedAt = DateTime.UtcNow;
+            jobEntity.DurationMs = duration;
+            jobEntity.ErrorMessage = $"Fehler bei Durchsage: {ex.Message}";
+            await db.SaveChangesAsync(CancellationToken.None);
+
+            return new BroadcastPlayResult(false, jobEntity.ErrorMessage, duration, item.JobId);
         }
         finally
         {
-            // GUARANTEED RESTORATION
             try
             {
-                await RestoreSnapshotsAsync(snapshots, request.FadeDurationMs ?? 0, request.PausePlayback, volumeOrchestrator);
+                await RestoreSnapshotsAsync(snapshots, item.Request.FadeDurationMs ?? 0, item.Request.PausePlayback, volumeOrchestrator);
                 var freshState = await stateBuilder.BuildAsync();
                 await hub.Clients.All.OnFullStateUpdate(freshState);
                 if (mqtt != null)
@@ -375,16 +617,18 @@ public class BroadcastService : IBroadcastService
             {
                 _logger.LogError(ex, "Failed to fully restore audio states after broadcast");
             }
-
-            lock (_activeTargetGroupIds)
-            {
-                _activeBroadcastCts = null;
-                _currentAnnouncementId = null;
-                _activeTargetGroupIds.Clear();
-            }
-
-            _lock.Release();
         }
+    }
+
+    private sealed class GroupSnapshot
+    {
+        public string GroupId { get; init; } = string.Empty;
+        public string SnapcastGroupId { get; init; } = string.Empty;
+        public string OriginalStreamId { get; init; } = "default";
+        public int OriginalVolume { get; init; } = 100;
+        public bool OriginalIsMuted { get; init; }
+        public string? PausedSpotifySourceId { get; set; }
+        public List<(string ClientId, int Volume, bool Muted)> UnselectedClients { get; } = new();
     }
 
     private async Task<List<GroupSnapshot>> ResolveTargetSnapshotsAsync(BroadcastPlayRequest request, OrchestratorDbContext db)
@@ -402,7 +646,6 @@ public class BroadcastService : IBroadcastService
 
         if (!explicitGroups && !explicitRooms)
         {
-            // Default: All active groups
             foreach (var g in allGroups) targetedGroupIds.Add(g.Id);
         }
         else
@@ -411,7 +654,7 @@ public class BroadcastService : IBroadcastService
             {
                 foreach (var gInput in request.GroupIds!)
                 {
-                    var match = allGroups.FirstOrDefault(g => 
+                    var match = allGroups.FirstOrDefault(g =>
                         string.Equals(g.Id, gInput, StringComparison.OrdinalIgnoreCase)
                         || string.Equals(g.Name, gInput, StringComparison.OrdinalIgnoreCase));
                     if (match != null) targetedGroupIds.Add(match.Id);
@@ -430,14 +673,13 @@ public class BroadcastService : IBroadcastService
             }
         }
 
-        // Build Snapshots
         var snapshots = new List<GroupSnapshot>();
         foreach (var group in allGroups)
         {
             var snapGroupId = group.SnapcastGroupId;
             if (string.IsNullOrEmpty(snapGroupId) && snapGroups != null)
             {
-                var matchingSnapGroup = snapGroups.FirstOrDefault(sg => 
+                var matchingSnapGroup = snapGroups.FirstOrDefault(sg =>
                     sg?["name"]?.GetValue<string>() == group.Name
                     || sg?["id"]?.GetValue<string>() == group.Id);
                 snapGroupId = matchingSnapGroup?["id"]?.GetValue<string>();
@@ -471,7 +713,6 @@ public class BroadcastService : IBroadcastService
                 }
             }
 
-            // Include group if either explicitly targeted or at least one of its rooms was targeted
             if (isGroupExplicitlyTargeted || matchingClientsInGroup.Count > 0)
             {
                 var snapshot = new GroupSnapshot
@@ -483,7 +724,6 @@ public class BroadcastService : IBroadcastService
                     OriginalIsMuted = group.IsMuted
                 };
 
-                // If only a subset of rooms in this group were targeted, record the others to mute them
                 if (matchingClientsInGroup.Count > 0 && unselectedClientsInGroup.Count > 0)
                 {
                     snapshot.UnselectedClients.AddRange(unselectedClientsInGroup);
@@ -539,7 +779,6 @@ public class BroadcastService : IBroadcastService
         bool resumePlayback,
         VolumeOrchestratorService volumeOrchestrator)
     {
-        // 1. Switch back to original stream
         foreach (var s in snapshots)
         {
             try
@@ -552,7 +791,6 @@ public class BroadcastService : IBroadcastService
             }
         }
 
-        // 2. Restore unselected clients mute state
         foreach (var s in snapshots)
         {
             foreach (var c in s.UnselectedClients)
@@ -568,13 +806,11 @@ public class BroadcastService : IBroadcastService
             }
         }
 
-        // 3. Restore volume (with optional fade-up)
         if (fadeDurationMs > 0)
         {
             await FadeGroupsVolumeAsync(snapshots, targetZero: false, fadeDurationMs, volumeOrchestrator, CancellationToken.None);
         }
 
-        // Finalize exact original volume & mute
         foreach (var s in snapshots)
         {
             try
@@ -587,7 +823,6 @@ public class BroadcastService : IBroadcastService
             }
         }
 
-        // 4. Resume Spotify if paused
         if (resumePlayback)
         {
             foreach (var s in snapshots)
@@ -605,5 +840,37 @@ public class BroadcastService : IBroadcastService
                 }
             }
         }
+    }
+
+    private static BroadcastJobDto MapToDto(BroadcastJobEntity j)
+    {
+        List<string>? groupIds = null;
+        if (!string.IsNullOrEmpty(j.TargetGroupIdsJson))
+        {
+            try { groupIds = JsonSerializer.Deserialize<List<string>>(j.TargetGroupIdsJson); } catch { }
+        }
+
+        List<string>? roomIds = null;
+        if (!string.IsNullOrEmpty(j.TargetRoomIdsJson))
+        {
+            try { roomIds = JsonSerializer.Deserialize<List<string>>(j.TargetRoomIdsJson); } catch { }
+        }
+
+        return new BroadcastJobDto(
+            Id: j.Id,
+            CreatedAt: j.CreatedAt,
+            StartedAt: j.StartedAt,
+            CompletedAt: j.CompletedAt,
+            AudioUrl: j.AudioUrl,
+            SourceType: j.SourceType,
+            TargetGroupIds: groupIds,
+            TargetRoomIds: roomIds,
+            Volume: j.Volume,
+            FadeDurationMs: j.FadeDurationMs,
+            PausePlayback: j.PausePlayback,
+            Status: j.Status,
+            DurationMs: j.DurationMs,
+            ErrorMessage: j.ErrorMessage
+        );
     }
 }

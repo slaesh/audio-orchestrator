@@ -34,10 +34,147 @@
         }
       }
     },
+    "/api/Broadcast/jobs": {
+      "get": {
+        "tags": [
+          "Broadcast"
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/BroadcastJobDto"
+                  }
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/BroadcastJobDto"
+                  }
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/BroadcastJobDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/Broadcast/jobs/{id}": {
+      "get": {
+        "tags": [
+          "Broadcast"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/BroadcastJobDto"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BroadcastJobDto"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BroadcastJobDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/Broadcast/jobs/{id}/cancel": {
+      "post": {
+        "tags": [
+          "Broadcast"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "boolean"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "boolean"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/Broadcast/play": {
       "post": {
         "tags": [
           "Broadcast"
+        ],
+        "parameters": [
+          {
+            "name": "wait",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
         ],
         "requestBody": {
           "content": {
@@ -65,17 +202,17 @@
             "content": {
               "text/plain": {
                 "schema": {
-                  "$ref": "#/components/schemas/BroadcastPlayResult"
+                  "$ref": "#/components/schemas/BroadcastJobDto"
                 }
               },
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BroadcastPlayResult"
+                  "$ref": "#/components/schemas/BroadcastJobDto"
                 }
               },
               "text/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BroadcastPlayResult"
+                  "$ref": "#/components/schemas/BroadcastJobDto"
                 }
               }
             }
@@ -87,6 +224,16 @@
       "post": {
         "tags": [
           "Broadcast"
+        ],
+        "parameters": [
+          {
+            "name": "wait",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
         ],
         "requestBody": {
           "content": {
@@ -198,17 +345,17 @@
             "content": {
               "text/plain": {
                 "schema": {
-                  "$ref": "#/components/schemas/BroadcastPlayResult"
+                  "$ref": "#/components/schemas/BroadcastJobDto"
                 }
               },
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BroadcastPlayResult"
+                  "$ref": "#/components/schemas/BroadcastJobDto"
                 }
               },
               "text/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BroadcastPlayResult"
+                  "$ref": "#/components/schemas/BroadcastJobDto"
                 }
               }
             }
@@ -1943,6 +2090,111 @@
   },
   "components": {
     "schemas": {
+      "BroadcastJobDto": {
+        "required": [
+          "id",
+          "createdAt",
+          "startedAt",
+          "completedAt",
+          "audioUrl",
+          "sourceType",
+          "targetGroupIds",
+          "targetRoomIds",
+          "volume",
+          "fadeDurationMs",
+          "pausePlayback",
+          "status",
+          "durationMs",
+          "errorMessage"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "startedAt": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "completedAt": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "audioUrl": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "sourceType": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "targetGroupIds": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "targetRoomIds": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "volume": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "fadeDurationMs": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "pausePlayback": {
+            "type": "boolean"
+          },
+          "status": {
+            "$ref": "#/components/schemas/BroadcastJobStatus"
+          },
+          "durationMs": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "errorMessage": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "BroadcastJobStatus": {
+        "enum": [
+          "queued",
+          "playing",
+          "completed",
+          "failed",
+          "cancelled"
+        ]
+      },
       "BroadcastPlayRequest": {
         "type": "object",
         "properties": {
@@ -1990,28 +2242,6 @@
           "interrupt": {
             "type": "boolean",
             "default": true
-          }
-        }
-      },
-      "BroadcastPlayResult": {
-        "required": [
-          "success"
-        ],
-        "type": "object",
-        "properties": {
-          "success": {
-            "type": "boolean"
-          },
-          "message": {
-            "type": [
-              "null",
-              "string"
-            ]
-          },
-          "durationMs": {
-            "type": "integer",
-            "format": "int32",
-            "default": 0
           }
         }
       },

@@ -61,12 +61,14 @@ builder.Services.AddSingleton<AudioOrchestrator.Services.IMqttClientFactorySeam,
 builder.Services.AddSingleton<AudioOrchestrator.Services.HomeAssistantMqttService>();
 builder.Services.AddSingleton<AudioOrchestrator.Services.IHomeAssistantMqttService>(sp => sp.GetRequiredService<AudioOrchestrator.Services.HomeAssistantMqttService>());
 builder.Services.AddSingleton<AudioOrchestrator.Services.IAudioPlayerProcessRunner, AudioOrchestrator.Services.DefaultAudioPlayerProcessRunner>();
-builder.Services.AddSingleton<AudioOrchestrator.Services.IBroadcastService, AudioOrchestrator.Services.BroadcastService>();
+builder.Services.AddSingleton<AudioOrchestrator.Services.BroadcastService>();
+builder.Services.AddSingleton<AudioOrchestrator.Services.IBroadcastService>(sp => sp.GetRequiredService<AudioOrchestrator.Services.BroadcastService>());
 
 if (!isDesignOrDocumentGen)
 {
     builder.Services.AddHostedService(sp => sp.GetRequiredService<AudioOrchestrator.Services.RadioMetadataService>());
     builder.Services.AddHostedService(sp => sp.GetRequiredService<AudioOrchestrator.Services.HomeAssistantMqttService>());
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<AudioOrchestrator.Services.BroadcastService>());
     builder.Services.AddHostedService<AudioOrchestrator.Services.SnapcastTcpListenerService>();
     builder.Services.AddHostedService<AudioOrchestrator.Services.StartupReconciliationService>();
     builder.Services.AddHostedService<AudioOrchestrator.Services.ContainerHealthWatchdog>();

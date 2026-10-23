@@ -372,6 +372,9 @@ export type BroadcastPlayRequest = {
     interrupt: boolean;
 }
 
+/** Transpiled from AudioOrchestrator.Contracts.BroadcastJobStatus */
+export type BroadcastJobStatus = "queued" | "playing" | "completed" | "failed" | "cancelled";
+
 /** Transpiled from AudioOrchestrator.Contracts.BroadcastPlayResult */
 export type BroadcastPlayResult = {
     /** Transpiled from bool */
@@ -380,6 +383,8 @@ export type BroadcastPlayResult = {
     message?: string;
     /** Transpiled from int */
     durationMs: number;
+    /** Transpiled from string? */
+    jobId?: string;
 }
 
 /** Transpiled from AudioOrchestrator.Contracts.BroadcastStatusDto */
@@ -390,6 +395,38 @@ export type BroadcastStatusDto = {
     currentAnnouncementId?: string;
     /** Transpiled from System.Collections.Generic.List<string> */
     activeTargetGroupIds: string[];
+}
+
+/** Transpiled from AudioOrchestrator.Contracts.BroadcastJobDto */
+export type BroadcastJobDto = {
+    /** Transpiled from string */
+    id: string;
+    /** Transpiled from System.DateTime */
+    createdAt: (Date | string);
+    /** Transpiled from System.DateTime? */
+    startedAt?: (Date | string);
+    /** Transpiled from System.DateTime? */
+    completedAt?: (Date | string);
+    /** Transpiled from string? */
+    audioUrl?: string;
+    /** Transpiled from string? */
+    sourceType?: string;
+    /** Transpiled from System.Collections.Generic.List<string>? */
+    targetGroupIds?: string[];
+    /** Transpiled from System.Collections.Generic.List<string>? */
+    targetRoomIds?: string[];
+    /** Transpiled from int? */
+    volume?: number;
+    /** Transpiled from int? */
+    fadeDurationMs?: number;
+    /** Transpiled from bool */
+    pausePlayback: boolean;
+    /** Transpiled from AudioOrchestrator.Contracts.BroadcastJobStatus */
+    status: BroadcastJobStatus;
+    /** Transpiled from int */
+    durationMs: number;
+    /** Transpiled from string? */
+    errorMessage?: string;
 }
 
 /** Transpiled from AudioOrchestrator.Contracts.SpotifyEventDto */

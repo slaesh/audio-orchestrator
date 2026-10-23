@@ -11,8 +11,14 @@ public interface IAudioPlayerProcessRunner
 
 public interface IBroadcastService
 {
+    Task<BroadcastJobDto> EnqueuePlayUrlAsync(BroadcastPlayRequest request, CancellationToken ct = default);
+    Task<BroadcastJobDto> EnqueuePlayFileAsync(Stream fileStream, string fileExtension, BroadcastPlayRequest request, CancellationToken ct = default);
+    Task<BroadcastPlayResult> WaitForJobAsync(string jobId, CancellationToken ct = default);
     Task<BroadcastPlayResult> PlayUrlAsync(BroadcastPlayRequest request, CancellationToken ct = default);
     Task<BroadcastPlayResult> PlayFileAsync(Stream fileStream, string fileExtension, BroadcastPlayRequest request, CancellationToken ct = default);
+    Task<BroadcastJobDto?> GetJobAsync(string jobId, CancellationToken ct = default);
+    Task<List<BroadcastJobDto>> GetRecentJobsAsync(int limit = 50, CancellationToken ct = default);
     Task StopAsync(CancellationToken ct = default);
+    Task<bool> CancelJobAsync(string jobId, CancellationToken ct = default);
     BroadcastStatusDto GetStatus();
 }

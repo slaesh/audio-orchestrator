@@ -13,6 +13,7 @@ public class OrchestratorDbContext : DbContext
     public DbSet<AudioOrchestrator.Data.Entities.SpotifyMetadataEntity> SpotifyMetadata { get; set; } = default!;
     public DbSet<AudioOrchestrator.Data.Entities.RadioPluginEntity> RadioPlugins { get; set; } = default!;
     public DbSet<AudioOrchestrator.Data.Entities.OrchestratorSettingsEntity> Settings { get; set; } = default!;
+    public DbSet<AudioOrchestrator.Data.Entities.BroadcastJobEntity> BroadcastJobs { get; set; } = default!;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -23,5 +24,11 @@ public class OrchestratorDbContext : DbContext
             .HasConversion(
                 v => v.ToString().ToLowerInvariant(),
                 v => Enum.Parse<AudioOrchestrator.Contracts.VolumeProfile>(v, true));
+
+        modelBuilder.Entity<AudioOrchestrator.Data.Entities.BroadcastJobEntity>()
+            .Property(b => b.Status)
+            .HasConversion(
+                v => v.ToString().ToLowerInvariant(),
+                v => Enum.Parse<AudioOrchestrator.Contracts.BroadcastJobStatus>(v, true));
     }
 }

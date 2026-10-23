@@ -42,7 +42,9 @@
           "UpgradeSpotifySourceRequest": "UpgradeSpotifySourceRequest",
           "BroadcastPlayRequest": "BroadcastPlayRequest",
           "BroadcastPlayResult": "BroadcastPlayResult",
-          "BroadcastStatusDto": "BroadcastStatusDto"
+          "BroadcastStatusDto": "BroadcastStatusDto",
+          "BroadcastJobStatus": "BroadcastJobStatus",
+          "BroadcastJobDto": "BroadcastJobDto"
         },
         "importMappings": {
           "FullStateDto": "@contracts",
@@ -72,7 +74,9 @@
           "UpgradeSpotifySourceRequest": "@contracts",
           "BroadcastPlayRequest": "@contracts",
           "BroadcastPlayResult": "@contracts",
-          "BroadcastStatusDto": "@contracts"
+          "BroadcastStatusDto": "@contracts",
+          "BroadcastJobStatus": "@contracts",
+          "BroadcastJobDto": "@contracts"
         }
       }
     }

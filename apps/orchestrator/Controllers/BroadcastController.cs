@@ -25,26 +25,67 @@ public class BroadcastController : ControllerBase
         return Ok(_broadcastService.GetStatus());
     }
 
-    [HttpPost("play")]
-    public async Task<ActionResult<BroadcastPlayResult>> Play([FromBody] BroadcastPlayRequest request)
+    [HttpGet("jobs")]
+    public async Task<ActionResult<List<BroadcastJobDto>>> GetRecentJobs([FromQuery] int limit = 50)
     {
-        if (request == null)
+        var jobs = await _broadcastService.GetRecentJobsAsync(limit, HttpContext?.RequestAborted ?? default);
+        return Ok(jobs);
+    }
+
+    [HttpGet("jobs/{id}")]
+    public async Task<ActionResult<BroadcastJobDto>> GetJob([FromRoute] string id)
+    {
+        var job = await _broadcastService.GetJobAsync(id, HttpContext?.RequestAborted ?? default);
+        if (job == null)
         {
-            return BadRequest(new BroadcastPlayResult(false, "Ungültige Anfrage."));
+            return NotFound();
         }
 
-        var result = await _broadcastService.PlayUrlAsync(request, HttpContext?.RequestAborted ?? default);
-        if (!result.Success)
+        return Ok(job);
+    }
+
+    [HttpPost("jobs/{id}/cancel")]
+    public async Task<ActionResult<bool>> CancelJob([FromRoute] string id)
+    {
+        var cancelled = await _broadcastService.CancelJobAsync(id, HttpContext?.RequestAborted ?? default);
+        if (!cancelled)
         {
-            return BadRequest(result);
+            return NotFound();
         }
 
-        return Ok(result);
+        return Ok(true);
+    }
+
+    [HttpPost("play")]
+    public async Task<ActionResult<BroadcastJobDto>> Play(
+        [FromBody] BroadcastPlayRequest request,
+        [FromQuery] bool wait = false)
+    {
+        if (request == null || string.IsNullOrWhiteSpace(request.AudioUrl))
+        {
+            return BadRequest("Ungültige Anfrage oder leere AudioUrl.");
+        }
+
+        var job = await _broadcastService.EnqueuePlayUrlAsync(request, HttpContext?.RequestAborted ?? default);
+
+        if (wait)
+        {
+            await _broadcastService.WaitForJobAsync(job.Id, HttpContext?.RequestAborted ?? default);
+            var finishedJob = await _broadcastService.GetJobAsync(job.Id, HttpContext?.RequestAborted ?? default);
+            if (finishedJob?.Status == BroadcastJobStatus.Failed)
+            {
+                return BadRequest(finishedJob);
+            }
+
+            return Ok(finishedJob ?? job);
+        }
+
+        return AcceptedAtAction(nameof(GetJob), new { id = job.Id }, job);
     }
 
     [HttpPost("play-file")]
     [Consumes("multipart/form-data")]
-    public async Task<ActionResult<BroadcastPlayResult>> PlayFile(
+    public async Task<ActionResult<BroadcastJobDto>> PlayFile(
         [FromForm] IFormFile? file,
         [FromForm] string? groupIds = null,
         [FromForm] string? roomIds = null,
@@ -52,11 +93,12 @@ public class BroadcastController : ControllerBase
         [FromForm] int? fadeDurationMs = null,
         [FromForm] bool pausePlayback = false,
         [FromForm] int? timeoutSeconds = 60,
-        [FromForm] bool interrupt = true)
+        [FromForm] bool interrupt = true,
+        [FromQuery] bool wait = false)
     {
         if (file == null || file.Length == 0)
         {
-            return BadRequest(new BroadcastPlayResult(false, "Keine Audiodatei hochgeladen."));
+            return BadRequest("Keine Audiodatei hochgeladen.");
         }
 
         var parsedGroupIds = !string.IsNullOrWhiteSpace(groupIds)
@@ -80,14 +122,21 @@ public class BroadcastController : ControllerBase
 
         var ext = Path.GetExtension(file.FileName);
         using var stream = file.OpenReadStream();
-        var result = await _broadcastService.PlayFileAsync(stream, ext, request, HttpContext?.RequestAborted ?? default);
+        var job = await _broadcastService.EnqueuePlayFileAsync(stream, ext, request, HttpContext?.RequestAborted ?? default);
 
-        if (!result.Success)
+        if (wait)
         {
-            return BadRequest(result);
+            await _broadcastService.WaitForJobAsync(job.Id, HttpContext?.RequestAborted ?? default);
+            var finishedJob = await _broadcastService.GetJobAsync(job.Id, HttpContext?.RequestAborted ?? default);
+            if (finishedJob?.Status == BroadcastJobStatus.Failed)
+            {
+                return BadRequest(finishedJob);
+            }
+
+            return Ok(finishedJob ?? job);
         }
 
-        return Ok(result);
+        return AcceptedAtAction(nameof(GetJob), new { id = job.Id }, job);
     }
 
     [HttpPost("stop")]
