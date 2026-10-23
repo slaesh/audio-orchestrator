@@ -416,11 +416,11 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         {
             foreach (var groupId in pending.GroupIds.ToList())
             {
+                _discoveredGroupIds.Remove(groupId);
                 try
                 {
                     await UnpublishGroupDiscoveryAsync(pending.DiscoveryPrefix, pending.BaseTopic, groupId, ct);
                     pending.GroupIds.Remove(groupId);
-                    _discoveredGroupIds.Remove(groupId);
                 }
                 catch (Exception ex)
                 {

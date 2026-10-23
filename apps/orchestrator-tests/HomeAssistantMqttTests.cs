@@ -1400,7 +1400,13 @@ public class HomeAssistantMqttTests
         // Reload configuration while unpublish on old_ha fails
         await service.ReloadConfigurationAsync(CancellationToken.None);
 
-        // 3. Broker recovers
+        // Verify new_ha was published during reload before resetting invocations
+        mockClient.Verify(c => c.PublishAsync(
+            It.Is<MqttApplicationMessage>(m => m.Topic.StartsWith("new_ha/select/audio_orchestrator_g1/source/config") && !string.IsNullOrEmpty(m.ConvertPayloadToString())),
+            It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+
+        // 3. Broker recovers and reset invocation history so failed attempts from reload aren't counted
+        mockClient.Invocations.Clear();
         mockClient.Setup(c => c.PublishAsync(It.IsAny<MqttApplicationMessage>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new MqttClientPublishResult(1, MqttClientPublishReasonCode.Success, string.Empty, Array.Empty<MqttUserProperty>()));
 
@@ -1410,11 +1416,6 @@ public class HomeAssistantMqttTests
         // The pending cleanup MUST have remembered old_ha and retried unpublishing it with empty payload!
         mockClient.Verify(c => c.PublishAsync(
             It.Is<MqttApplicationMessage>(m => m.Topic.StartsWith("old_ha/select/audio_orchestrator_g1/source/config") && string.IsNullOrEmpty(m.ConvertPayloadToString())),
-            It.IsAny<CancellationToken>()), Times.AtLeastOnce);
-
-        // And new_ha was published
-        mockClient.Verify(c => c.PublishAsync(
-            It.Is<MqttApplicationMessage>(m => m.Topic.StartsWith("new_ha/select/audio_orchestrator_g1/source/config") && !string.IsNullOrEmpty(m.ConvertPayloadToString())),
             It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
 
@@ -1661,6 +1662,60 @@ public class HomeAssistantMqttTests
 
         mockClient.Verify(c => c.PublishAsync(
             It.Is<MqttApplicationMessage>(m => m.Topic.StartsWith("homeassistant/select/audio_orchestrator_g1/source/config") && string.IsNullOrEmpty(m.ConvertPayloadToString())),
+            It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task ProcessPendingCleanupsAsync_ShouldRepublishDiscovery_WhenCleanupFailsPartiallyOnStateTopic()
+    {
+        var (sp, db, mockClient, service, _) = CreateTestContext(discoveryPrefix: "homeassistant", baseTopic: "old_base");
+
+        mockClient.Setup(c => c.ConnectAsync(It.IsAny<MqttClientOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientConnectResult());
+        mockClient.Setup(c => c.SubscribeAsync(It.IsAny<MqttClientSubscribeOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientSubscribeResult(
+                1,
+                new List<MqttClientSubscribeResultItem>
+                {
+                    new(new MqttTopicFilter { Topic = "old_base/groups/+/set/#" }, MqttClientSubscribeResultCode.GrantedQoS0),
+                    new(new MqttTopicFilter { Topic = "new_base/groups/+/set/#" }, MqttClientSubscribeResultCode.GrantedQoS0),
+                    new(new MqttTopicFilter { Topic = "homeassistant/status" }, MqttClientSubscribeResultCode.GrantedQoS0)
+                },
+                string.Empty,
+                new List<MqttUserProperty>()
+            ));
+        mockClient.SetupGet(c => c.IsConnected).Returns(true);
+
+        var group = new GroupEntity { Id = "g1", Name = "Wohnzimmer", CurrentStreamId = "default" };
+        db.Groups.Add(group);
+        await db.SaveChangesAsync();
+
+        // 1. Initial connection
+        await service.EnsureConnectionAsync(CancellationToken.None);
+
+        // 2. Change base topic (discovery prefix stays identical: homeassistant)
+        var settings = await db.Settings.FirstAsync();
+        settings.MqttBaseTopic = "new_base";
+        await db.SaveChangesAsync();
+
+        // Setup: unpublishing configs succeeds, but clearing state on old_base throws!
+        mockClient.Setup(c => c.PublishAsync(
+                It.Is<MqttApplicationMessage>(m => m.Topic == "old_base/groups/g1/state"),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Broker disconnected when clearing old state topic"));
+
+        await service.ReloadConfigurationAsync(CancellationToken.None);
+
+        // Clear invocations after reload
+        mockClient.Invocations.Clear();
+
+        // 3. Heartbeat runs: cleanup will delete configs again and fail on old state topic,
+        // but because _discoveredGroupIds was invalidated before cleanup, the active session MUST restore configs!
+        await service.EnsureConnectionAsync(CancellationToken.None);
+
+        // Verify discovery configs for new_base were restored with non-empty payload
+        mockClient.Verify(c => c.PublishAsync(
+            It.Is<MqttApplicationMessage>(m => m.Topic.StartsWith("homeassistant/select/audio_orchestrator_g1/source/config") && !string.IsNullOrEmpty(m.ConvertPayloadToString())),
             It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
 }
