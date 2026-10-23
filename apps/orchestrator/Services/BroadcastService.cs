@@ -23,7 +23,7 @@ public class DefaultAudioPlayerProcessRunner : IAudioPlayerProcessRunner
     public async Task<ProcessRunResult> StreamToFifoAsync(string inputSource, string fifoPath, Stream? stdinStream, CancellationToken ct)
     {
         var inputArg = stdinStream != null ? "pipe:0" : $"\"{inputSource}\"";
-        var arguments = $"-hide_banner -loglevel error -i {inputArg} -f s16le -acodec pcm_s16le -ac 2 -ar 44100 -y \"{fifoPath}\"";
+        var arguments = $"-hide_banner -loglevel error -i {inputArg} -af \"loudnorm=I=-16:TP=-1.5:LRA=11\" -f s16le -acodec pcm_s16le -ac 2 -ar 44100 -y \"{fifoPath}\"";
 
         var startInfo = new ProcessStartInfo
         {

@@ -47,15 +47,15 @@ public class BroadcastServiceTests
         var mockMqtt = new Mock<IHomeAssistantMqttService>();
 
         var services = new ServiceCollection();
-        services.AddSingleton(db);
+        services.AddScoped(_ => new OrchestratorDbContext(_dbOptions));
         services.AddSingleton(mockSnapcast.Object);
         services.AddSingleton(mockFifo.Object);
         services.AddSingleton(mockLibrespot.Object);
         services.AddSingleton(mockRunner.Object);
         services.AddSingleton(mockHub.Object);
         services.AddSingleton(mockMqtt.Object);
-        services.AddSingleton(new VolumeOrchestratorService(db, mockSnapcast.Object, mockLibrespot.Object, mockHub.Object, Mock.Of<ILogger<VolumeOrchestratorService>>()));
-        services.AddSingleton(new FullStateBuilder(db, mockSnapcast.Object));
+        services.AddScoped(p => new VolumeOrchestratorService(p.GetRequiredService<OrchestratorDbContext>(), mockSnapcast.Object, mockLibrespot.Object, mockHub.Object, Mock.Of<ILogger<VolumeOrchestratorService>>()));
+        services.AddScoped(p => new FullStateBuilder(p.GetRequiredService<OrchestratorDbContext>(), mockSnapcast.Object));
         var sp = services.BuildServiceProvider();
 
         var service = new BroadcastService(
