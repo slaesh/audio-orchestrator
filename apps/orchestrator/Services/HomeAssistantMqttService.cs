@@ -310,9 +310,25 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                 var newPort = settings.MqttPort;
                 var brokerChanged = _currentSettings != null && (!string.Equals(oldHost, newHost, StringComparison.OrdinalIgnoreCase) || oldPort != newPort);
 
+                var oldBaseTopic = GetNormalizedBaseTopic(_currentSettings);
+                var newBaseTopic = GetNormalizedBaseTopic(settings);
+                var baseTopicChanged = !string.Equals(oldBaseTopic, newBaseTopic, StringComparison.Ordinal);
+
                 if (_currentSettings != null)
                 {
                     EnqueueDiscoveryCleanup(_currentSettings, settings);
+                }
+
+                if (IsConnected && _currentSettings != null && (brokerChanged || baseTopicChanged))
+                {
+                    try
+                    {
+                        await PublishAsync($"{oldBaseTopic}/bridge/status", "offline", retain: true, ct);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to publish bridge offline status on old base topic {Topic}", oldBaseTopic);
+                    }
                 }
 
                 var activeBaseTopicOnOld = (!brokerChanged && settings.HomeAssistantEnabled) ? GetNormalizedBaseTopic(settings) : null;
@@ -322,9 +338,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                     await ProcessPendingCleanupsAsync(ct, activeBaseTopicOnOld);
                 }
 
-                var oldBaseTopic = GetNormalizedBaseTopic(_currentSettings);
-                var newBaseTopic = GetNormalizedBaseTopic(settings);
-                await DisconnectInternalAsync(publishOffline: !brokerChanged && oldBaseTopic == newBaseTopic);
+                await DisconnectInternalAsync(publishOffline: !brokerChanged && !baseTopicChanged);
                 _currentSettings = settings;
                 await ConnectClientAndSubscribeAsync(ct);
 
@@ -460,7 +474,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                 }
             }
 
-            if (pending.ClearBridgeStatus)
+            if (pending.ClearBridgeStatus && pending.GroupIds.Count == 0)
             {
                 var isActiveBaseTopic = activeBaseTopic != null
                     && string.Equals(pending.BaseTopic, activeBaseTopic, StringComparison.Ordinal);

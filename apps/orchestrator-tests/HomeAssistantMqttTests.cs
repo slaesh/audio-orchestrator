@@ -1946,4 +1946,57 @@ public class HomeAssistantMqttTests
             It.Is<MqttApplicationMessage>(m => m.Topic == "audio_orchestrator/bridge/status" && m.ConvertPayloadToString() == "online"),
             It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
+
+    [Fact]
+    public async Task ReloadConfigurationAsync_ShouldPublishOfflineOnOldBaseTopic_WhenBaseTopicChangesAndCleanupFails()
+    {
+        var (sp, db, mockClient, service, _) = CreateTestContext(baseTopic: "old_base");
+
+        mockClient.Setup(c => c.ConnectAsync(It.IsAny<MqttClientOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientConnectResult());
+        mockClient.Setup(c => c.SubscribeAsync(It.IsAny<MqttClientSubscribeOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientSubscribeResult(
+                1,
+                new List<MqttClientSubscribeResultItem>
+                {
+                    new(new MqttTopicFilter { Topic = "old_base/groups/+/set/#" }, MqttClientSubscribeResultCode.GrantedQoS0),
+                    new(new MqttTopicFilter { Topic = "new_base/groups/+/set/#" }, MqttClientSubscribeResultCode.GrantedQoS0),
+                    new(new MqttTopicFilter { Topic = "homeassistant/status" }, MqttClientSubscribeResultCode.GrantedQoS0)
+                },
+                string.Empty,
+                new List<MqttUserProperty>()
+            ));
+        mockClient.SetupGet(c => c.IsConnected).Returns(true);
+
+        var group = new GroupEntity { Id = "g1", Name = "Wohnzimmer", CurrentStreamId = "default" };
+        db.Groups.Add(group);
+        await db.SaveChangesAsync();
+
+        // 1. Initial connection with "old_base"
+        await service.EnsureConnectionAsync(CancellationToken.None);
+        mockClient.Invocations.Clear();
+
+        // 2. Change base topic to "new_base"
+        var settings = await db.Settings.FirstAsync();
+        settings.MqttBaseTopic = "new_base";
+        await db.SaveChangesAsync();
+
+        // Simulate failure on unpublishing discovery config
+        mockClient.Setup(c => c.PublishAsync(
+                It.Is<MqttApplicationMessage>(m => m.Topic.Contains("audio_orchestrator_g1")),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Broker disconnected during unpublish"));
+
+        await service.ReloadConfigurationAsync(CancellationToken.None);
+
+        // Verify offline status was published to old_base/bridge/status BEFORE cleanup failed
+        mockClient.Verify(c => c.PublishAsync(
+            It.Is<MqttApplicationMessage>(m => m.Topic == "old_base/bridge/status" && m.ConvertPayloadToString() == "offline"),
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        // And verify bridge status topic was NOT cleared with empty string because cleanup for g1 failed!
+        mockClient.Verify(c => c.PublishAsync(
+            It.Is<MqttApplicationMessage>(m => m.Topic == "old_base/bridge/status" && string.IsNullOrEmpty(m.ConvertPayloadToString())),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
 }
