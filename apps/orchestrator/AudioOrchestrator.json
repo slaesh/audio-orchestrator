@@ -5,6 +5,229 @@
     "version": "1.0.0"
   },
   "paths": {
+    "/api/Broadcast/status": {
+      "get": {
+        "tags": [
+          "Broadcast"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/BroadcastStatusDto"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BroadcastStatusDto"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BroadcastStatusDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/Broadcast/play": {
+      "post": {
+        "tags": [
+          "Broadcast"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BroadcastPlayRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BroadcastPlayRequest"
+              }
+            },
+            "application/*+json": {
+              "schema": {
+                "$ref": "#/components/schemas/BroadcastPlayRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/BroadcastPlayResult"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BroadcastPlayResult"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BroadcastPlayResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/Broadcast/play-file": {
+      "post": {
+        "tags": [
+          "Broadcast"
+        ],
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "allOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "ContentType": {
+                        "type": "string"
+                      },
+                      "ContentDisposition": {
+                        "type": "string"
+                      },
+                      "Headers": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "Length": {
+                        "type": "integer",
+                        "format": "int64"
+                      },
+                      "Name": {
+                        "type": "string"
+                      },
+                      "FileName": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "groupIds": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "roomIds": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "volume": {
+                        "type": "integer",
+                        "format": "int32"
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "fadeDurationMs": {
+                        "type": "integer",
+                        "format": "int32"
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "pausePlayback": {
+                        "type": "boolean",
+                        "default": false
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "timeoutSeconds": {
+                        "type": "integer",
+                        "format": "int32",
+                        "default": 60
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "interrupt": {
+                        "type": "boolean",
+                        "default": true
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/BroadcastPlayResult"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BroadcastPlayResult"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BroadcastPlayResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/Broadcast/stop": {
+      "post": {
+        "tags": [
+          "Broadcast"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
     "/api/ExternalControl/groups/{id}/volume": {
       "put": {
         "tags": [
@@ -1720,6 +1943,103 @@
   },
   "components": {
     "schemas": {
+      "BroadcastPlayRequest": {
+        "type": "object",
+        "properties": {
+          "audioUrl": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "groupIds": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "roomIds": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "volume": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "fadeDurationMs": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "pausePlayback": {
+            "type": "boolean",
+            "default": false
+          },
+          "timeoutSeconds": {
+            "type": "integer",
+            "format": "int32",
+            "default": 60
+          },
+          "interrupt": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      },
+      "BroadcastPlayResult": {
+        "required": [
+          "success"
+        ],
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "durationMs": {
+            "type": "integer",
+            "format": "int32",
+            "default": 0
+          }
+        }
+      },
+      "BroadcastStatusDto": {
+        "required": [
+          "isPlaying",
+          "currentAnnouncementId",
+          "activeTargetGroupIds"
+        ],
+        "type": "object",
+        "properties": {
+          "isPlaying": {
+            "type": "boolean"
+          },
+          "currentAnnouncementId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "activeTargetGroupIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "CreateGroupRequest": {
         "type": "object",
         "properties": {
@@ -2739,6 +3059,9 @@
     }
   },
   "tags": [
+    {
+      "name": "Broadcast"
+    },
     {
       "name": "ExternalControl"
     },

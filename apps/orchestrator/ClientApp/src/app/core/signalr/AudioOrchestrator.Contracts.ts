@@ -352,6 +352,46 @@ export type SpotifyMetadataDto = {
     coverUrl?: string;
 }
 
+/** Transpiled from AudioOrchestrator.Contracts.BroadcastPlayRequest */
+export type BroadcastPlayRequest = {
+    /** Transpiled from string? */
+    audioUrl?: string;
+    /** Transpiled from System.Collections.Generic.List<string>? */
+    groupIds?: string[];
+    /** Transpiled from System.Collections.Generic.List<string>? */
+    roomIds?: string[];
+    /** Transpiled from int? */
+    volume?: number;
+    /** Transpiled from int? */
+    fadeDurationMs?: number;
+    /** Transpiled from bool */
+    pausePlayback: boolean;
+    /** Transpiled from int? */
+    timeoutSeconds?: number;
+    /** Transpiled from bool */
+    interrupt: boolean;
+}
+
+/** Transpiled from AudioOrchestrator.Contracts.BroadcastPlayResult */
+export type BroadcastPlayResult = {
+    /** Transpiled from bool */
+    success: boolean;
+    /** Transpiled from string? */
+    message?: string;
+    /** Transpiled from int */
+    durationMs: number;
+}
+
+/** Transpiled from AudioOrchestrator.Contracts.BroadcastStatusDto */
+export type BroadcastStatusDto = {
+    /** Transpiled from bool */
+    isPlaying: boolean;
+    /** Transpiled from string? */
+    currentAnnouncementId?: string;
+    /** Transpiled from System.Collections.Generic.List<string> */
+    activeTargetGroupIds: string[];
+}
+
 /** Transpiled from AudioOrchestrator.Contracts.SpotifyEventDto */
 export type SpotifyEventDto = {
     /** Transpiled from string */

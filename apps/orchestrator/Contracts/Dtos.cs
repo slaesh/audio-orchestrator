@@ -234,3 +234,29 @@ public record SpotifyMetadataDto(
     string? CoverUrl
 );
 
+[TranspilationSource]
+public record BroadcastPlayRequest(
+    string? AudioUrl = null,
+    List<string>? GroupIds = null,
+    List<string>? RoomIds = null,
+    int? Volume = null,
+    int? FadeDurationMs = null,
+    bool PausePlayback = false,
+    int? TimeoutSeconds = 60,
+    bool Interrupt = true
+);
+
+[TranspilationSource]
+public record BroadcastPlayResult(
+    bool Success,
+    string? Message = null,
+    int DurationMs = 0
+);
+
+[TranspilationSource]
+public record BroadcastStatusDto(
+    bool IsPlaying,
+    string? CurrentAnnouncementId,
+    List<string> ActiveTargetGroupIds
+);
+

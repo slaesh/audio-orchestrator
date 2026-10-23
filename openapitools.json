@@ -39,7 +39,10 @@
           "NodeReleaseDto": "NodeReleaseDto",
           "SpotifyRecentContextDto": "SpotifyRecentContextDto",
           "NodeUpgradeRequest": "NodeUpgradeRequest",
-          "UpgradeSpotifySourceRequest": "UpgradeSpotifySourceRequest"
+          "UpgradeSpotifySourceRequest": "UpgradeSpotifySourceRequest",
+          "BroadcastPlayRequest": "BroadcastPlayRequest",
+          "BroadcastPlayResult": "BroadcastPlayResult",
+          "BroadcastStatusDto": "BroadcastStatusDto"
         },
         "importMappings": {
           "FullStateDto": "@contracts",
@@ -66,7 +69,10 @@
           "NodeReleaseDto": "@contracts",
           "SpotifyRecentContextDto": "@contracts",
           "NodeUpgradeRequest": "@contracts",
-          "UpgradeSpotifySourceRequest": "@contracts"
+          "UpgradeSpotifySourceRequest": "@contracts",
+          "BroadcastPlayRequest": "@contracts",
+          "BroadcastPlayResult": "@contracts",
+          "BroadcastStatusDto": "@contracts"
         }
       }
     }

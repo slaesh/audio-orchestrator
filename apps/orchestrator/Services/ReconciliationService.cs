@@ -154,8 +154,10 @@ public class ReconciliationService : IReconciliationService, IDisposable
         var validFifoPaths = new List<string>();
         foreach (var s in spotifySources) validFifoPaths.Add($"{OrchestratorConstants.FifoBaseDir}/{OrchestratorConstants.SpotifyPrefix}{s.Id}");
         foreach (var r in radios) validFifoPaths.Add($"{OrchestratorConstants.FifoBaseDir}/{OrchestratorConstants.RadioPrefix}{r.Id}");
+        validFifoPaths.Add(OrchestratorConstants.AnnouncementFifoPath);
         
         await _fifoService.CleanupStaleFifosAsync(validFifoPaths);
+        await _fifoService.EnsureFifoAsync(OrchestratorConstants.AnnouncementFifoPath);
     }
 
     public async Task ReconcileSnapcastAsync(List<GroupEntity> groups, List<RadioStreamEntity> radios, List<SpotifySourceEntity> spotifySources, JsonNode? snapcastStatus)
@@ -187,6 +189,15 @@ public class ReconciliationService : IReconciliationService, IDisposable
                     var streamUri = $"pipe://{fifoPath}?name={streamId}&sampleformat=44100:16:2&idle_threshold_ms=5000&chunk_ms=20";
                     try { await _snapcast.AddStreamAsync(streamUri); } catch { /* Already exists? */ }
                 }
+            }
+
+            // 1c. Reconcile Announcement Stream
+            var annStreamId = OrchestratorConstants.AnnouncementStreamId;
+            if (!snapStreams.Any(s => s?["id"]?.GetValue<string>() == annStreamId))
+            {
+                var fifoPath = OrchestratorConstants.AnnouncementFifoPath;
+                var streamUri = $"pipe://{fifoPath}?name={annStreamId}&sampleformat=44100:16:2&idle_threshold_ms=1000";
+                try { await _snapcast.AddStreamAsync(streamUri); } catch { /* Already exists? */ }
             }
         }
 

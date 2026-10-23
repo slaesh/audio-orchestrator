@@ -561,6 +561,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             // 1. Subscribe to command topics & HA status topic
             var subOptions = new MqttClientSubscribeOptionsBuilder()
                 .WithTopicFilter($"{baseTopic}/groups/+/set/#")
+                .WithTopicFilter($"{baseTopic}/broadcast/+")
                 .WithTopicFilter($"{discPrefix}/status")
                 .Build();
 
@@ -1224,6 +1225,15 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             return;
         }
 
+        // Check for broadcast commands: <baseTopic>/broadcast/<action>
+        var broadcastPrefix = $"{baseTopic}/broadcast/";
+        if (topic.StartsWith(broadcastPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            var bAction = topic.Substring(broadcastPrefix.Length).ToLowerInvariant();
+            await ProcessBroadcastCommandAsync(bAction, rawPayload, ct);
+            return;
+        }
+
         // Expected format: <baseTopic>/groups/<groupId>/set/<action>
         var prefix = $"{baseTopic}/groups/";
         if (!topic.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return;
@@ -1308,6 +1318,50 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         var freshState = await stateBuilder.BuildAsync();
         await hubContext.Clients.All.OnFullStateUpdate(freshState);
         await NotifyFullStateAsync(freshState, ct);
+    }
+
+    private async Task ProcessBroadcastCommandAsync(string action, string payload, CancellationToken ct)
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var broadcastService = scope.ServiceProvider.GetService<IBroadcastService>();
+        if (broadcastService == null) return;
+
+        if (action == "stop")
+        {
+            await broadcastService.StopAsync(ct);
+            return;
+        }
+
+        if (action == "play")
+        {
+            BroadcastPlayRequest? request = null;
+            if (!string.IsNullOrWhiteSpace(payload))
+            {
+                if (payload.TrimStart().StartsWith('{'))
+                {
+                    try
+                    {
+                        request = JsonSerializer.Deserialize<BroadcastPlayRequest>(payload, new JsonSerializerOptions
+                        {
+                            PropertyNameCaseInsensitive = true
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to parse BroadcastPlayRequest JSON payload: {Payload}", payload);
+                    }
+                }
+                else
+                {
+                    request = new BroadcastPlayRequest(AudioUrl: payload.Trim());
+                }
+            }
+
+            if (request != null)
+            {
+                await broadcastService.PlayUrlAsync(request, ct);
+            }
+        }
     }
 
     public record SourceMappingResult(
