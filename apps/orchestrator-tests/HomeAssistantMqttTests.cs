@@ -1999,4 +1999,53 @@ public class HomeAssistantMqttTests
             It.Is<MqttApplicationMessage>(m => m.Topic == "old_base/bridge/status" && string.IsNullOrEmpty(m.ConvertPayloadToString())),
             It.IsAny<CancellationToken>()), Times.Never);
     }
+
+    [Fact]
+    public async Task PublishDiscoveryAndStates_ShouldContinuePublishingLiveGroups_WhenDeletedGroupCleanupFails()
+    {
+        var (sp, db, mockClient, service, _) = CreateTestContext();
+
+        mockClient.Setup(c => c.ConnectAsync(It.IsAny<MqttClientOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientConnectResult());
+        mockClient.Setup(c => c.SubscribeAsync(It.IsAny<MqttClientSubscribeOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientSubscribeResult(
+                1,
+                new List<MqttClientSubscribeResultItem>
+                {
+                    new(new MqttTopicFilter { Topic = "audio_orchestrator/groups/+/set/#" }, MqttClientSubscribeResultCode.GrantedQoS0),
+                    new(new MqttTopicFilter { Topic = "homeassistant/status" }, MqttClientSubscribeResultCode.GrantedQoS0)
+                },
+                string.Empty,
+                new List<MqttUserProperty>()
+            ));
+        mockClient.SetupGet(c => c.IsConnected).Returns(true);
+
+        var group1 = new GroupEntity { Id = "g1", Name = "Wohnzimmer", CurrentStreamId = "default" };
+        var group2 = new GroupEntity { Id = "g2", Name = "Küche", CurrentStreamId = "default" };
+        db.Groups.AddRange(group1, group2);
+        await db.SaveChangesAsync();
+
+        // 1. Initial connection: both groups are discovered
+        await service.EnsureConnectionAsync(CancellationToken.None);
+
+        // 2. Remove group1 from DB
+        db.Groups.Remove(group1);
+        await db.SaveChangesAsync();
+
+        // Simulate publish failure on unpublishing group1 (e.g. timeout on select entity)
+        mockClient.Setup(c => c.PublishAsync(
+                It.Is<MqttApplicationMessage>(m => m.Topic.Contains("audio_orchestrator_g1")),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Broker timeout during g1 unpublish"));
+
+        mockClient.Invocations.Clear();
+
+        // 3. Heartbeat / refresh: cleanup of g1 will throw, but live group g2 MUST still be published!
+        await service.EnsureConnectionAsync(CancellationToken.None);
+
+        // Verify g2 state was published successfully despite g1 cleanup failure
+        mockClient.Verify(c => c.PublishAsync(
+            It.Is<MqttApplicationMessage>(m => m.Topic == "audio_orchestrator/groups/g2/state" && !string.IsNullOrEmpty(m.ConvertPayloadToString())),
+            It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
 }

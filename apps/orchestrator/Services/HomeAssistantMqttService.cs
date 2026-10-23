@@ -780,8 +780,19 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             var removedGroupIds = _discoveredGroupIds.Except(currentGroupIds).ToList();
             foreach (var removedId in removedGroupIds)
             {
-                await UnpublishGroupDiscoveryAsync(discPrefix, baseTopic, removedId, ct);
-                _discoveredGroupIds.Remove(removedId);
+                try
+                {
+                    await UnpublishGroupDiscoveryAsync(discPrefix, baseTopic, removedId, ct);
+                    _discoveredGroupIds.Remove(removedId);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to unpublish discovery for deleted group {GroupId}", removedId);
+                }
             }
 
             // 2. Check if discovery needs re-publishing (group structure, names, or source list changed, or forced)
