@@ -268,6 +268,85 @@ public class BroadcastServiceTests
     }
 
     [Fact]
+    public async Task PlayUrlAsync_ShouldFailAndRestore_WhenSwitchingToAnnouncementStreamFails()
+    {
+        var (sp, db, mockSnapcast, mockLibrespot, mockRunner, service) = CreateTestContext();
+
+        db.Groups.Add(new GroupEntity { Id = "g1", Name = "Wohnzimmer", SnapcastGroupId = "sg1", CurrentStreamId = "radio_1", MasterVolume = 40 });
+        await db.SaveChangesAsync();
+
+        mockSnapcast.Setup(s => s.GetStatusAsync())
+            .ReturnsAsync(CreateSnapcastStatus(("sg1", "radio_1", new[] { "c1" })));
+
+        var switched = new List<string>();
+        mockSnapcast.Setup(s => s.SetGroupStreamAsync("sg1", "announcement"))
+            .ThrowsAsync(new InvalidOperationException("snapcast offline"));
+        mockSnapcast.Setup(s => s.SetGroupStreamAsync("sg1", "radio_1"))
+            .Callback<string, string>((_, stream) => switched.Add(stream))
+            .Returns(Task.CompletedTask);
+
+        var result = await service.PlayUrlAsync(new BroadcastPlayRequest(
+            AudioUrl: "http://example.com/chime.mp3",
+            GroupIds: new List<string> { "g1" },
+            Volume: 90), CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.Contains("snapcast offline", result.Message);
+        Assert.Contains("radio_1", switched);
+
+        db.ChangeTracker.Clear();
+        var job = await db.BroadcastJobs.FindAsync(result.JobId);
+        Assert.Equal(BroadcastJobStatus.Failed, job!.Status);
+        Assert.Equal(40, (await db.Groups.FindAsync("g1"))!.MasterVolume);
+    }
+
+    [Fact]
+    public async Task PlayUrlAsync_ShouldTargetLiveClientWithoutRoomRow()
+    {
+        var (sp, db, mockSnapcast, mockLibrespot, mockRunner, service) = CreateTestContext();
+
+        db.Groups.Add(new GroupEntity { Id = "g1", Name = "Wohnzimmer", SnapcastGroupId = "sg1", CurrentStreamId = "radio_1", MasterVolume = 40 });
+        await db.SaveChangesAsync();
+
+        mockSnapcast.Setup(s => s.GetStatusAsync())
+            .ReturnsAsync(CreateSnapcastStatus(("sg1", "radio_1", new[] { "aa:bb:cc", "dd:ee:ff" })));
+
+        var muted = new List<string>();
+        mockSnapcast.Setup(s => s.SetClientVolumeAsync(It.IsAny<string>(), It.IsAny<int>(), true))
+            .Callback<string, int, bool>((id, _, _) => muted.Add(id))
+            .Returns(Task.CompletedTask);
+
+        var result = await service.PlayUrlAsync(new BroadcastPlayRequest(
+            AudioUrl: "http://example.com/chime.mp3",
+            RoomIds: new List<string> { "aa:bb:cc" }), CancellationToken.None);
+
+        Assert.True(result.Success);
+        Assert.Equal(new[] { "dd:ee:ff" }, muted.Distinct());
+    }
+
+    [Fact]
+    public async Task PlayUrlAsync_ShouldTargetUnassignedRoomInNativeSnapcastGroup()
+    {
+        var (sp, db, mockSnapcast, mockLibrespot, mockRunner, service) = CreateTestContext();
+
+        mockSnapcast.Setup(s => s.GetStatusAsync())
+            .ReturnsAsync(CreateSnapcastStatus(("sg9", "default", new[] { "c9" })));
+
+        var switched = new List<(string Group, string Stream)>();
+        mockSnapcast.Setup(s => s.SetGroupStreamAsync(It.IsAny<string>(), It.IsAny<string>()))
+            .Callback<string, string>((g, st) => switched.Add((g, st)))
+            .Returns(Task.CompletedTask);
+
+        var result = await service.PlayUrlAsync(new BroadcastPlayRequest(
+            AudioUrl: "http://example.com/chime.mp3",
+            RoomIds: new List<string> { "c9" }), CancellationToken.None);
+
+        Assert.True(result.Success);
+        Assert.Equal(("sg9", "announcement"), switched.First());
+        Assert.Equal(("sg9", "default"), switched.Last());
+    }
+
+    [Fact]
     public async Task PlayUrlAsync_ShouldMuteUnselectedRoomsInTargetGroup_AndRestoreAfterward()
     {
         var (sp, db, mockSnapcast, mockLibrespot, mockRunner, service) = CreateTestContext();
@@ -407,5 +486,123 @@ public class BroadcastServiceTests
         var okStatus = Assert.IsType<OkObjectResult>(statusResult.Result);
         var status = Assert.IsType<BroadcastStatusDto>(okStatus.Value);
         Assert.False(status.IsPlaying);
+    }
+
+    [Fact]
+    public async Task CancelJobAsync_ShouldCompleteWaitersImmediately_WhenJobIsQueued()
+    {
+        var (sp, db, mockSnapcast, _, mockRunner, service) = CreateTestContext();
+
+        db.Groups.Add(new GroupEntity { Id = "g1", Name = "Wohnzimmer", SnapcastGroupId = "sg1", CurrentStreamId = "radio_1", MasterVolume = 50 });
+        await db.SaveChangesAsync();
+
+        mockSnapcast.Setup(s => s.GetStatusAsync())
+            .ReturnsAsync(CreateSnapcastStatus(("sg1", "radio_1", new[] { "c1" })));
+
+        var firstJobStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var unblockFirstJob = new TaskCompletionSource<ProcessRunResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        int callCount = 0;
+        mockRunner.Setup(r => r.StreamToFifoAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<Stream?>(), It.IsAny<CancellationToken>()))
+            .Returns<string, string, Stream?, CancellationToken>(async (_, _, _, ct) =>
+            {
+                if (Interlocked.Increment(ref callCount) == 1)
+                {
+                    firstJobStarted.TrySetResult();
+                    using var reg = ct.Register(() => unblockFirstJob.TrySetCanceled(ct));
+                    return await unblockFirstJob.Task;
+                }
+                return new ProcessRunResult(0, string.Empty);
+            });
+
+        // Job 1 occupies the worker
+        var job1 = await service.EnqueuePlayUrlAsync(new BroadcastPlayRequest(AudioUrl: "http://example.com/1.wav", GroupIds: new List<string> { "g1" }));
+        await firstJobStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Job 2 is queued behind Job 1
+        var job2 = await service.EnqueuePlayUrlAsync(new BroadcastPlayRequest(AudioUrl: "http://example.com/2.wav", GroupIds: new List<string> { "g1" }));
+        var waiterTask = service.WaitForJobAsync(job2.Id);
+
+        // Cancel Job 2 while Job 1 is still blocking the worker
+        var cancelled = await service.CancelJobAsync(job2.Id);
+        Assert.True(cancelled);
+
+        // Waiter for Job 2 must complete immediately without waiting for Job 1 to finish
+        var waiterResult = await waiterTask.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.False(waiterResult.Success);
+
+        // Let Job 1 finish
+        unblockFirstJob.TrySetResult(new ProcessRunResult(0, string.Empty));
+        await service.WaitForJobAsync(job1.Id);
+    }
+
+    [Fact]
+    public async Task PlayUrlAsync_WithPausePlaybackAndFade_ShouldFadeDownBeforePause_AndResumeBeforeFadeUp()
+    {
+        var (sp, db, mockSnapcast, mockLibrespot, _, service) = CreateTestContext();
+
+        db.Groups.Add(new GroupEntity { Id = "g1", Name = "Wohnzimmer", SnapcastGroupId = "sg1", CurrentStreamId = "spotify_1", MasterVolume = 60 });
+        await db.SaveChangesAsync();
+
+        mockSnapcast.Setup(s => s.GetStatusAsync())
+            .ReturnsAsync(CreateSnapcastStatus(("sg1", "spotify_1", new[] { "c1" })));
+
+        mockLibrespot.Setup(l => l.GetStatusAsync("1"))
+            .ReturnsAsync(new NodeStatusResponse { Is_playing = true });
+
+        var events = new List<string>();
+        mockSnapcast.Setup(s => s.SetClientVolumeAsync("c1", It.IsAny<int>(), It.IsAny<bool>()))
+            .Callback<string, int, bool>((_, vol, _) => events.Add($"vol:{vol}"))
+            .Returns(Task.CompletedTask);
+        mockLibrespot.Setup(l => l.SendCommandAsync("1", It.IsAny<string>()))
+            .Callback<string, string>((_, cmd) => events.Add($"spotify:{cmd}"))
+            .Returns(Task.CompletedTask);
+        mockSnapcast.Setup(s => s.SetGroupStreamAsync("sg1", It.IsAny<string>()))
+            .Callback<string, string>((_, stream) => events.Add($"stream:{stream}"))
+            .Returns(Task.CompletedTask);
+
+        var req = new BroadcastPlayRequest(
+            AudioUrl: "http://example.com/test.mp3",
+            GroupIds: new List<string> { "g1" },
+            Volume: 90,
+            FadeDurationMs: 200,
+            PausePlayback: true
+        );
+
+        var result = await service.PlayUrlAsync(req);
+        Assert.True(result.Success);
+
+        var pauseIdx = events.IndexOf("spotify:pause");
+        var firstZeroVolIdx = events.IndexOf("vol:0");
+        var switchBackIdx = events.IndexOf("stream:spotify_1");
+        var resumeIdx = events.IndexOf("spotify:resume");
+        var lastVolIdx = events.LastIndexOf("vol:36"); // 60% quadratic = 36
+
+        Assert.True(firstZeroVolIdx >= 0 && firstZeroVolIdx < pauseIdx, $"Expected fade to 0 before spotify:pause, got: {string.Join(", ", events)}");
+        Assert.True(switchBackIdx < resumeIdx, $"Expected stream switch back before spotify:resume, got: {string.Join(", ", events)}");
+        Assert.True(resumeIdx < lastVolIdx, $"Expected spotify:resume before fade-up finishes, got: {string.Join(", ", events)}");
+    }
+
+    [Fact]
+    public async Task StartAsync_ShouldNotCancelJobEnqueuedBeforeStartAsync()
+    {
+        var (sp, db, mockSnapcast, _, _, service) = CreateTestContext();
+
+        db.Groups.Add(new GroupEntity { Id = "g1", Name = "Wohnzimmer", SnapcastGroupId = "sg1", CurrentStreamId = "radio_1", MasterVolume = 50 });
+        await db.SaveChangesAsync();
+
+        mockSnapcast.Setup(s => s.GetStatusAsync())
+            .ReturnsAsync(CreateSnapcastStatus(("sg1", "radio_1", new[] { "c1" })));
+
+        // Enqueue before StartAsync is called (e.g. early MQTT command during startup)
+        var job = await service.EnqueuePlayUrlAsync(new BroadcastPlayRequest(AudioUrl: "http://example.com/early.wav", GroupIds: new List<string> { "g1" }));
+        await service.StartAsync(CancellationToken.None);
+
+        var result = await service.WaitForJobAsync(job.Id);
+        Assert.True(result.Success);
+
+        var finalJob = await service.GetJobAsync(job.Id);
+        Assert.NotNull(finalJob);
+        Assert.Equal(BroadcastJobStatus.Completed, finalJob!.Status);
     }
 }

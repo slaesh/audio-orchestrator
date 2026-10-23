@@ -25,6 +25,7 @@ public class EventsController : ControllerBase
     private readonly ILibrespotApiClient _librespotApi;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IHomeAssistantMqttService _mqttService;
+    private readonly IBroadcastService? _broadcastService;
 
     public EventsController(
         ISnapcastService snapcast, 
@@ -35,7 +36,8 @@ public class EventsController : ControllerBase
         VolumeOrchestratorService volumeOrchestrator,
         ILibrespotApiClient librespotApi,
         IServiceScopeFactory scopeFactory,
-        IHomeAssistantMqttService mqttService)
+        IHomeAssistantMqttService mqttService,
+        IBroadcastService? broadcastService = null)
     {
         _snapcast = snapcast;
         _db = db;
@@ -46,6 +48,7 @@ public class EventsController : ControllerBase
         _librespotApi = librespotApi;
         _scopeFactory = scopeFactory;
         _mqttService = mqttService;
+        _broadcastService = broadcastService;
     }
 
     private async Task SyncMetadataToSource(SpotifySourceEntity source, WebhookEventPayload payload, OrchestratorDbContext db)
@@ -93,10 +96,16 @@ public class EventsController : ControllerBase
         string sourceStreamId = $"{OrchestratorConstants.SpotifyPrefix}{payload.GroupId}";
         var source = await _db.SpotifySources.FindAsync(payload.GroupId);
         
-        var listeningGroups = await _db.Groups
+        // Groups that are currently owned by a running broadcast must not be switched back to
+        // Spotify or have their (announcement) volume overwritten until restoration has finished.
+        var broadcastGroupIds = _broadcastService?.GetStatus().ActiveTargetGroupIds ?? new List<string>();
+
+        var listeningGroups = (await _db.Groups
             .AsNoTracking()
             .Where(g => g.CurrentStreamId == sourceStreamId)
-            .ToListAsync();
+            .ToListAsync())
+            .Where(g => !broadcastGroupIds.Contains(g.Id))
+            .ToList();
 
         List<SpotifyRecentContextDto>? currentRecentContexts = null;
 
