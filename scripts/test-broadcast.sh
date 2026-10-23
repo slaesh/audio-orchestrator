@@ -8,12 +8,62 @@ echo "Targeting Orchestrator at: $BASE_URL"
 echo ""
 
 WAIT_PARAM=""
-check_wait_flag() {
-  for arg in "$@"; do
-    if [ "$arg" = "--wait" ]; then
-      WAIT_PARAM="?wait=true"
-      return
-    fi
+ASYNC_MODE=0
+
+for arg in "$@"; do
+  if [ "$arg" = "--wait" ]; then
+    WAIT_PARAM="?wait=true"
+  elif [ "$arg" = "--async" ]; then
+    ASYNC_MODE=1
+  fi
+done
+
+poll_job_until_done() {
+  local job_id="$1"
+  if [ -z "$job_id" ] || [ "$job_id" = "null" ]; then
+    return
+  fi
+
+  echo "Tracking job $job_id..."
+  local elapsed=0
+  while true; do
+    sleep 2
+    elapsed=$((elapsed + 2))
+    local job_json
+    job_json=$(curl -s "$BASE_URL/api/broadcast/jobs/$job_id" || echo "{}")
+    local status
+    status=$(echo "$job_json" | jq -r '.status // "unknown"')
+    local err
+    err=$(echo "$job_json" | jq -r '.errorMessage // ""')
+    local dur
+    dur=$(echo "$job_json" | jq -r '.durationMs // 0')
+
+    case "$status" in
+      completed)
+        echo "✓ Job completed successfully in ${dur}ms!"
+        echo "$job_json" | jq .
+        break
+        ;;
+      cancelled)
+        echo "⚠ Job was cancelled after ${dur}ms (Message: ${err:-None})"
+        echo "$job_json" | jq .
+        break
+        ;;
+      failed)
+        echo "✗ Job FAILED after ${dur}ms: $err"
+        echo "$job_json" | jq .
+        break
+        ;;
+      playing)
+        echo "  [${elapsed}s] Playing announcement on target zone(s)..."
+        ;;
+      queued)
+        echo "  [${elapsed}s] Queued, waiting for playback worker..."
+        ;;
+      *)
+        echo "  [${elapsed}s] Status: $status"
+        ;;
+    esac
   done
 }
 
@@ -39,6 +89,15 @@ case "$1" in
     curl -s "$BASE_URL/api/broadcast/jobs/$JOB_ID" | jq .
     ;;
 
+  watch)
+    JOB_ID="${2:-}"
+    if [ -z "$JOB_ID" ]; then
+      echo "Usage: $0 watch <job-id>"
+      exit 1
+    fi
+    poll_job_until_done "$JOB_ID"
+    ;;
+
   cancel)
     JOB_ID="${2:-}"
     if [ -z "$JOB_ID" ]; then
@@ -52,12 +111,11 @@ case "$1" in
   chime)
     TARGET="${2:-}"
     VOL="${3:-80}"
-    if [ "$TARGET" = "--wait" ]; then TARGET=""; fi
-    if [ "$VOL" = "--wait" ]; then VOL="80"; fi
+    if [ "$TARGET" = "--wait" ] || [ "$TARGET" = "--async" ]; then TARGET=""; fi
+    if [ "$VOL" = "--wait" ] || [ "$VOL" = "--async" ]; then VOL="80"; fi
     if [ "$VOL" = "current" ]; then VOL=""; fi
-    check_wait_flag "$@"
 
-    echo "Submitting instant chime (low-latency, no fade) [wait: ${WAIT_PARAM:-false}, vol: ${VOL:-current}]..."
+    echo "Submitting instant chime [vol: ${VOL:-current}]..."
     JSON_BODY=$(jq -n \
       --arg url "https://actions.google.com/sounds/v1/alarms/beep_short.ogg" \
       --arg target "$TARGET" \
@@ -70,20 +128,26 @@ case "$1" in
       + (if $target != "" then { groupIds: [$target] } else {} end)
       + (if $vol != "" then { volume: ($vol | tonumber) } else {} end)')
     
-    curl -s -X POST "$BASE_URL/api/broadcast/play$WAIT_PARAM" \
+    RESP=$(curl -s -X POST "$BASE_URL/api/broadcast/play$WAIT_PARAM" \
       -H "Content-Type: application/json" \
-      -d "$JSON_BODY" | jq .
+      -d "$JSON_BODY")
+    
+    echo "$RESP" | jq .
+    JOB_ID=$(echo "$RESP" | jq -r '.id // empty')
+
+    if [ -n "$JOB_ID" ] && [ -z "$WAIT_PARAM" ] && [ "$ASYNC_MODE" -eq 0 ]; then
+      poll_job_until_done "$JOB_ID"
+    fi
     ;;
 
   fading)
     TARGET="${2:-}"
     VOL="${3:-75}"
-    if [ "$TARGET" = "--wait" ]; then TARGET=""; fi
-    if [ "$VOL" = "--wait" ]; then VOL="75"; fi
+    if [ "$TARGET" = "--wait" ] || [ "$TARGET" = "--async" ]; then TARGET=""; fi
+    if [ "$VOL" = "--wait" ] || [ "$VOL" = "--async" ]; then VOL="75"; fi
     if [ "$VOL" = "current" ]; then VOL=""; fi
-    check_wait_flag "$@"
 
-    echo "Submitting gentle announcement with 1.5s volume fade-out and fade-in [wait: ${WAIT_PARAM:-false}, vol: ${VOL:-current}]..."
+    echo "Submitting gentle announcement with 1.5s volume fade [vol: ${VOL:-current}]..."
     JSON_BODY=$(jq -n \
       --arg url "https://actions.google.com/sounds/v1/alarms/bugle_tune.ogg" \
       --arg target "$TARGET" \
@@ -97,17 +161,23 @@ case "$1" in
       + (if $target != "" then { groupIds: [$target] } else {} end)
       + (if $vol != "" then { volume: ($vol | tonumber) } else {} end)')
     
-    curl -s -X POST "$BASE_URL/api/broadcast/play$WAIT_PARAM" \
+    RESP=$(curl -s -X POST "$BASE_URL/api/broadcast/play$WAIT_PARAM" \
       -H "Content-Type: application/json" \
-      -d "$JSON_BODY" | jq .
+      -d "$JSON_BODY")
+    
+    echo "$RESP" | jq .
+    JOB_ID=$(echo "$RESP" | jq -r '.id // empty')
+
+    if [ -n "$JOB_ID" ] && [ -z "$WAIT_PARAM" ] && [ "$ASYNC_MODE" -eq 0 ]; then
+      poll_job_until_done "$JOB_ID"
+    fi
     ;;
 
   alarm)
     VOL="${2:-90}"
-    if [ "$VOL" = "--wait" ]; then VOL="90"; fi
-    check_wait_flag "$@"
+    if [ "$VOL" = "--wait" ] || [ "$VOL" = "--async" ]; then VOL="90"; fi
 
-    echo "Submitting alarm siren across ALL groups (whole-house alert) [wait: ${WAIT_PARAM:-false}, vol: $VOL]..."
+    echo "Submitting alarm siren across ALL groups [vol: $VOL]..."
     JSON_BODY=$(jq -n \
       --arg vol "$VOL" \
       '{
@@ -118,24 +188,30 @@ case "$1" in
         volume: ($vol | tonumber)
       }')
 
-    curl -s -X POST "$BASE_URL/api/broadcast/play$WAIT_PARAM" \
+    RESP=$(curl -s -X POST "$BASE_URL/api/broadcast/play$WAIT_PARAM" \
       -H "Content-Type: application/json" \
-      -d "$JSON_BODY" | jq .
+      -d "$JSON_BODY")
+
+    echo "$RESP" | jq .
+    JOB_ID=$(echo "$RESP" | jq -r '.id // empty')
+
+    if [ -n "$JOB_ID" ] && [ -z "$WAIT_PARAM" ] && [ "$ASYNC_MODE" -eq 0 ]; then
+      poll_job_until_done "$JOB_ID"
+    fi
     ;;
 
   upload)
     FILE="${2:-}"
     if [ -z "$FILE" ] || [ ! -f "$FILE" ]; then
-      echo "Usage: $0 upload <path-to-audio-file> [groupId] [volume] [--wait]"
+      echo "Usage: $0 upload <path-to-audio-file> [groupId] [volume] [--wait|--async]"
       exit 1
     fi
     TARGET="${3:-}"
     VOL="${4:-}"
-    if [ "$TARGET" = "--wait" ]; then TARGET=""; fi
-    if [ "$VOL" = "--wait" ]; then VOL=""; fi
-    check_wait_flag "$@"
+    if [ "$TARGET" = "--wait" ] || [ "$TARGET" = "--async" ]; then TARGET=""; fi
+    if [ "$VOL" = "--wait" ] || [ "$VOL" = "--async" ]; then VOL=""; fi
 
-    echo "Uploading and streaming local audio file: $FILE [wait: ${WAIT_PARAM:-false}, vol: ${VOL:-current}]"
+    echo "Uploading and streaming local audio file: $FILE [vol: ${VOL:-current}]"
     CURL_ARGS=(
       -s -X POST "$BASE_URL/api/broadcast/play-file$WAIT_PARAM"
       -F "file=@$FILE"
@@ -144,7 +220,13 @@ case "$1" in
     if [ -n "$TARGET" ]; then CURL_ARGS+=(-F "groupIds=$TARGET"); fi
     if [ -n "$VOL" ]; then CURL_ARGS+=(-F "volume=$VOL"); fi
 
-    curl "${CURL_ARGS[@]}" | jq .
+    RESP=$(curl "${CURL_ARGS[@]}")
+    echo "$RESP" | jq .
+    JOB_ID=$(echo "$RESP" | jq -r '.id // empty')
+
+    if [ -n "$JOB_ID" ] && [ -z "$WAIT_PARAM" ] && [ "$ASYNC_MODE" -eq 0 ]; then
+      poll_job_until_done "$JOB_ID"
+    fi
     ;;
 
   stop)
@@ -157,20 +239,21 @@ case "$1" in
     echo "Usage: $0 <command> [args]"
     echo ""
     echo "Commands:"
-    echo "  chime [groupId] [vol] [--wait]   Instant chime/doorbell (default: current group volume)"
-    echo "  fading [groupId] [vol] [--wait]  Gentle clip with 1.5s volume fade (default: current group vol)"
-    echo "  alarm [vol] [--wait]             Whole-house emergency alarm (default: vol 90)"
-    echo "  upload <file> [grp] [vol] [--wait] Upload and stream local MP3/WAV directly"
-    echo "  jobs [limit]                     List recent broadcast jobs from database"
-    echo "  job <jobId>                      Inspect specific broadcast job details and status"
-    echo "  cancel <jobId>                   Cancel a queued or active broadcast job"
-    echo "  stop                             Stop and cancel active broadcast immediately"
-    echo "  status                           Check whether a broadcast is currently playing"
+    echo "  chime [groupId] [vol] [--async]    Instant chime (polls every 2s until done)"
+    echo "  fading [groupId] [vol] [--async]   Gentle announcement (polls every 2s until done)"
+    echo "  alarm [vol] [--async]              Emergency siren (polls every 2s until done)"
+    echo "  upload <file> [grp] [vol]          Upload & play file (polls every 2s until done)"
+    echo "  watch <jobId>                      Poll status of existing job every 2s until done"
+    echo "  jobs [limit]                       List recent broadcast jobs from database"
+    echo "  job <jobId>                        Inspect specific broadcast job once"
+    echo "  cancel <jobId>                     Cancel a queued or active broadcast job"
+    echo "  stop                               Stop active broadcast immediately"
+    echo "  status                             Check live playback status"
     echo ""
     echo "Examples:"
-    echo "  $0 fading                        # Plays with current group volume"
-    echo "  $0 fading g1 80                  # Plays on group 'g1' at 80% volume"
-    echo "  $0 chime Wohnzimmer --wait       # Chime on Wohnzimmer, waits for completion"
-    echo "  $0 jobs                          # View history of recent broadcasts"
+    echo "  $0 fading                          # Submits and monitors every 2s until finished"
+    echo "  $0 fading g1 75 --async            # Submits and returns immediately"
+    echo "  $0 watch 355e60c4...               # Monitor an existing job"
+    echo "  $0 jobs 5                          # Show last 5 jobs"
     ;;
 esac
