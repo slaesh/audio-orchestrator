@@ -13,7 +13,7 @@ public class BroadcastJobEntity
     public DateTime? CompletedAt { get; set; }
 
     public string? AudioUrl { get; set; }
-    public string? SourceType { get; set; } // "url" or "upload"
+    public BroadcastSourceType SourceType { get; set; } = BroadcastSourceType.Url;
     public string? TargetGroupIdsJson { get; set; }
     public string? TargetRoomIdsJson { get; set; }
     public int? Volume { get; set; }

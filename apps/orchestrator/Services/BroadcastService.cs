@@ -227,7 +227,7 @@ public class BroadcastService : IHostedService, IBroadcastService
             throw new ArgumentException("AudioUrl darf nicht leer sein.", nameof(request));
         }
 
-        return await EnqueueJobInternalAsync(request, inputSource: request.AudioUrl, tempFilePath: null, sourceType: "url", ct);
+        return await EnqueueJobInternalAsync(request, inputSource: request.AudioUrl, tempFilePath: null, sourceType: BroadcastSourceType.Url, ct);
     }
 
     public async Task<BroadcastJobDto> EnqueuePlayFileAsync(Stream fileStream, string fileExtension, BroadcastPlayRequest request, CancellationToken ct = default)
@@ -243,7 +243,7 @@ public class BroadcastService : IHostedService, IBroadcastService
             await fileStream.CopyToAsync(fs, ct);
         }
 
-        return await EnqueueJobInternalAsync(request, inputSource: tempFileName, tempFilePath: tempFileName, sourceType: "upload", ct);
+        return await EnqueueJobInternalAsync(request, inputSource: tempFileName, tempFilePath: tempFileName, sourceType: BroadcastSourceType.Upload, ct);
     }
 
     public async Task<BroadcastPlayResult> WaitForJobAsync(string jobId, CancellationToken ct = default)
@@ -350,7 +350,7 @@ public class BroadcastService : IHostedService, IBroadcastService
         BroadcastPlayRequest request,
         string inputSource,
         string? tempFilePath,
-        string sourceType,
+        BroadcastSourceType sourceType,
         CancellationToken ct)
     {
         if (request.Interrupt)

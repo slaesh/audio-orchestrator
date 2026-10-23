@@ -236,6 +236,16 @@ public record SpotifyMetadataDto(
 
 [TranspilationSource]
 [JsonConverter(typeof(JsonStringEnumConverter))]
+public enum BroadcastSourceType
+{
+    [JsonStringEnumMemberName("url")]
+    Url,
+    [JsonStringEnumMemberName("upload")]
+    Upload
+}
+
+[TranspilationSource]
+[JsonConverter(typeof(JsonStringEnumConverter))]
 public enum BroadcastJobStatus
 {
     [JsonStringEnumMemberName("queued")]
@@ -284,7 +294,7 @@ public record BroadcastJobDto(
     DateTime? StartedAt,
     DateTime? CompletedAt,
     string? AudioUrl,
-    string? SourceType,
+    BroadcastSourceType SourceType,
     List<string>? TargetGroupIds,
     List<string>? TargetRoomIds,
     int? Volume,

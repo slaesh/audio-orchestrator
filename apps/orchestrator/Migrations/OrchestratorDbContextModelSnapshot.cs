@@ -47,6 +47,7 @@ namespace AudioOrchestrator.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("SourceType")
+                        .IsRequired()
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime?>("StartedAt")

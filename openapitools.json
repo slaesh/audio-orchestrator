@@ -44,6 +44,7 @@
           "BroadcastPlayResult": "BroadcastPlayResult",
           "BroadcastStatusDto": "BroadcastStatusDto",
           "BroadcastJobStatus": "BroadcastJobStatus",
+          "BroadcastSourceType": "BroadcastSourceType",
           "BroadcastJobDto": "BroadcastJobDto"
         },
         "importMappings": {
@@ -76,6 +77,7 @@
           "BroadcastPlayResult": "@contracts",
           "BroadcastStatusDto": "@contracts",
           "BroadcastJobStatus": "@contracts",
+          "BroadcastSourceType": "@contracts",
           "BroadcastJobDto": "@contracts"
         }
       }

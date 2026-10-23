@@ -30,5 +30,11 @@ public class OrchestratorDbContext : DbContext
             .HasConversion(
                 v => v.ToString().ToLowerInvariant(),
                 v => Enum.Parse<AudioOrchestrator.Contracts.BroadcastJobStatus>(v, true));
+
+        modelBuilder.Entity<AudioOrchestrator.Data.Entities.BroadcastJobEntity>()
+            .Property(b => b.SourceType)
+            .HasConversion(
+                v => v.ToString().ToLowerInvariant(),
+                v => Enum.Parse<AudioOrchestrator.Contracts.BroadcastSourceType>(v, true));
     }
 }

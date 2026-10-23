@@ -2137,10 +2137,7 @@
             ]
           },
           "sourceType": {
-            "type": [
-              "null",
-              "string"
-            ]
+            "$ref": "#/components/schemas/BroadcastSourceType"
           },
           "targetGroupIds": {
             "type": [
@@ -2244,6 +2241,12 @@
             "default": true
           }
         }
+      },
+      "BroadcastSourceType": {
+        "enum": [
+          "url",
+          "upload"
+        ]
       },
       "BroadcastStatusDto": {
         "required": [

@@ -352,6 +352,12 @@ export type SpotifyMetadataDto = {
     coverUrl?: string;
 }
 
+/** Transpiled from AudioOrchestrator.Contracts.BroadcastSourceType */
+export type BroadcastSourceType = "url" | "upload";
+
+/** Transpiled from AudioOrchestrator.Contracts.BroadcastJobStatus */
+export type BroadcastJobStatus = "queued" | "playing" | "completed" | "failed" | "cancelled";
+
 /** Transpiled from AudioOrchestrator.Contracts.BroadcastPlayRequest */
 export type BroadcastPlayRequest = {
     /** Transpiled from string? */
@@ -360,20 +366,17 @@ export type BroadcastPlayRequest = {
     groupIds?: string[];
     /** Transpiled from System.Collections.Generic.List<string>? */
     roomIds?: string[];
-    /** Transpiled from int? */
+    /** Transpiled from int */
     volume?: number;
-    /** Transpiled from int? */
+    /** Transpiled from int */
     fadeDurationMs?: number;
     /** Transpiled from bool */
     pausePlayback: boolean;
-    /** Transpiled from int? */
+    /** Transpiled from int */
     timeoutSeconds?: number;
     /** Transpiled from bool */
     interrupt: boolean;
 }
-
-/** Transpiled from AudioOrchestrator.Contracts.BroadcastJobStatus */
-export type BroadcastJobStatus = "queued" | "playing" | "completed" | "failed" | "cancelled";
 
 /** Transpiled from AudioOrchestrator.Contracts.BroadcastPlayResult */
 export type BroadcastPlayResult = {
@@ -403,21 +406,21 @@ export type BroadcastJobDto = {
     id: string;
     /** Transpiled from System.DateTime */
     createdAt: (Date | string);
-    /** Transpiled from System.DateTime? */
+    /** Transpiled from System.DateTime */
     startedAt?: (Date | string);
-    /** Transpiled from System.DateTime? */
+    /** Transpiled from System.DateTime */
     completedAt?: (Date | string);
     /** Transpiled from string? */
     audioUrl?: string;
-    /** Transpiled from string? */
-    sourceType?: string;
+    /** Transpiled from AudioOrchestrator.Contracts.BroadcastSourceType */
+    sourceType: BroadcastSourceType;
     /** Transpiled from System.Collections.Generic.List<string>? */
     targetGroupIds?: string[];
     /** Transpiled from System.Collections.Generic.List<string>? */
     targetRoomIds?: string[];
-    /** Transpiled from int? */
+    /** Transpiled from int */
     volume?: number;
-    /** Transpiled from int? */
+    /** Transpiled from int */
     fadeDurationMs?: number;
     /** Transpiled from bool */
     pausePlayback: boolean;
