@@ -1900,4 +1900,50 @@ public class HomeAssistantMqttTests
             It.Is<MqttApplicationMessage>(m => m.Topic.StartsWith("new_ha/select/audio_orchestrator_g1/source/config") && string.IsNullOrEmpty(m.ConvertPayloadToString())),
             It.IsAny<CancellationToken>()), Times.AtLeastOnce);
     }
+
+    [Fact]
+    public async Task ProcessPendingCleanupsAsync_ShouldClearOldBridgeStatus_WhenBaseTopicChangesCaseOnly()
+    {
+        var (sp, db, mockClient, service, _) = CreateTestContext(baseTopic: "Audio_Orchestrator");
+
+        mockClient.Setup(c => c.ConnectAsync(It.IsAny<MqttClientOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientConnectResult());
+        mockClient.Setup(c => c.SubscribeAsync(It.IsAny<MqttClientSubscribeOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientSubscribeResult(
+                1,
+                new List<MqttClientSubscribeResultItem>
+                {
+                    new(new MqttTopicFilter { Topic = "audio_orchestrator/groups/+/set/#" }, MqttClientSubscribeResultCode.GrantedQoS0),
+                    new(new MqttTopicFilter { Topic = "homeassistant/status" }, MqttClientSubscribeResultCode.GrantedQoS0)
+                },
+                string.Empty,
+                new List<MqttUserProperty>()
+            ));
+        mockClient.SetupGet(c => c.IsConnected).Returns(true);
+
+        var group = new GroupEntity { Id = "g1", Name = "Wohnzimmer", CurrentStreamId = "default" };
+        db.Groups.Add(group);
+        await db.SaveChangesAsync();
+
+        // 1. Initial connection with "Audio_Orchestrator"
+        await service.EnsureConnectionAsync(CancellationToken.None);
+        mockClient.Invocations.Clear();
+
+        // 2. Change base topic with case-only difference: "audio_orchestrator"
+        var settings = await db.Settings.FirstAsync();
+        settings.MqttBaseTopic = "audio_orchestrator";
+        await db.SaveChangesAsync();
+
+        await service.ReloadConfigurationAsync(CancellationToken.None);
+
+        // Verify the old case-variant bridge status was cleared with empty string
+        mockClient.Verify(c => c.PublishAsync(
+            It.Is<MqttApplicationMessage>(m => m.Topic == "Audio_Orchestrator/bridge/status" && string.IsNullOrEmpty(m.ConvertPayloadToString())),
+            It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+
+        // And new active bridge status was published with "online"
+        mockClient.Verify(c => c.PublishAsync(
+            It.Is<MqttApplicationMessage>(m => m.Topic == "audio_orchestrator/bridge/status" && m.ConvertPayloadToString() == "online"),
+            It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
 }

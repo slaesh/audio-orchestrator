@@ -463,7 +463,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             if (pending.ClearBridgeStatus)
             {
                 var isActiveBaseTopic = activeBaseTopic != null
-                    && string.Equals(pending.BaseTopic, activeBaseTopic, StringComparison.OrdinalIgnoreCase);
+                    && string.Equals(pending.BaseTopic, activeBaseTopic, StringComparison.Ordinal);
 
                 if (isActiveBaseTopic)
                 {
