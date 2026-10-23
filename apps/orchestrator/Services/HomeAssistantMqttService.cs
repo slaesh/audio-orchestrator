@@ -201,7 +201,10 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         await _publishLock.WaitAsync(ct);
         try
         {
-            await ProcessPendingCleanupsAsync(ct);
+            var activeBaseTopic = _currentSettings != null && _currentSettings.HomeAssistantEnabled
+                ? GetNormalizedBaseTopic(_currentSettings)
+                : null;
+            await ProcessPendingCleanupsAsync(ct, activeBaseTopic);
 
             if (!_statePublishingEnabled || _currentSettings == null || !_currentSettings.HomeAssistantEnabled) return;
 
@@ -256,7 +259,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
 
                         if (IsConnected)
                         {
-                            await ProcessPendingCleanupsAsync(ct);
+                            await ProcessPendingCleanupsAsync(ct, activeBaseTopic: null);
                         }
 
                         hasPendingForCurrent = _currentSettings != null && _pendingCleanups.Any(p =>
@@ -277,7 +280,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                 return;
             }
 
-            if (!forceReload && IsConnected && HasSameConfig(_currentSettings, settings))
+            if (!forceReload && IsConnected && _statePublishingEnabled && HasSameConfig(_currentSettings, settings))
             {
                 // Heartbeat: refresh snapshot to pick up structural or external updates, then publish
                 await RefreshAndPublishAsync(ct);
@@ -293,9 +296,11 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                     EnqueueDiscoveryCleanup(_currentSettings, settings);
                 }
 
+                var activeBaseTopic = settings.HomeAssistantEnabled ? GetNormalizedBaseTopic(settings) : null;
+
                 if (IsConnected)
                 {
-                    await ProcessPendingCleanupsAsync(ct);
+                    await ProcessPendingCleanupsAsync(ct, activeBaseTopic);
                 }
 
                 var oldBaseTopic = GetNormalizedBaseTopic(_currentSettings);
@@ -306,7 +311,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
 
                 if (IsConnected)
                 {
-                    await ProcessPendingCleanupsAsync(ct);
+                    await ProcessPendingCleanupsAsync(ct, activeBaseTopic);
                 }
             }
             finally
@@ -399,7 +404,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         }
     }
 
-    private async Task ProcessPendingCleanupsAsync(CancellationToken ct)
+    private async Task ProcessPendingCleanupsAsync(CancellationToken ct, string? activeBaseTopic = null)
     {
         if (!IsConnected || _mqttClient == null || _currentSettings == null) return;
 
@@ -426,15 +431,26 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
 
             if (pending.ClearBridgeStatus)
             {
-                try
+                var isActiveBaseTopic = activeBaseTopic != null
+                    && string.Equals(pending.BaseTopic, activeBaseTopic, StringComparison.OrdinalIgnoreCase);
+
+                if (isActiveBaseTopic)
                 {
-                    await PublishAsync($"{pending.BaseTopic}/bridge/status", string.Empty, retain: true, ct);
+                    // Do not clear the retained bridge status if this base topic belongs to the active publishing session
                     pending.ClearBridgeStatus = false;
                 }
-                catch (Exception ex)
+                else
                 {
-                    _logger.LogWarning(ex, "Failed to clear bridge status topic {Topic} on {Host}:{Port}",
-                        $"{pending.BaseTopic}/bridge/status", pending.Host, pending.Port);
+                    try
+                    {
+                        await PublishAsync($"{pending.BaseTopic}/bridge/status", string.Empty, retain: true, ct);
+                        pending.ClearBridgeStatus = false;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to clear bridge status topic {Topic} on {Host}:{Port}",
+                            $"{pending.BaseTopic}/bridge/status", pending.Host, pending.Port);
+                    }
                 }
             }
 
@@ -798,8 +814,8 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                 // Publish discovery only when changed or new
                 if (discoveryNeedsUpdate || !_discoveredGroupIds.Contains(groupId))
                 {
-                    await PublishGroupDiscoveryAsync(discPrefix, baseTopic, groupId, groupName, sourceList, ct);
                     _discoveredGroupIds.Add(groupId);
+                    await PublishGroupDiscoveryAsync(discPrefix, baseTopic, groupId, groupName, sourceList, ct);
                 }
 
                 // Publish transport availability topic (for play/pause/stop/next/prev buttons)

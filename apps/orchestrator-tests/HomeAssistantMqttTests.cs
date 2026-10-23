@@ -1563,4 +1563,104 @@ public class HomeAssistantMqttTests
             It.Is<MqttApplicationMessage>(m => m.Topic.Contains("audio_orchestrator_g1") && !string.IsNullOrEmpty(m.ConvertPayloadToString())),
             It.IsAny<CancellationToken>()), Times.Never);
     }
+
+    [Fact]
+    public async Task ProcessPendingCleanupsAsync_ShouldNotClearBridgeStatus_WhenBaseTopicBelongsToActiveSession()
+    {
+        var (sp, db, mockClient, service, _) = CreateTestContext();
+
+        mockClient.Setup(c => c.ConnectAsync(It.IsAny<MqttClientOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientConnectResult());
+        mockClient.Setup(c => c.SubscribeAsync(It.IsAny<MqttClientSubscribeOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientSubscribeResult(
+                1,
+                new List<MqttClientSubscribeResultItem>
+                {
+                    new(new MqttTopicFilter { Topic = "audio_orchestrator/groups/+/set/#" }, MqttClientSubscribeResultCode.GrantedQoS0),
+                    new(new MqttTopicFilter { Topic = "homeassistant/status" }, MqttClientSubscribeResultCode.GrantedQoS0)
+                },
+                string.Empty,
+                new List<MqttUserProperty>()
+            ));
+        mockClient.SetupGet(c => c.IsConnected).Returns(true);
+
+        var group = new GroupEntity { Id = "g1", Name = "Wohnzimmer", CurrentStreamId = "default" };
+        db.Groups.Add(group);
+        await db.SaveChangesAsync();
+
+        await service.EnsureConnectionAsync(CancellationToken.None);
+
+        // 1. Simulate broker outage
+        mockClient.SetupGet(c => c.IsConnected).Returns(false);
+
+        // 2. Disable HA during outage (enqueues cleanup with ClearBridgeStatus = true for audio_orchestrator)
+        var settings = await db.Settings.FirstAsync();
+        settings.HomeAssistantEnabled = false;
+        await db.SaveChangesAsync();
+        await service.EnsureConnectionAsync(CancellationToken.None);
+
+        // 3. Re-enable HA with the same base topic before broker recovers
+        settings.HomeAssistantEnabled = true;
+        await db.SaveChangesAsync();
+
+        // 4. Broker recovers and active session connects
+        mockClient.SetupGet(c => c.IsConnected).Returns(true);
+        mockClient.Invocations.Clear();
+
+        await service.EnsureConnectionAsync(CancellationToken.None);
+
+        // Verify bridge status was NOT deleted with empty string because it belongs to the active session!
+        mockClient.Verify(c => c.PublishAsync(
+            It.Is<MqttApplicationMessage>(m => m.Topic == "audio_orchestrator/bridge/status" && string.IsNullOrEmpty(m.ConvertPayloadToString())),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task PublishDiscovery_ShouldTrackGroup_WhenPublicationPartiallyFails()
+    {
+        var (sp, db, mockClient, service, _) = CreateTestContext();
+
+        mockClient.Setup(c => c.ConnectAsync(It.IsAny<MqttClientOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientConnectResult());
+        mockClient.Setup(c => c.SubscribeAsync(It.IsAny<MqttClientSubscribeOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientSubscribeResult(
+                1,
+                new List<MqttClientSubscribeResultItem>
+                {
+                    new(new MqttTopicFilter { Topic = "audio_orchestrator/groups/+/set/#" }, MqttClientSubscribeResultCode.GrantedQoS0),
+                    new(new MqttTopicFilter { Topic = "homeassistant/status" }, MqttClientSubscribeResultCode.GrantedQoS0)
+                },
+                string.Empty,
+                new List<MqttUserProperty>()
+            ));
+        mockClient.SetupGet(c => c.IsConnected).Returns(true);
+
+        var group = new GroupEntity { Id = "g1", Name = "Wohnzimmer", CurrentStreamId = "default" };
+        db.Groups.Add(group);
+        await db.SaveChangesAsync();
+
+        // Make volume entity publish throw, so discovery for g1 partially fails after select entity
+        mockClient.Setup(c => c.PublishAsync(
+                It.Is<MqttApplicationMessage>(m => m.Topic.Contains("audio_orchestrator_g1/volume/config")),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Broker timeout during volume config publish"));
+
+        // First pass partially fails
+        await service.EnsureConnectionAsync(CancellationToken.None);
+
+        // Now remove group g1 from DB before full discovery completes
+        db.Groups.Remove(group);
+        await db.SaveChangesAsync();
+
+        // Broker recovers
+        mockClient.Setup(c => c.PublishAsync(It.IsAny<MqttApplicationMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientPublishResult(1, MqttClientPublishReasonCode.Success, string.Empty, Array.Empty<MqttUserProperty>()));
+
+        // Next pass: group g1 was tracked, so it MUST be unpublished!
+        await service.EnsureConnectionAsync(CancellationToken.None);
+
+        mockClient.Verify(c => c.PublishAsync(
+            It.Is<MqttApplicationMessage>(m => m.Topic.StartsWith("homeassistant/select/audio_orchestrator_g1/source/config") && string.IsNullOrEmpty(m.ConvertPayloadToString())),
+            It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
 }
