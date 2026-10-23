@@ -1359,7 +1359,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
 
             if (request != null)
             {
-                await broadcastService.PlayUrlAsync(request, ct);
+                await broadcastService.EnqueuePlayUrlAsync(request, ct);
             }
         }
     }

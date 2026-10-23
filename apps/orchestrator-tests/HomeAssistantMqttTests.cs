@@ -2167,9 +2167,24 @@ public class HomeAssistantMqttTests
         await service.EnsureConnectionAsync(CancellationToken.None);
 
         BroadcastPlayRequest? capturedRequest = null;
-        mockBroadcast.Setup(b => b.PlayUrlAsync(It.IsAny<BroadcastPlayRequest>(), It.IsAny<CancellationToken>()))
+        mockBroadcast.Setup(b => b.EnqueuePlayUrlAsync(It.IsAny<BroadcastPlayRequest>(), It.IsAny<CancellationToken>()))
             .Callback<BroadcastPlayRequest, CancellationToken>((req, _) => capturedRequest = req)
-            .ReturnsAsync(new BroadcastPlayResult(true, "OK", 100));
+            .ReturnsAsync(new BroadcastJobDto(
+                Id: "job-1",
+                CreatedAt: DateTime.UtcNow,
+                StartedAt: null,
+                CompletedAt: null,
+                AudioUrl: "url",
+                SourceType: BroadcastSourceType.Url,
+                TargetGroupIds: null,
+                TargetRoomIds: null,
+                Volume: null,
+                FadeDurationMs: null,
+                PausePlayback: false,
+                Status: BroadcastJobStatus.Queued,
+                DurationMs: 0,
+                ErrorMessage: null
+            ));
 
         // 1. Send plain URL payload
         var plainMsg = new MqttApplicationMessageBuilder()

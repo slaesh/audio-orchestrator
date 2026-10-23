@@ -218,12 +218,7 @@ export class BroadcastService extends BaseService {
     /**
      * @endpoint post /api/Broadcast/play-file
      * @param wait 
-     * @param contentType 
-     * @param contentDisposition 
-     * @param headers 
-     * @param length 
-     * @param name 
-     * @param fileName 
+     * @param file 
      * @param groupIds 
      * @param roomIds 
      * @param volume 
@@ -235,10 +230,10 @@ export class BroadcastService extends BaseService {
      * @param reportProgress flag to report request and response progress.
      * @param options additional options
      */
-    public apiBroadcastPlayFilePost(wait?: boolean, contentType?: string, contentDisposition?: string, headers?: { [key: string]: Array<string>; }, length?: number, name?: string, fileName?: string, groupIds?: string, roomIds?: string, volume?: number, fadeDurationMs?: number, pausePlayback?: boolean, timeoutSeconds?: number, interrupt?: boolean, observe?: 'body', reportProgress?: boolean, options?: {httpHeaderAccept?: 'text/plain' | 'application/json' | 'text/json', context?: HttpContext, transferCache?: boolean}): Observable<BroadcastJobDto>;
-    public apiBroadcastPlayFilePost(wait?: boolean, contentType?: string, contentDisposition?: string, headers?: { [key: string]: Array<string>; }, length?: number, name?: string, fileName?: string, groupIds?: string, roomIds?: string, volume?: number, fadeDurationMs?: number, pausePlayback?: boolean, timeoutSeconds?: number, interrupt?: boolean, observe?: 'response', reportProgress?: boolean, options?: {httpHeaderAccept?: 'text/plain' | 'application/json' | 'text/json', context?: HttpContext, transferCache?: boolean}): Observable<HttpResponse<BroadcastJobDto>>;
-    public apiBroadcastPlayFilePost(wait?: boolean, contentType?: string, contentDisposition?: string, headers?: { [key: string]: Array<string>; }, length?: number, name?: string, fileName?: string, groupIds?: string, roomIds?: string, volume?: number, fadeDurationMs?: number, pausePlayback?: boolean, timeoutSeconds?: number, interrupt?: boolean, observe?: 'events', reportProgress?: boolean, options?: {httpHeaderAccept?: 'text/plain' | 'application/json' | 'text/json', context?: HttpContext, transferCache?: boolean}): Observable<HttpEvent<BroadcastJobDto>>;
-    public apiBroadcastPlayFilePost(wait?: boolean, contentType?: string, contentDisposition?: string, headers?: { [key: string]: Array<string>; }, length?: number, name?: string, fileName?: string, groupIds?: string, roomIds?: string, volume?: number, fadeDurationMs?: number, pausePlayback?: boolean, timeoutSeconds?: number, interrupt?: boolean, observe: any = 'body', reportProgress: boolean = false, options?: {httpHeaderAccept?: 'text/plain' | 'application/json' | 'text/json', context?: HttpContext, transferCache?: boolean}): Observable<any> {
+    public apiBroadcastPlayFilePost(wait?: boolean, file?: Blob, groupIds?: string, roomIds?: string, volume?: number, fadeDurationMs?: number, pausePlayback?: boolean, timeoutSeconds?: number, interrupt?: boolean, observe?: 'body', reportProgress?: boolean, options?: {httpHeaderAccept?: 'text/plain' | 'application/json' | 'text/json', context?: HttpContext, transferCache?: boolean}): Observable<BroadcastJobDto>;
+    public apiBroadcastPlayFilePost(wait?: boolean, file?: Blob, groupIds?: string, roomIds?: string, volume?: number, fadeDurationMs?: number, pausePlayback?: boolean, timeoutSeconds?: number, interrupt?: boolean, observe?: 'response', reportProgress?: boolean, options?: {httpHeaderAccept?: 'text/plain' | 'application/json' | 'text/json', context?: HttpContext, transferCache?: boolean}): Observable<HttpResponse<BroadcastJobDto>>;
+    public apiBroadcastPlayFilePost(wait?: boolean, file?: Blob, groupIds?: string, roomIds?: string, volume?: number, fadeDurationMs?: number, pausePlayback?: boolean, timeoutSeconds?: number, interrupt?: boolean, observe?: 'events', reportProgress?: boolean, options?: {httpHeaderAccept?: 'text/plain' | 'application/json' | 'text/json', context?: HttpContext, transferCache?: boolean}): Observable<HttpEvent<BroadcastJobDto>>;
+    public apiBroadcastPlayFilePost(wait?: boolean, file?: Blob, groupIds?: string, roomIds?: string, volume?: number, fadeDurationMs?: number, pausePlayback?: boolean, timeoutSeconds?: number, interrupt?: boolean, observe: any = 'body', reportProgress: boolean = false, options?: {httpHeaderAccept?: 'text/plain' | 'application/json' | 'text/json', context?: HttpContext, transferCache?: boolean}): Observable<any> {
 
         let localVarQueryParameters = new OpenApiHttpParams(this.encoder);
 
@@ -268,7 +263,7 @@ export class BroadcastService extends BaseService {
 
         // to determine the Content-Type header
         const consumes: string[] = [
-            'application/x-www-form-urlencoded'
+            'multipart/form-data'
         ];
 
         const canConsumeForm = this.canConsumeForm(consumes);
@@ -276,29 +271,17 @@ export class BroadcastService extends BaseService {
         let localVarFormParams: { append(param: string, value: any): any; };
         let localVarUseForm = false;
         let localVarConvertFormParamsToString = false;
+        // use FormData to transmit files using content-type "multipart/form-data"
+        // see https://stackoverflow.com/questions/4007969/application-x-www-form-urlencoded-or-multipart-form-data
+        localVarUseForm = canConsumeForm;
         if (localVarUseForm) {
             localVarFormParams = new FormData();
         } else {
             localVarFormParams = new HttpParams({encoder: this.encoder});
         }
 
-        if (contentType !== undefined) {
-            localVarFormParams = localVarFormParams.append('ContentType', <any>contentType) as any || localVarFormParams;
-        }
-        if (contentDisposition !== undefined) {
-            localVarFormParams = localVarFormParams.append('ContentDisposition', <any>contentDisposition) as any || localVarFormParams;
-        }
-        if (headers !== undefined) {
-            localVarFormParams = localVarFormParams.append('Headers', <any>headers) as any || localVarFormParams;
-        }
-        if (length !== undefined) {
-            localVarFormParams = localVarFormParams.append('Length', <any>length) as any || localVarFormParams;
-        }
-        if (name !== undefined) {
-            localVarFormParams = localVarFormParams.append('Name', <any>name) as any || localVarFormParams;
-        }
-        if (fileName !== undefined) {
-            localVarFormParams = localVarFormParams.append('FileName', <any>fileName) as any || localVarFormParams;
+        if (file !== undefined) {
+            localVarFormParams = localVarFormParams.append('file', <any>file) as any || localVarFormParams;
         }
         if (groupIds !== undefined) {
             localVarFormParams = localVarFormParams.append('groupIds', <any>groupIds) as any || localVarFormParams;

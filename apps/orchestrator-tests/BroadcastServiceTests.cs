@@ -5,7 +5,7 @@ using AudioOrchestrator.Data;
 using AudioOrchestrator.Data.Entities;
 using AudioOrchestrator.Hubs;
 using AudioOrchestrator.Services;
-using Microsoft.AspNetCore.Http;
+using AudioOrchestrator.Services.Generated;using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
@@ -212,6 +212,8 @@ public class BroadcastServiceTests
         mockLibrespot.Setup(l => l.SendCommandAsync("source1", It.IsAny<string>()))
             .Callback<string, string>((_, cmd) => commands.Add(cmd))
             .Returns(Task.CompletedTask);
+        mockLibrespot.Setup(l => l.GetStatusAsync("source1"))
+            .ReturnsAsync(new NodeStatusResponse { Is_playing = true });
 
         var request = new BroadcastPlayRequest(
             AudioUrl: "http://example.com/doorbell.mp3",
@@ -225,6 +227,44 @@ public class BroadcastServiceTests
         Assert.Contains("pause", commands);
         Assert.Contains("resume", commands);
         Assert.Equal("resume", commands.Last());
+    }
+
+    [Fact]
+    public async Task PlayUrlAsync_ShouldNotPauseOrResumeSpotify_WhenAlreadyPaused()
+    {
+        var (sp, db, mockSnapcast, mockLibrespot, mockRunner, service) = CreateTestContext();
+
+        var group = new GroupEntity
+        {
+            Id = "g1",
+            Name = "Wohnzimmer",
+            SnapcastGroupId = "sg1",
+            CurrentStreamId = $"{OrchestratorConstants.SpotifyPrefix}source1",
+            MasterVolume = 50
+        };
+        db.Groups.Add(group);
+        await db.SaveChangesAsync();
+
+        mockSnapcast.Setup(s => s.GetStatusAsync())
+            .ReturnsAsync(CreateSnapcastStatus(("sg1", group.CurrentStreamId, new[] { "c1" })));
+
+        var commands = new List<string>();
+        mockLibrespot.Setup(l => l.SendCommandAsync("source1", It.IsAny<string>()))
+            .Callback<string, string>((_, cmd) => commands.Add(cmd))
+            .Returns(Task.CompletedTask);
+        mockLibrespot.Setup(l => l.GetStatusAsync("source1"))
+            .ReturnsAsync(new NodeStatusResponse { Is_playing = false });
+
+        var request = new BroadcastPlayRequest(
+            AudioUrl: "http://example.com/doorbell.mp3",
+            GroupIds: new List<string> { "g1" },
+            PausePlayback: true
+        );
+
+        var result = await service.PlayUrlAsync(request, CancellationToken.None);
+
+        Assert.True(result.Success);
+        Assert.Empty(commands);
     }
 
     [Fact]

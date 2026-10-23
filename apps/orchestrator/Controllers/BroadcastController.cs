@@ -86,7 +86,7 @@ public class BroadcastController : ControllerBase
     [HttpPost("play-file")]
     [Consumes("multipart/form-data")]
     public async Task<ActionResult<BroadcastJobDto>> PlayFile(
-        [FromForm] IFormFile? file,
+        IFormFile file,
         [FromForm] string? groupIds = null,
         [FromForm] string? roomIds = null,
         [FromForm] int? volume = null,

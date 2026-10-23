@@ -44,7 +44,7 @@ public class VolumeOrchestratorService
         _logger = logger;
     }
 
-    public virtual async Task SetGroupVolumeAsync(string groupId, int masterVolume, bool? isMuted = null, bool fromDocker = false)
+    public virtual async Task SetGroupVolumeAsync(string groupId, int masterVolume, bool? isMuted = null, bool fromDocker = false, bool syncStreamSource = true)
     {
         var group = await _db.Groups.FindAsync(groupId);
         if (group == null) return;
@@ -56,7 +56,8 @@ public class VolumeOrchestratorService
         await _hub.Clients.All.OnGroupVolumeChanged(group.Id, group.MasterVolume, group.IsMuted);
 
         // If the group is listening to a Spotify source, sync with that source and all sibling groups
-        if (!string.IsNullOrEmpty(group.CurrentStreamId) && group.CurrentStreamId.StartsWith(OrchestratorConstants.SpotifyPrefix))
+        // (skipped for transient, group-isolated changes such as broadcasts)
+        if (syncStreamSource && !string.IsNullOrEmpty(group.CurrentStreamId) && group.CurrentStreamId.StartsWith(OrchestratorConstants.SpotifyPrefix))
         {
             var sourceId = group.CurrentStreamId.Replace(OrchestratorConstants.SpotifyPrefix, "");
             
