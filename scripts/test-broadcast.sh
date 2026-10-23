@@ -51,9 +51,10 @@ case "$1" in
 
   chime)
     TARGET="${2:-}"
-    VOL="${3:-}"
+    VOL="${3:-80}"
     if [ "$TARGET" = "--wait" ]; then TARGET=""; fi
-    if [ "$VOL" = "--wait" ]; then VOL=""; fi
+    if [ "$VOL" = "--wait" ]; then VOL="80"; fi
+    if [ "$VOL" = "current" ]; then VOL=""; fi
     check_wait_flag "$@"
 
     echo "Submitting instant chime (low-latency, no fade) [wait: ${WAIT_PARAM:-false}, vol: ${VOL:-current}]..."
@@ -76,9 +77,10 @@ case "$1" in
 
   fading)
     TARGET="${2:-}"
-    VOL="${3:-}"
+    VOL="${3:-75}"
     if [ "$TARGET" = "--wait" ]; then TARGET=""; fi
-    if [ "$VOL" = "--wait" ]; then VOL=""; fi
+    if [ "$VOL" = "--wait" ]; then VOL="75"; fi
+    if [ "$VOL" = "current" ]; then VOL=""; fi
     check_wait_flag "$@"
 
     echo "Submitting gentle announcement with 1.5s volume fade-out and fade-in [wait: ${WAIT_PARAM:-false}, vol: ${VOL:-current}]..."
