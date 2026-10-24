@@ -1651,6 +1651,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
 
         try
         {
+            await db.Entry(group).ReloadAsync();
             group.CurrentStreamId = effectiveStreamId;
             await db.SaveChangesAsync();
 

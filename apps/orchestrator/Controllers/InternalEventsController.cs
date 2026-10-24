@@ -193,6 +193,8 @@ public class EventsController : ControllerBase
                         bool isBroadcasting = false;
                         try
                         {
+                            await bgDb.Entry(g).ReloadAsync();
+                            snapcastGroupId = g.SnapcastGroupId ?? g.Id;
                             isBroadcasting = bgBroadcast?.IsGroupActiveInBroadcast(g.Id, snapcastGroupId) == true;
                             if (isBroadcasting)
                             {

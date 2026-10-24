@@ -61,6 +61,7 @@ public class VolumeOrchestratorService
 
         try
         {
+            await _db.Entry(group).ReloadAsync();
             if (fromDocker && broadcastService?.IsGroupActiveInBroadcast(group.Id, group.SnapcastGroupId) == true)
             {
                 return;

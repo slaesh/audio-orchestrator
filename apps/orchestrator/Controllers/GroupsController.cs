@@ -441,6 +441,34 @@ public class GroupsController : ControllerBase
                     if (!string.IsNullOrEmpty(freshId)) {
                         if (snapcastGroupId != freshId) {
                             _logger.LogInformation($"Group ID rotated from {snapcastGroupId} to {freshId} after client assignment.");
+
+                            if (!involvedGateIds.Contains(freshId))
+                            {
+                                foreach (var g in acquiredGates) g.Release();
+                                acquiredGates.Clear();
+                                involvedGateIds.Add(freshId);
+
+                                var reacquireSorted = involvedGateIds.OrderBy(gid => gid, StringComparer.Ordinal).ToList();
+                                if (broadcastService != null)
+                                {
+                                    foreach (var gid in reacquireSorted)
+                                    {
+                                        var g = broadcastService.GetGroupGate(gid);
+                                        if (g != null)
+                                        {
+                                            await g.WaitAsync();
+                                            acquiredGates.Add(g);
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (broadcastService?.IsGroupActiveInBroadcast(group.Id, freshId) == true ||
+                                broadcastService?.IsGroupActiveInBroadcast(null, freshId) == true)
+                            {
+                                return Conflict("A broadcast session became active on the newly resolved group during client assignment.");
+                            }
+
                             snapcastGroupId = freshId;
                             group.SnapcastGroupId = snapcastGroupId;
                             await _db.SaveChangesAsync();
@@ -564,6 +592,7 @@ public class GroupsController : ControllerBase
 
         try
         {
+            await _db.Entry(group).ReloadAsync();
             group.CurrentStreamId = effectiveStreamId;
             await _db.SaveChangesAsync();
 
