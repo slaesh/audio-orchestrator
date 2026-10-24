@@ -1642,15 +1642,26 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         ISnapcastService snapcast,
         VolumeOrchestratorService volumeOrchestrator)
     {
-        group.CurrentStreamId = effectiveStreamId;
-        await db.SaveChangesAsync();
-
         var broadcastService = _serviceProvider.GetService<IBroadcastService>();
-        bool isBroadcasting = broadcastService?.IsGroupActiveInBroadcast(group.Id, group.SnapcastGroupId) == true;
+        var gate = broadcastService?.GetGroupGate(group.Id);
+        if (gate != null) await gate.WaitAsync();
 
-        if (!string.IsNullOrEmpty(group.SnapcastGroupId) && !isBroadcasting)
+        bool isBroadcasting = false;
+        try
         {
-            await snapcast.SetGroupStreamAsync(group.SnapcastGroupId, effectiveStreamId);
+            group.CurrentStreamId = effectiveStreamId;
+            await db.SaveChangesAsync();
+
+            isBroadcasting = broadcastService?.IsGroupActiveInBroadcast(group.Id, group.SnapcastGroupId) == true;
+
+            if (!string.IsNullOrEmpty(group.SnapcastGroupId) && !isBroadcasting)
+            {
+                await snapcast.SetGroupStreamAsync(group.SnapcastGroupId, effectiveStreamId);
+            }
+        }
+        finally
+        {
+            gate?.Release();
         }
 
         if (!isBroadcasting && effectiveStreamId.StartsWith(OrchestratorConstants.SpotifyPrefix))

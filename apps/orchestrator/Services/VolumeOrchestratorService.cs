@@ -56,6 +56,9 @@ public class VolumeOrchestratorService
             await gate.WaitAsync();
         }
 
+        List<GroupEntity>? siblingGroups = null;
+        string? spotifySourceIdToSync = null;
+
         try
         {
             group.MasterVolume = masterVolume;
@@ -79,8 +82,8 @@ public class VolumeOrchestratorService
                     source.MasterVolume = masterVolume;
                 }
 
-                // Sync all other groups listening to the same Spotify source (excluding groups in an active broadcast)
-                var siblingGroups = await _db.Groups
+                // Query sibling groups listening to the same Spotify source (excluding groups in an active broadcast)
+                siblingGroups = await _db.Groups
                     .Where(g => g.Id != group.Id && g.CurrentStreamId == group.CurrentStreamId)
                     .ToListAsync();
 
@@ -91,27 +94,13 @@ public class VolumeOrchestratorService
 
                 foreach (var sibling in siblingGroups)
                 {
-                    if (sibling.MasterVolume != masterVolume)
-                    {
-                        sibling.MasterVolume = masterVolume;
-                        await _hub.Clients.All.OnGroupVolumeChanged(sibling.Id, sibling.MasterVolume, sibling.IsMuted);
-                        await RecalculateAndPushGroupAsync(sibling.Id, force: force);
-                    }
+                    sibling.MasterVolume = masterVolume;
                 }
                 await _db.SaveChangesAsync();
 
-                // Sync back to Spotify (LibreSpot) only if NOT coming from Docker event
                 if (!fromDocker)
                 {
-                    _logger.LogInformation($"Pushing volume {masterVolume}% from Group {group.Name} to Spotify Source {sourceId}");
-                    try
-                    {
-                        await _librespotApi.SetVolumeAsync(sourceId, masterVolume);
-                    }
-                    catch (Exception ex) when (ex is HttpRequestException || ex is ApiException)
-                    {
-                        _logger.LogWarning("Could not push volume to Spotify source {SourceId} (node might still be starting or offline): {Message}", sourceId, ex.Message);
-                    }
+                    spotifySourceIdToSync = sourceId;
                 }
             }
 
@@ -129,6 +118,30 @@ public class VolumeOrchestratorService
         finally
         {
             gate?.Release();
+        }
+
+        // Independently update sibling groups AFTER releasing the current group's gate to prevent deadlocks
+        if (siblingGroups != null && siblingGroups.Count > 0)
+        {
+            foreach (var sibling in siblingGroups)
+            {
+                await _hub.Clients.All.OnGroupVolumeChanged(sibling.Id, sibling.MasterVolume, sibling.IsMuted);
+                await RecalculateAndPushGroupAsync(sibling.Id, force: force);
+            }
+        }
+
+        // Sync back to Spotify (LibreSpot) outside the group gate
+        if (spotifySourceIdToSync != null)
+        {
+            _logger.LogInformation($"Pushing volume {masterVolume}% from Group {group.Name} to Spotify Source {spotifySourceIdToSync}");
+            try
+            {
+                await _librespotApi.SetVolumeAsync(spotifySourceIdToSync, masterVolume);
+            }
+            catch (Exception ex) when (ex is HttpRequestException || ex is ApiException)
+            {
+                _logger.LogWarning("Could not push volume to Spotify source {SourceId} (node might still be starting or offline): {Message}", spotifySourceIdToSync, ex.Message);
+            }
         }
     }
 

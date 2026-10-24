@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Threading.Channels;
 using AudioOrchestrator.Contracts;
@@ -918,8 +919,8 @@ public class BroadcastService : IHostedService, IBroadcastService
                 ct
             );
 
-            // 8. Snapcast audio buffer delay (~500ms) to ensure audio finishes playback on physical clients
-            await Task.Delay(500, ct);
+            // 8. Wait for FIFO to drain and client playback buffer (~500ms) to finish
+            await WaitForFifoAndBufferDrainAsync(OrchestratorConstants.AnnouncementFifoPath, clientBufferMs: 500, ct);
 
             await _jobStateLock.WaitAsync(CancellationToken.None);
             try
@@ -1028,7 +1029,7 @@ public class BroadcastService : IHostedService, IBroadcastService
         bool explicitGroups = request.GroupIds != null && request.GroupIds.Count > 0;
         bool explicitRooms = request.RoomIds != null && request.RoomIds.Count > 0;
 
-        var allGroups = await db.Groups.ToListAsync();
+        var allGroups = await db.Groups.AsNoTracking().ToListAsync();
 
         if (!explicitGroups && !explicitRooms)
         {
@@ -1057,7 +1058,7 @@ public class BroadcastService : IHostedService, IBroadcastService
 
             if (explicitRooms)
             {
-                var rooms = await db.Rooms.ToListAsync();
+                var rooms = await db.Rooms.AsNoTracking().ToListAsync();
                 var targetedMacs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var rInput in request.RoomIds!)
                 {
@@ -1714,5 +1715,64 @@ public class BroadcastService : IHostedService, IBroadcastService
             DurationMs: j.DurationMs,
             ErrorMessage: j.ErrorMessage
         );
+    }
+
+    [DllImport("libc", EntryPoint = "open", SetLastError = true)]
+    private static extern int LibcOpen(string pathname, int flags);
+
+    [DllImport("libc", EntryPoint = "ioctl", SetLastError = true)]
+    private static extern int LibcIoctl(int fd, ulong request, out int argp);
+
+    [DllImport("libc", EntryPoint = "close", SetLastError = true)]
+    private static extern int LibcClose(int fd);
+
+    private const int LibcO_RDONLY = 0;
+    private const int LibcO_NONBLOCK = 0x800;
+    private const ulong LibcFIONREAD = 0x541B;
+
+    private static int GetFifoUnreadBytes(string fifoPath)
+    {
+        if (!OperatingSystem.IsLinux() || !File.Exists(fifoPath)) return 0;
+        try
+        {
+            int fd = LibcOpen(fifoPath, LibcO_RDONLY | LibcO_NONBLOCK);
+            if (fd < 0) return 0;
+            try
+            {
+                if (LibcIoctl(fd, LibcFIONREAD, out int unread) == 0)
+                {
+                    return Math.Max(0, unread);
+                }
+                return 0;
+            }
+            finally
+            {
+                LibcClose(fd);
+            }
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    private async Task WaitForFifoAndBufferDrainAsync(string fifoPath, int clientBufferMs, CancellationToken ct)
+    {
+        if (OperatingSystem.IsLinux() && File.Exists(fifoPath))
+        {
+            var sw = Stopwatch.StartNew();
+            while (sw.ElapsedMilliseconds < 3000)
+            {
+                ct.ThrowIfCancellationRequested();
+                int unread = GetFifoUnreadBytes(fifoPath);
+                if (unread <= 0) break;
+                await Task.Delay(50, ct);
+            }
+        }
+
+        if (clientBufferMs > 0)
+        {
+            await Task.Delay(clientBufferMs, ct);
+        }
     }
 }

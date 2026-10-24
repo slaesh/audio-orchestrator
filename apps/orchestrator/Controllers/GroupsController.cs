@@ -316,14 +316,25 @@ public class GroupsController : ControllerBase
         // If 'No active stream' is selected (empty string), we fall back to the system 'default' (silence).
         var effectiveStreamId = string.IsNullOrEmpty(req.StreamId) ? "default" : req.StreamId;
 
-        group.CurrentStreamId = effectiveStreamId;
-        await _db.SaveChangesAsync();
-
         var broadcastService = HttpContext.RequestServices.GetService<IBroadcastService>();
-        bool isBroadcasting = broadcastService?.IsGroupActiveInBroadcast(group.Id, group.SnapcastGroupId) == true;
+        var gate = broadcastService?.GetGroupGate(group.Id);
+        if (gate != null) await gate.WaitAsync();
 
-        if (!string.IsNullOrEmpty(group.SnapcastGroupId) && !isBroadcasting) {
-            await _snapcast.SetGroupStreamAsync(group.SnapcastGroupId, effectiveStreamId);
+        bool isBroadcasting = false;
+        try
+        {
+            group.CurrentStreamId = effectiveStreamId;
+            await _db.SaveChangesAsync();
+
+            isBroadcasting = broadcastService?.IsGroupActiveInBroadcast(group.Id, group.SnapcastGroupId) == true;
+
+            if (!string.IsNullOrEmpty(group.SnapcastGroupId) && !isBroadcasting) {
+                await _snapcast.SetGroupStreamAsync(group.SnapcastGroupId, effectiveStreamId);
+            }
+        }
+        finally
+        {
+            gate?.Release();
         }
 
         // If we switched TO a Spotify stream, adopt existing volume if active or push current group volume
