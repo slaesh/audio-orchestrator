@@ -57,12 +57,12 @@ poll_job_until_done() {
       cancelled)
         echo "⚠ Job was cancelled after ${dur}ms (Message: ${err:-None})"
         echo "$job_json" | jq .
-        break
+        return 1
         ;;
       failed)
         echo "✗ Job FAILED after ${dur}ms: $err"
         echo "$job_json" | jq .
-        break
+        return 1
         ;;
       playing)
         echo "  [${elapsed}s] Playing announcement on target zone(s)..."

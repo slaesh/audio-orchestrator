@@ -527,13 +527,21 @@ public class BroadcastService : IHostedService, IBroadcastService
 
     private async Task CancelActiveBroadcastInternalAsync()
     {
-        foreach (var kvp in _activeCtsMap.ToArray())
+        await _jobStateLock.WaitAsync(CancellationToken.None);
+        try
         {
-            try
+            foreach (var kvp in _activeCtsMap.ToArray())
             {
-                kvp.Value.Cancel();
+                try
+                {
+                    kvp.Value.Cancel();
+                }
+                catch (ObjectDisposedException) { }
             }
-            catch (ObjectDisposedException) { }
+        }
+        finally
+        {
+            _jobStateLock.Release();
         }
         await Task.Yield();
     }
@@ -705,7 +713,7 @@ public class BroadcastService : IHostedService, IBroadcastService
             var fadeMs = Math.Clamp(item.Request.FadeDurationMs ?? 0, 0, MaxFadeDurationMs);
             if (fadeMs > 0)
             {
-                await FadeGroupsVolumeAsync(snapshots, targetZero: true, fadeMs, volumeOrchestrator, ct);
+                await FadeGroupsVolumeAsync(snapshots, targetZero: true, fadeMs, ct);
             }
 
             // 3. Optional pause of active Spotify playback (after the fade-down, so the fade is audible)
@@ -746,45 +754,35 @@ public class BroadcastService : IHostedService, IBroadcastService
             {
                 if (s.IsNative)
                 {
-                    var nativeVol = item.Request.Volume.HasValue ? Math.Clamp(item.Request.Volume.Value, 0, 100) : 50;
                     foreach (var c in s.NativeClients)
                     {
-                        var roomEntity = roomsFromDb.FirstOrDefault(r => r.MacAddress == c.ClientId);
-                        var mixVolume = roomEntity?.MixVolume ?? 100;
-                        var announcementVol = VolumeOrchestratorService.CalculateSnapcastVolume(nativeVol, mixVolume, profile);
-                        await _snapcast.SetClientVolumeAsync(c.ClientId, announcementVol, muted: false);
+                        if (item.Request.Volume.HasValue)
+                        {
+                            var nativeOverrideVol = Math.Clamp(item.Request.Volume.Value, 0, 100);
+                            var roomEntity = roomsFromDb.FirstOrDefault(r => r.MacAddress == c.ClientId);
+                            var mixVolume = roomEntity?.MixVolume ?? 100;
+                            var announcementVol = VolumeOrchestratorService.CalculateSnapcastVolume(nativeOverrideVol, mixVolume, profile);
+                            await _snapcast.SetClientVolumeAsync(c.ClientId, announcementVol, muted: false);
+                        }
+                        else
+                        {
+                            await _snapcast.SetClientVolumeAsync(c.ClientId, c.Volume, muted: false);
+                        }
                     }
                     continue;
                 }
 
                 var targetVol = item.Request.Volume.HasValue ? Math.Clamp(item.Request.Volume.Value, 0, 100) : s.OriginalVolume;
-                try
-                {
-                    await volumeOrchestrator.SetGroupVolumeAsync(s.GroupId, targetVol, isMuted: false, syncStreamSource: false);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Failed to set announcement volume on group {GroupId}", s.GroupId);
-                }
 
-                // Explicitly unmute targeted clients in the group so room-level mutes do not silence the announcement
+                // Explicitly set announcement volume and unmute targeted clients directly on Snapcast.
+                // Transient broadcast volumes are not persisted to SQLite to ensure crash resilience.
+                // Failures abort the job so un-configured or silent targets trigger restoration.
                 foreach (var c in s.SelectedClients)
                 {
                     var roomEntity = roomsFromDb.FirstOrDefault(r => r.MacAddress == c.ClientId);
-                    bool wasMuted = c.Muted || (roomEntity?.IsMuted ?? false);
-                    if (wasMuted)
-                    {
-                        try
-                        {
-                            var mixVolume = roomEntity?.MixVolume ?? 100;
-                            var announcementVol = VolumeOrchestratorService.CalculateSnapcastVolume(targetVol, mixVolume, profile);
-                            await _snapcast.SetClientVolumeAsync(c.ClientId, announcementVol, muted: false);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogWarning(ex, "Failed temporarily unmuting selected client {ClientId} for announcement", c.ClientId);
-                        }
-                    }
+                    var mixVolume = roomEntity?.MixVolume ?? 100;
+                    var announcementVol = VolumeOrchestratorService.CalculateSnapcastVolume(targetVol, mixVolume, profile);
+                    await _snapcast.SetClientVolumeAsync(c.ClientId, announcementVol, muted: false);
                 }
             }
 
@@ -1101,7 +1099,6 @@ public class BroadcastService : IHostedService, IBroadcastService
         List<GroupSnapshot> snapshots,
         bool targetZero,
         int durationMs,
-        VolumeOrchestratorService volumeOrchestrator,
         CancellationToken ct)
     {
         var steps = Math.Clamp(durationMs / 100, 2, 10);
@@ -1112,39 +1109,22 @@ public class BroadcastService : IHostedService, IBroadcastService
             double progress = (double)step / steps;
             foreach (var s in snapshots)
             {
-                if (s.IsNative)
+                var allClients = s.NativeClients.Concat(s.SelectedClients).Concat(s.UnselectedClients);
+                foreach (var c in allClients)
                 {
-                    foreach (var c in s.NativeClients)
+                    int clientVol = targetZero
+                        ? (int)Math.Round(c.Volume * (1.0 - progress))
+                        : (int)Math.Round(c.Volume * progress);
+
+                    clientVol = Math.Clamp(clientVol, 0, 100);
+                    try
                     {
-                        int clientVol = targetZero
-                            ? (int)Math.Round(c.Volume * (1.0 - progress))
-                            : (int)Math.Round(c.Volume * progress);
-
-                        clientVol = Math.Clamp(clientVol, 0, 100);
-                        try
-                        {
-                            await _snapcast.SetClientVolumeAsync(c.ClientId, clientVol, c.Muted);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogDebug(ex, "Error fading native client {ClientId} volume to {Vol}", c.ClientId, clientVol);
-                        }
+                        await _snapcast.SetClientVolumeAsync(c.ClientId, clientVol, c.Muted);
                     }
-                    continue;
-                }
-
-                int currentVol = targetZero
-                    ? (int)Math.Round(s.OriginalVolume * (1.0 - progress))
-                    : (int)Math.Round(s.OriginalVolume * progress);
-
-                currentVol = Math.Clamp(currentVol, 0, 100);
-                try
-                {
-                    await volumeOrchestrator.SetGroupVolumeAsync(s.GroupId, currentVol, isMuted: s.OriginalIsMuted, syncStreamSource: false);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogDebug(ex, "Error fading group {GroupId} volume to {Vol}", s.GroupId, currentVol);
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex, "Error fading client {ClientId} volume to {Vol}", c.ClientId, clientVol);
+                    }
                 }
             }
 
@@ -1168,31 +1148,17 @@ public class BroadcastService : IHostedService, IBroadcastService
         // briefly plays at the announcement volume.
         foreach (var s in snapshots)
         {
-            if (s.IsNative)
+            foreach (var c in s.NativeClients.Concat(s.SelectedClients))
             {
-                foreach (var c in s.NativeClients)
+                try
                 {
-                    try
-                    {
-                        await _snapcast.SetClientVolumeAsync(c.ClientId, fadeMs > 0 ? 0 : c.Volume, c.Muted);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "Failed preparing volume before restoring stream on native client {ClientId}", c.ClientId);
-                        restorationErrors.Add($"Native client {c.ClientId} volume prep: {ex.Message}");
-                    }
+                    await _snapcast.SetClientVolumeAsync(c.ClientId, fadeMs > 0 ? 0 : c.Volume, c.Muted);
                 }
-                continue;
-            }
-
-            try
-            {
-                await volumeOrchestrator.SetGroupVolumeAsync(s.GroupId, fadeMs > 0 ? 0 : s.OriginalVolume, isMuted: s.OriginalIsMuted, syncStreamSource: false);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed preparing volume before restoring stream on group {GroupId}", s.GroupId);
-                restorationErrors.Add($"Group {s.GroupId} volume prep: {ex.Message}");
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed preparing volume before restoring stream on client {ClientId}", c.ClientId);
+                    restorationErrors.Add($"Client {c.ClientId} volume prep: {ex.Message}");
+                }
             }
 
             // Excluded clients must remain muted until after the stream switch has completed
@@ -1246,7 +1212,7 @@ public class BroadcastService : IHostedService, IBroadcastService
         // 4. Fade back up
         if (fadeMs > 0)
         {
-            await FadeGroupsVolumeAsync(snapshots, targetZero: false, fadeMs, volumeOrchestrator, CancellationToken.None);
+            await FadeGroupsVolumeAsync(snapshots, targetZero: false, fadeMs, CancellationToken.None);
         }
 
         // 5. Final original group volume / mute state
