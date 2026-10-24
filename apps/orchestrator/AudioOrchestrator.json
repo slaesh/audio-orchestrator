@@ -242,17 +242,38 @@
             "content": {
               "text/plain": {
                 "schema": {
-                  "$ref": "#/components/schemas/BroadcastJobDto"
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "$ref": "#/components/schemas/BroadcastJobDto"
+                    }
+                  ]
                 }
               },
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BroadcastJobDto"
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "$ref": "#/components/schemas/BroadcastJobDto"
+                    }
+                  ]
                 }
               },
               "text/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BroadcastJobDto"
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "$ref": "#/components/schemas/BroadcastJobDto"
+                    }
+                  ]
                 }
               }
             }
@@ -403,17 +424,38 @@
             "content": {
               "text/plain": {
                 "schema": {
-                  "$ref": "#/components/schemas/BroadcastJobDto"
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "$ref": "#/components/schemas/BroadcastJobDto"
+                    }
+                  ]
                 }
               },
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BroadcastJobDto"
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "$ref": "#/components/schemas/BroadcastJobDto"
+                    }
+                  ]
                 }
               },
               "text/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BroadcastJobDto"
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "$ref": "#/components/schemas/BroadcastJobDto"
+                    }
+                  ]
                 }
               }
             }

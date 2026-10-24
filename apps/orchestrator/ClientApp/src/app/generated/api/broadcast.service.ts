@@ -17,6 +17,8 @@ import { Observable }                                        from 'rxjs';
 import { OpenApiHttpParams, QueryParamStyle } from '../query.params';
 
 // @ts-ignore
+import { ApiBroadcastPlayPost400Response } from '../model/apiBroadcastPlayPost400Response';
+// @ts-ignore
 import { BroadcastJobDto, BroadcastPlayRequest, BroadcastStatusDto } from '@contracts';
 
 // @ts-ignore

@@ -125,45 +125,50 @@ public class GroupsController : ControllerBase
         if (group == null) return NotFound();
         if (clientIds.Length == 0) return BadRequest("No clients to assign");
 
-        var status = await _snapcast.GetStatusAsync();
-        var snapGroups = status?["server"]?["groups"]?.AsArray();
-        if (snapGroups == null) return StatusCode(500, "Snapserver unreachable");
-
         var broadcastService = HttpContext?.RequestServices?.GetService<IBroadcastService>();
 
+        JsonNode? status = null;
+        JsonArray? snapGroups = null;
         var sourceSnapGroupIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var cId in clientIds)
-        {
-            var sourceSnapGroup = snapGroups.FirstOrDefault(sg => 
-                sg?["clients"]?.AsArray()?.Any(c => c?["id"]?.GetValue<string>() == cId) == true);
-            var sGroupId = sourceSnapGroup?["id"]?.GetValue<string>();
-            if (!string.IsNullOrEmpty(sGroupId))
-            {
-                sourceSnapGroupIds.Add(sGroupId);
-            }
-        }
-
-        var sourceDbGroups = await _db.Groups
-            .Where(g => g.SnapcastGroupId != null && sourceSnapGroupIds.Contains(g.SnapcastGroupId))
-            .ToListAsync();
-
-        var involvedGateIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { group.Id };
-        if (!string.IsNullOrEmpty(group.SnapcastGroupId)) involvedGateIds.Add(group.SnapcastGroupId);
-        foreach (var sgId in sourceSnapGroupIds)
-        {
-            var matchingDb = sourceDbGroups.FirstOrDefault(g => g.SnapcastGroupId == sgId);
-            if (matchingDb != null)
-            {
-                involvedGateIds.Add(matchingDb.Id);
-            }
-            involvedGateIds.Add(sgId);
-        }
-
-        var sortedGateIds = involvedGateIds.OrderBy(gid => gid, StringComparer.Ordinal).ToList();
+        List<GroupEntity> sourceDbGroups = new();
         var acquiredGates = new List<SemaphoreSlim>();
 
-        try
+        for (int attempt = 0; attempt < 5; attempt++)
         {
+            status = await _snapcast.GetStatusAsync();
+            snapGroups = status?["server"]?["groups"]?.AsArray();
+            if (snapGroups == null) return StatusCode(500, "Snapserver unreachable");
+
+            sourceSnapGroupIds.Clear();
+            foreach (var cId in clientIds)
+            {
+                var sourceSnapGroup = snapGroups.FirstOrDefault(sg => 
+                    sg?["clients"]?.AsArray()?.Any(c => c?["id"]?.GetValue<string>() == cId) == true);
+                var sGroupId = sourceSnapGroup?["id"]?.GetValue<string>();
+                if (!string.IsNullOrEmpty(sGroupId))
+                {
+                    sourceSnapGroupIds.Add(sGroupId);
+                }
+            }
+
+            sourceDbGroups = await _db.Groups
+                .Where(g => g.SnapcastGroupId != null && sourceSnapGroupIds.Contains(g.SnapcastGroupId))
+                .ToListAsync();
+
+            var involvedGateIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { group.Id };
+            if (!string.IsNullOrEmpty(group.SnapcastGroupId)) involvedGateIds.Add(group.SnapcastGroupId);
+            foreach (var sgId in sourceSnapGroupIds)
+            {
+                var matchingDb = sourceDbGroups.FirstOrDefault(g => g.SnapcastGroupId == sgId);
+                if (matchingDb != null)
+                {
+                    involvedGateIds.Add(matchingDb.Id);
+                }
+                involvedGateIds.Add(sgId);
+            }
+
+            var sortedGateIds = involvedGateIds.OrderBy(gid => gid, StringComparer.Ordinal).ToList();
+            acquiredGates.Clear();
             if (broadcastService != null)
             {
                 foreach (var gid in sortedGateIds)
@@ -173,6 +178,48 @@ public class GroupsController : ControllerBase
                     acquiredGates.Add(g);
                 }
             }
+
+            // Verify membership did not shift before gates were acquired
+            var freshStatus = await _snapcast.GetStatusAsync();
+            var freshSnapGroups = freshStatus?["server"]?["groups"]?.AsArray();
+            if (freshSnapGroups == null)
+            {
+                foreach (var g in acquiredGates) g.Release();
+                acquiredGates.Clear();
+                return StatusCode(500, "Snapserver unreachable");
+            }
+
+            var freshSourceSnapGroupIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var cId in clientIds)
+            {
+                var sourceSnapGroup = freshSnapGroups.FirstOrDefault(sg => 
+                    sg?["clients"]?.AsArray()?.Any(c => c?["id"]?.GetValue<string>() == cId) == true);
+                var sGroupId = sourceSnapGroup?["id"]?.GetValue<string>();
+                if (!string.IsNullOrEmpty(sGroupId))
+                {
+                    freshSourceSnapGroupIds.Add(sGroupId);
+                }
+            }
+
+            if (!freshSourceSnapGroupIds.SetEquals(sourceSnapGroupIds))
+            {
+                foreach (var g in acquiredGates) g.Release();
+                acquiredGates.Clear();
+                continue;
+            }
+
+            status = freshStatus;
+            snapGroups = freshSnapGroups;
+            break;
+        }
+
+        if (acquiredGates.Count == 0 && broadcastService != null)
+        {
+            return StatusCode(503, "Could not acquire group locks due to concurrent membership changes");
+        }
+
+        try
+        {
 
             if (broadcastService?.IsGroupActiveInBroadcast(group.Id, group.SnapcastGroupId) == true)
             {
@@ -190,6 +237,8 @@ public class GroupsController : ControllerBase
 
             // 1. PRUNING PHASE: Extract moving clients from any existing sibling groups
             // This ensures that dragging ONE client doesn't hijack its roommates.
+            if (snapGroups == null) return StatusCode(500, "Snapserver unreachable");
+
             var otherOrchestratedSnapIds = await _db.Groups.Where(g => g.Id != group.Id && g.SnapcastGroupId != null)
                 .Select(g => g.SnapcastGroupId!)
                 .ToListAsync();

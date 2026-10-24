@@ -619,6 +619,7 @@ public class BroadcastService : IHostedService, IBroadcastService
                 // Acquire gates for active target groups before clearing ownership
                 // to serialize with any pending ordinary volume push and to apply deferred stream edits.
                 var gates = new List<SemaphoreSlim>();
+                var spotifySyncs = new List<(string GroupId, string StreamId, int MasterVolume)>();
                 try
                 {
                     List<string> targetGroupIds;
@@ -660,6 +661,8 @@ public class BroadcastService : IHostedService, IBroadcastService
                             ? await db.Groups.Where(g => targetGroupIds.Contains(g.Id)).ToListAsync()
                             : new List<GroupEntity>();
                         var dbRooms = await db.Rooms.ToListAsync();
+                        var settings = await db.Settings.FirstOrDefaultAsync();
+                        var currentProfile = settings?.VolumeProfile ?? VolumeProfile.Cubic;
 
                         foreach (var g in dbGroups)
                         {
@@ -684,8 +687,10 @@ public class BroadcastService : IHostedService, IBroadcastService
                                 return (c.InitialDbMixVolume.HasValue && r.MixVolume != c.InitialDbMixVolume.Value)
                                     || (c.InitialDbIsMuted.HasValue && r.IsMuted != c.InitialDbIsMuted.Value);
                             });
+                            bool profileChanged = snap != null && currentProfile != snap.InitialVolumeProfile;
+                            bool isDeferred = deferredGroupIds.Contains(g.Id);
 
-                            if (groupEdited || roomEdited)
+                            if (groupEdited || roomEdited || profileChanged || isDeferred)
                             {
                                 try
                                 {
@@ -695,6 +700,11 @@ public class BroadcastService : IHostedService, IBroadcastService
                                 {
                                     _logger.LogWarning(ex, "Failed replaying deferred volume/mute for group {GroupId}", g.Id);
                                 }
+                            }
+
+                            if (groupEdited && !string.IsNullOrEmpty(g.CurrentStreamId) && g.CurrentStreamId.StartsWith(OrchestratorConstants.SpotifyPrefix))
+                            {
+                                spotifySyncs.Add((g.Id, g.CurrentStreamId, g.MasterVolume));
                             }
                         }
 
@@ -709,8 +719,10 @@ public class BroadcastService : IHostedService, IBroadcastService
                                 return (c.InitialDbMixVolume.HasValue && r.MixVolume != c.InitialDbMixVolume.Value)
                                     || (c.InitialDbIsMuted.HasValue && r.IsMuted != c.InitialDbIsMuted.Value);
                             });
+                            bool nativeProfileChanged = currentProfile != s.InitialVolumeProfile;
+                            bool nativeIsDeferred = deferredNativeIds.Contains(s.SnapcastGroupId);
 
-                            if (nativeRoomEdited)
+                            if (nativeRoomEdited || nativeProfileChanged || nativeIsDeferred)
                             {
                                 try
                                 {
@@ -743,6 +755,30 @@ public class BroadcastService : IHostedService, IBroadcastService
                     foreach (var gate in gates)
                     {
                         gate.Release();
+                    }
+                }
+
+                if (spotifySyncs.Count > 0)
+                {
+                    try
+                    {
+                        using var syncScope = _serviceProvider.CreateScope();
+                        var volOrchestrator = syncScope.ServiceProvider.GetRequiredService<VolumeOrchestratorService>();
+                        foreach (var sync in spotifySyncs)
+                        {
+                            try
+                            {
+                                await volOrchestrator.SyncSpotifySourceAndSiblingsAsync(sync.GroupId, sync.StreamId, sync.MasterVolume);
+                            }
+                            catch (Exception ex)
+                            {
+                                _logger.LogWarning(ex, "Failed syncing deferred Spotify source volume for group {GroupId}", sync.GroupId);
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed creating scope for deferred Spotify volume sync");
                     }
                 }
 

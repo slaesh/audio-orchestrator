@@ -460,6 +460,107 @@ public class StabilityTests
         ), Times.Once);
     }
 
+    [Fact]
+    public async Task SetGroupVolumeAsync_FromDocker_IgnoredWhenBroadcasting()
+    {
+        using var db = GetDbContext();
+        var grp = new GroupEntity
+        {
+            Id = "grp-broadcast-active",
+            Name = "Active Broadcast Group",
+            SnapcastGroupId = "snap-active",
+            MasterVolume = 50,
+            IsMuted = false
+        };
+        db.Groups.Add(grp);
+        await db.SaveChangesAsync();
+
+        var broadcastMock = new Mock<IBroadcastService>();
+        broadcastMock.Setup(b => b.GetGroupGate("grp-broadcast-active")).Returns(new SemaphoreSlim(1, 1));
+        broadcastMock.Setup(b => b.IsGroupActiveInBroadcast("grp-broadcast-active", "snap-active")).Returns(true);
+
+        var serviceProviderMock = new Mock<IServiceProvider>();
+        serviceProviderMock.Setup(s => s.GetService(typeof(IBroadcastService))).Returns(broadcastMock.Object);
+
+        var librespotMock = new Mock<ILibrespotApiClient>();
+        var volumeOrchestrator = new VolumeOrchestratorService(
+            db,
+            _snapMock.Object,
+            librespotMock.Object,
+            _hubMock.Object,
+            serviceProviderMock.Object,
+            new Mock<ILogger<VolumeOrchestratorService>>().Object
+        );
+
+        // Webhook arrives from Docker while broadcasting
+        await volumeOrchestrator.SetGroupVolumeAsync("grp-broadcast-active", 85, isMuted: true, syncStreamSource: true, fromDocker: true);
+
+        // Group volume in DB must not be overwritten by Docker webhook during broadcast
+        var freshGroup = await db.Groups.FindAsync("grp-broadcast-active");
+        Assert.NotNull(freshGroup);
+        Assert.Equal(50, freshGroup!.MasterVolume);
+        Assert.False(freshGroup.IsMuted);
+    }
+
+    [Fact]
+    public async Task VolumeOrchestrator_SyncSpotifySourceAndSiblingsAsync_UpdatesSourceAndSiblings()
+    {
+        using var db = GetDbContext();
+        var source = new SpotifySourceEntity
+        {
+            Id = "spotify-1",
+            Name = "Spotify Test",
+            MasterVolume = 30
+        };
+        var grp1 = new GroupEntity
+        {
+            Id = "grp-1",
+            Name = "Group 1",
+            SnapcastGroupId = "snap-1",
+            CurrentStreamId = $"{OrchestratorConstants.SpotifyPrefix}spotify-1",
+            MasterVolume = 70
+        };
+        var grp2 = new GroupEntity
+        {
+            Id = "grp-2",
+            Name = "Group 2",
+            SnapcastGroupId = "snap-2",
+            CurrentStreamId = $"{OrchestratorConstants.SpotifyPrefix}spotify-1",
+            MasterVolume = 30
+        };
+        db.SpotifySources.Add(source);
+        db.Groups.AddRange(grp1, grp2);
+        await db.SaveChangesAsync();
+
+        var librespotMock = new Mock<ILibrespotApiClient>();
+        var serviceProviderMock = new Mock<IServiceProvider>();
+        var broadcastMock = new Mock<IBroadcastService>();
+        broadcastMock.Setup(b => b.GetGroupGate(It.IsAny<string>())).Returns<string>(_ => new SemaphoreSlim(1, 1));
+        broadcastMock.Setup(b => b.IsGroupActiveInBroadcast(It.IsAny<string>(), It.IsAny<string>())).Returns(false);
+        serviceProviderMock.Setup(s => s.GetService(typeof(IBroadcastService))).Returns(broadcastMock.Object);
+
+        _snapMock.Setup(s => s.GetStatusAsync()).ReturnsAsync(System.Text.Json.Nodes.JsonNode.Parse(
+            """{"server":{"groups":[{"id":"snap-2","clients":[]}]}}"""));
+
+        var volumeOrchestrator = new VolumeOrchestratorService(
+            db,
+            _snapMock.Object,
+            librespotMock.Object,
+            _hubMock.Object,
+            serviceProviderMock.Object,
+            new Mock<ILogger<VolumeOrchestratorService>>().Object
+        );
+
+        await volumeOrchestrator.SyncSpotifySourceAndSiblingsAsync("grp-1", $"{OrchestratorConstants.SpotifyPrefix}spotify-1", 70);
+
+        var freshSource = await db.SpotifySources.FindAsync("spotify-1");
+        var freshGrp2 = await db.Groups.FindAsync("grp-2");
+
+        Assert.Equal(70, freshSource!.MasterVolume);
+        Assert.Equal(70, freshGrp2!.MasterVolume);
+        librespotMock.Verify(l => l.SetVolumeAsync("spotify-1", 70), Times.Once);
+    }
+
     private sealed class FakeHttpMessageHandler : HttpMessageHandler
     {
         private readonly Func<HttpRequestMessage, HttpResponseMessage> _responder;

@@ -18,6 +18,7 @@ configuration.ts
 encoder.ts
 git_push.sh
 index.ts
+model/apiBroadcastPlayPost400Response.ts
 model/createGroupRequest.ts
 model/createRadioStreamRequest.ts
 model/createSourceRequest.ts

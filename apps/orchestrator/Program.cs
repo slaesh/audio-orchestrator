@@ -31,6 +31,34 @@ builder.Services.AddOpenApi(options => {
         }
         return Task.CompletedTask;
     });
+
+    options.AddDocumentTransformer((document, context, cancellationToken) => {
+        if (document.Paths != null)
+        {
+            var playPaths = new[] { "/api/Broadcast/play", "/api/Broadcast/play-file" };
+            foreach (var p in playPaths)
+            {
+                if (document.Paths.TryGetValue(p, out var pathItem) && pathItem.Operations != null && pathItem.Operations.TryGetValue(HttpMethod.Post, out var op))
+                {
+                    if (op.Responses != null && op.Responses.TryGetValue("400", out var response) && response.Content != null)
+                    {
+                        foreach (var content in response.Content.Values)
+                        {
+                            content.Schema = new OpenApiSchema
+                            {
+                                OneOf = new List<IOpenApiSchema>
+                                {
+                                    new OpenApiSchema { Type = JsonSchemaType.String },
+                                    new OpenApiSchemaReference("BroadcastJobDto", document)
+                                }
+                            };
+                        }
+                    }
+                }
+            }
+        }
+        return Task.CompletedTask;
+    });
 });
 
 var dockerUri = System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows)

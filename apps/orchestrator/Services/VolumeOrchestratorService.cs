@@ -61,6 +61,11 @@ public class VolumeOrchestratorService
 
         try
         {
+            if (fromDocker && broadcastService?.IsGroupActiveInBroadcast(group.Id, group.SnapcastGroupId) == true)
+            {
+                return;
+            }
+
             group.MasterVolume = masterVolume;
             if (isMuted.HasValue) group.IsMuted = isMuted.Value;
 
@@ -267,7 +272,11 @@ public class VolumeOrchestratorService
 
             try
             {
-                if (broadcastService?.IsGroupActiveInBroadcast(null, sid) == true) continue;
+                if (broadcastService?.IsGroupActiveInBroadcast(null, sid) == true)
+                {
+                    broadcastService.MarkDeferredVolumeUpdate(null, sid);
+                    continue;
+                }
 
                 var clients = sg?["clients"]?.AsArray();
                 if (clients == null) continue;
@@ -347,6 +356,49 @@ public class VolumeOrchestratorService
             int snapcastVolume = CalculateSnapcastVolume(mixVolume, 100, profile);
             await _snapcast.SetClientVolumeAsync(mac, snapcastVolume, isRoomMuted);
             await _hub.Clients.All.OnRoomVolumeChanged(mac, snapcastVolume, isRoomMuted);
+        }
+    }
+
+    public virtual async Task SyncSpotifySourceAndSiblingsAsync(string groupId, string currentStreamId, int masterVolume)
+    {
+        if (string.IsNullOrEmpty(currentStreamId) || !currentStreamId.StartsWith(OrchestratorConstants.SpotifyPrefix)) return;
+        var sourceId = currentStreamId.Replace(OrchestratorConstants.SpotifyPrefix, "");
+
+        var source = await _db.SpotifySources.FindAsync(sourceId);
+        if (source != null && source.MasterVolume != masterVolume)
+        {
+            source.MasterVolume = masterVolume;
+        }
+
+        var broadcastService = _serviceProvider?.GetService<IBroadcastService>();
+        var siblingGroups = await _db.Groups
+            .Where(g => g.Id != groupId && g.CurrentStreamId == currentStreamId)
+            .ToListAsync();
+
+        if (broadcastService != null)
+        {
+            siblingGroups = siblingGroups.Where(g => !broadcastService.IsGroupActiveInBroadcast(g.Id, g.SnapcastGroupId)).ToList();
+        }
+
+        foreach (var sibling in siblingGroups)
+        {
+            sibling.MasterVolume = masterVolume;
+        }
+        await _db.SaveChangesAsync();
+
+        foreach (var sibling in siblingGroups)
+        {
+            await _hub.Clients.All.OnGroupVolumeChanged(sibling.Id, sibling.MasterVolume, sibling.IsMuted);
+            await RecalculateAndPushGroupAsync(sibling.Id);
+        }
+
+        try
+        {
+            await _librespotApi.SetVolumeAsync(sourceId, masterVolume);
+        }
+        catch (Exception ex) when (ex is HttpRequestException || ex is ApiException)
+        {
+            _logger.LogWarning("Could not push volume to Spotify source {SourceId}: {Message}", sourceId, ex.Message);
         }
     }
 
