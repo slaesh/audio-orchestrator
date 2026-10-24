@@ -467,22 +467,37 @@ public class GroupsController : ControllerBase
         }
 
         // If we switched TO a Spotify stream, adopt existing volume if active or push current group volume
-        if (!isBroadcasting && effectiveStreamId.StartsWith(OrchestratorConstants.SpotifyPrefix))
+        if (effectiveStreamId.StartsWith(OrchestratorConstants.SpotifyPrefix))
         {
             var sourceId = effectiveStreamId.Replace(OrchestratorConstants.SpotifyPrefix, "");
             var source = await _db.SpotifySources.FindAsync(sourceId);
             var activeSibling = await _db.Groups.FirstOrDefaultAsync(g => g.Id != group.Id && g.CurrentStreamId == effectiveStreamId);
-            if (activeSibling != null)
+            int targetVolume = activeSibling?.MasterVolume ?? (source != null && source.IsActive ? source.MasterVolume : group.MasterVolume);
+
+            if (isBroadcasting)
             {
-                await _volumeOrchestrator.SetGroupVolumeAsync(group.Id, activeSibling.MasterVolume, group.IsMuted, fromDocker: true);
-            }
-            else if (source != null && source.IsActive)
-            {
-                await _volumeOrchestrator.SetGroupVolumeAsync(group.Id, source.MasterVolume, group.IsMuted, fromDocker: true);
+                if (group.MasterVolume != targetVolume)
+                {
+                    group.MasterVolume = targetVolume;
+                    await _db.SaveChangesAsync();
+                    await _hub.Clients.All.OnGroupVolumeChanged(group.Id, group.MasterVolume, group.IsMuted);
+                }
+                broadcastService?.MarkDeferredVolumeUpdate(group.Id, group.SnapcastGroupId);
             }
             else
             {
-                await _volumeOrchestrator.SetGroupVolumeAsync(group.Id, group.MasterVolume, group.IsMuted);
+                if (activeSibling != null)
+                {
+                    await _volumeOrchestrator.SetGroupVolumeAsync(group.Id, activeSibling.MasterVolume, group.IsMuted, fromDocker: true);
+                }
+                else if (source != null && source.IsActive)
+                {
+                    await _volumeOrchestrator.SetGroupVolumeAsync(group.Id, source.MasterVolume, group.IsMuted, fromDocker: true);
+                }
+                else
+                {
+                    await _volumeOrchestrator.SetGroupVolumeAsync(group.Id, group.MasterVolume, group.IsMuted);
+                }
             }
         }
         

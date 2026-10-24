@@ -80,7 +80,7 @@ public class ReconciliationService : IReconciliationService, IDisposable
             var volumeOrchestrator = volumeScope.ServiceProvider.GetService<VolumeOrchestratorService>();
             if (volumeOrchestrator != null)
             {
-                await volumeOrchestrator.RecalculateAllAsync();
+                await volumeOrchestrator.RecalculateAllAsync(markDeferred: false);
             }
         }
         finally
@@ -258,48 +258,66 @@ public class ReconciliationService : IReconciliationService, IDisposable
         // Second pass: Match orphaned DB groups by Name or Stream (Self-Healing)
         foreach (var group in groups.Where(g => string.IsNullOrEmpty(g.SnapcastGroupId) || !claimedSnapIds.Contains(g.SnapcastGroupId!)))
         {
-            var gate = broadcastService?.GetGroupGate(group.Id);
-            if (gate != null) await gate.WaitAsync();
+            if (broadcastService?.IsGroupActiveInBroadcast(group.Id, group.SnapcastGroupId) == true) continue;
+
+            var matchingSnapGroup = snapGroups.FirstOrDefault(sg => {
+                var sid = sg?["id"]?.GetValue<string>();
+                if (sid == null || claimedSnapIds.Contains(sid)) return false;
+                if (broadcastService?.IsGroupActiveInBroadcast(null, sid) == true) return false;
+                if (!string.IsNullOrEmpty(group.Name) && sg?["name"]?.GetValue<string>() == group.Name) return true;
+                if (!string.IsNullOrEmpty(group.CurrentStreamId) && 
+                    group.CurrentStreamId != "default" && 
+                    sg?["stream_id"]?.GetValue<string>() == group.CurrentStreamId) 
+                {
+                    var otherPossible = snapGroups.Count(s => s?["stream_id"]?.GetValue<string>() == group.CurrentStreamId);
+                    return otherPossible == 1; 
+                }
+                return false;
+            });
+
+            if (matchingSnapGroup == null) continue;
+            var actualSnapId = matchingSnapGroup["id"]?.GetValue<string>();
+            if (string.IsNullOrEmpty(actualSnapId)) continue;
+
+            var involvedGateIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { group.Id, actualSnapId };
+            var sortedGateIds = involvedGateIds.OrderBy(x => x, StringComparer.Ordinal).ToList();
+            var acquiredGates = new List<SemaphoreSlim>();
 
             try
             {
-                if (broadcastService?.IsGroupActiveInBroadcast(group.Id, group.SnapcastGroupId) == true) continue;
-
-                var matchingSnapGroup = snapGroups.FirstOrDefault(sg => {
-                    var sid = sg?["id"]?.GetValue<string>();
-                    if (sid == null || claimedSnapIds.Contains(sid)) return false;
-                    if (broadcastService?.IsGroupActiveInBroadcast(null, sid) == true) return false;
-                    if (!string.IsNullOrEmpty(group.Name) && sg?["name"]?.GetValue<string>() == group.Name) return true;
-                    if (!string.IsNullOrEmpty(group.CurrentStreamId) && 
-                        group.CurrentStreamId != "default" && 
-                        sg?["stream_id"]?.GetValue<string>() == group.CurrentStreamId) 
-                    {
-                        var otherPossible = snapGroups.Count(s => s?["stream_id"]?.GetValue<string>() == group.CurrentStreamId);
-                        return otherPossible == 1; 
-                    }
-                    return false;
-                });
-
-                if (matchingSnapGroup != null)
+                if (broadcastService != null)
                 {
-                    var actualSnapId = matchingSnapGroup["id"]?.GetValue<string>();
-                    if (actualSnapId != null)
+                    foreach (var gid in sortedGateIds)
                     {
-                        group.SnapcastGroupId = actualSnapId;
-                        claimedSnapIds.Add(actualSnapId);
-                        dbChanged = true;
-                        
-                        await _snapcast.SetGroupNameAsync(actualSnapId, group.Name);
-                        bool isBroadcasting = broadcastService?.IsGroupActiveInBroadcast(group.Id, actualSnapId) == true;
-                        if (!isBroadcasting && !string.IsNullOrEmpty(group.CurrentStreamId)) {
-                             try { await _snapcast.SetGroupStreamAsync(actualSnapId, group.CurrentStreamId); } catch {}
-                        }
+                        var g = broadcastService.GetGroupGate(gid);
+                        await g.WaitAsync();
+                        acquiredGates.Add(g);
                     }
+                }
+
+                // Revalidate after acquiring gates: verify neither candidate is broadcasting and snapId is not yet claimed
+                if (broadcastService?.IsGroupActiveInBroadcast(group.Id, actualSnapId) == true ||
+                    broadcastService?.IsGroupActiveInBroadcast(null, actualSnapId) == true ||
+                    claimedSnapIds.Contains(actualSnapId))
+                {
+                    continue;
+                }
+
+                group.SnapcastGroupId = actualSnapId;
+                claimedSnapIds.Add(actualSnapId);
+                dbChanged = true;
+                
+                await _snapcast.SetGroupNameAsync(actualSnapId, group.Name);
+                if (!string.IsNullOrEmpty(group.CurrentStreamId)) {
+                    try { await _snapcast.SetGroupStreamAsync(actualSnapId, group.CurrentStreamId); } catch {}
                 }
             }
             finally
             {
-                gate?.Release();
+                foreach (var g in acquiredGates)
+                {
+                    g.Release();
+                }
             }
         }
 

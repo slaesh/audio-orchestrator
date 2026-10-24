@@ -1664,22 +1664,41 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             gate?.Release();
         }
 
-        if (!isBroadcasting && effectiveStreamId.StartsWith(OrchestratorConstants.SpotifyPrefix))
+        if (effectiveStreamId.StartsWith(OrchestratorConstants.SpotifyPrefix))
         {
             var sourceId = effectiveStreamId.Replace(OrchestratorConstants.SpotifyPrefix, "");
             var source = await db.SpotifySources.FindAsync(sourceId);
             var activeSibling = await db.Groups.FirstOrDefaultAsync(g => g.Id != group.Id && g.CurrentStreamId == effectiveStreamId);
-            if (activeSibling != null)
+            int targetVolume = activeSibling?.MasterVolume ?? (source != null && source.IsActive ? source.MasterVolume : group.MasterVolume);
+
+            if (isBroadcasting)
             {
-                await volumeOrchestrator.SetGroupVolumeAsync(group.Id, activeSibling.MasterVolume, group.IsMuted, fromDocker: true);
-            }
-            else if (source != null && source.IsActive)
-            {
-                await volumeOrchestrator.SetGroupVolumeAsync(group.Id, source.MasterVolume, group.IsMuted, fromDocker: true);
+                if (group.MasterVolume != targetVolume)
+                {
+                    group.MasterVolume = targetVolume;
+                    await db.SaveChangesAsync();
+                    var hubContext = _serviceProvider.GetService<Microsoft.AspNetCore.SignalR.IHubContext<AudioOrchestrator.Hubs.AudioHub, AudioOrchestrator.Contracts.IAudioClient>>();
+                    if (hubContext != null)
+                    {
+                        await hubContext.Clients.All.OnGroupVolumeChanged(group.Id, group.MasterVolume, group.IsMuted);
+                    }
+                }
+                broadcastService?.MarkDeferredVolumeUpdate(group.Id, group.SnapcastGroupId);
             }
             else
             {
-                await volumeOrchestrator.SetGroupVolumeAsync(group.Id, group.MasterVolume, group.IsMuted);
+                if (activeSibling != null)
+                {
+                    await volumeOrchestrator.SetGroupVolumeAsync(group.Id, activeSibling.MasterVolume, group.IsMuted, fromDocker: true);
+                }
+                else if (source != null && source.IsActive)
+                {
+                    await volumeOrchestrator.SetGroupVolumeAsync(group.Id, source.MasterVolume, group.IsMuted, fromDocker: true);
+                }
+                else
+                {
+                    await volumeOrchestrator.SetGroupVolumeAsync(group.Id, group.MasterVolume, group.IsMuted);
+                }
             }
         }
     }

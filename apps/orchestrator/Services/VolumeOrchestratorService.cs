@@ -241,7 +241,7 @@ public class VolumeOrchestratorService
         return Math.Clamp(Math.Max(1, snapcastVolume), 0, 100);
     }
 
-    public virtual async Task RecalculateAllAsync()
+    public virtual async Task RecalculateAllAsync(bool markDeferred = true)
     {
         var settings = await _db.Settings.FirstOrDefaultAsync();
         var profile = settings?.VolumeProfile ?? VolumeProfile.Cubic;
@@ -250,7 +250,7 @@ public class VolumeOrchestratorService
         var groups = await _db.Groups.Where(g => !string.IsNullOrEmpty(g.SnapcastGroupId)).ToListAsync();
         foreach (var group in groups)
         {
-            await RecalculateAndPushGroupAsync(group.Id);
+            await RecalculateAndPushGroupAsync(group.Id, markDeferred: markDeferred);
         }
 
         // 2. Recalculate unassigned rooms
@@ -274,7 +274,7 @@ public class VolumeOrchestratorService
             {
                 if (broadcastService?.IsGroupActiveInBroadcast(null, sid) == true)
                 {
-                    broadcastService.MarkDeferredVolumeUpdate(null, sid);
+                    if (markDeferred) broadcastService.MarkDeferredVolumeUpdate(null, sid);
                     continue;
                 }
 
@@ -302,7 +302,7 @@ public class VolumeOrchestratorService
         }
     }
 
-    public virtual async Task RecalculateAndPushGroupAsync(string groupId, bool force = false)
+    public virtual async Task RecalculateAndPushGroupAsync(string groupId, bool force = false, bool markDeferred = true)
     {
         var group = await _db.Groups.FindAsync(groupId);
         if (group == null || string.IsNullOrEmpty(group.SnapcastGroupId)) return;
@@ -316,7 +316,7 @@ public class VolumeOrchestratorService
 
         try
         {
-            await RecalculateAndPushGroupCoreAsync(group, force, broadcastService);
+            await RecalculateAndPushGroupCoreAsync(group, force, broadcastService, markDeferred);
         }
         finally
         {
@@ -402,13 +402,13 @@ public class VolumeOrchestratorService
         }
     }
 
-    private async Task RecalculateAndPushGroupCoreAsync(GroupEntity group, bool force, IBroadcastService? broadcastService)
+    private async Task RecalculateAndPushGroupCoreAsync(GroupEntity group, bool force, IBroadcastService? broadcastService, bool markDeferred = true)
     {
         if (string.IsNullOrEmpty(group.SnapcastGroupId)) return;
 
         if (!force && broadcastService?.IsGroupActiveInBroadcast(group.Id, group.SnapcastGroupId) == true)
         {
-            broadcastService.MarkDeferredVolumeUpdate(group.Id, group.SnapcastGroupId);
+            if (markDeferred) broadcastService.MarkDeferredVolumeUpdate(group.Id, group.SnapcastGroupId);
             return;
         }
 

@@ -968,16 +968,21 @@ public class BroadcastServiceTests
             .Returns(Task.CompletedTask);
 
         mockRunner.Setup(r => r.StreamToFifoAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<Stream?>(), It.IsAny<CancellationToken>()))
-            .Returns<string, string, Stream?, CancellationToken>(async (_, _, _, ct) =>
+            .ReturnsAsync(new ProcessRunResult(0, ""));
+
+        // Arrange the edit during restoration (when stream is switched back), after initial target state capture
+        mockSnapcast.Setup(s => s.SetGroupStreamAsync("native_group_1", "default"))
+            .Returns<string, string>(async (_, _) =>
             {
-                await Task.Delay(50, ct);
                 using var scope = sp.CreateScope();
-                var volumeService = scope.ServiceProvider.GetRequiredService<VolumeOrchestratorService>();
-                await volumeService.SetRoomMixVolumeAsync("c_unassigned", 75);
                 var testDb = scope.ServiceProvider.GetRequiredService<OrchestratorDbContext>();
                 var r = await testDb.Rooms.FindAsync("c_unassigned");
-                if (r != null) { r.IsMuted = true; await testDb.SaveChangesAsync(); }
-                return new ProcessRunResult(0, "");
+                if (r != null)
+                {
+                    r.MixVolume = 75;
+                    r.IsMuted = true;
+                    await testDb.SaveChangesAsync();
+                }
             });
 
         var request = new BroadcastPlayRequest(
@@ -992,5 +997,61 @@ public class BroadcastServiceTests
         var lastCall = setVolumes.LastOrDefault(c => c.ClientId == "c_unassigned");
         Assert.Equal(75, lastCall.Volume);
         Assert.True(lastCall.Muted);
+    }
+
+    [Fact]
+    public async Task PlayUrlAsync_ShouldReconcileSpotifyVolume_WhenStreamSelectedDuringBroadcast()
+    {
+        var (sp, db, mockSnapcast, mockLibrespot, mockRunner, service) = CreateTestContext();
+
+        var group = new GroupEntity { Id = "grp_test", Name = "Living Room", SnapcastGroupId = "snap_grp_test", CurrentStreamId = "default", MasterVolume = 50, IsMuted = false };
+        var room = new RoomEntity { MacAddress = "c_living", FriendlyName = "Living Room Speaker", MixVolume = 100, IsMuted = false };
+        var spotifySource = new SpotifySourceEntity { Id = "spot_active", Name = "Spotify Main", MasterVolume = 80, IsActive = true };
+        db.Groups.Add(group);
+        db.Rooms.Add(room);
+        db.SpotifySources.Add(spotifySource);
+        db.Settings.Add(new OrchestratorSettingsEntity { VolumeProfile = VolumeProfile.Linear });
+        await db.SaveChangesAsync();
+
+        mockSnapcast.Setup(s => s.GetStatusAsync())
+            .ReturnsAsync(CreateSnapcastStatus(("snap_grp_test", "default", new[] { "c_living" })));
+
+        var setVolumes = new List<(string ClientId, int Volume, bool Muted)>();
+        mockSnapcast.Setup(s => s.SetClientVolumeAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<bool>()))
+            .Callback<string, int, bool>((cid, vol, muted) => setVolumes.Add((cid, vol, muted)))
+            .Returns(Task.CompletedTask);
+
+        mockRunner.Setup(r => r.StreamToFifoAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<Stream?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProcessRunResult(0, ""));
+
+        // During restoration, stream is switched to the active Spotify source
+        mockSnapcast.Setup(s => s.SetGroupStreamAsync("snap_grp_test", "default"))
+            .Returns<string, string>(async (_, _) =>
+            {
+                using var scope = sp.CreateScope();
+                var testDb = scope.ServiceProvider.GetRequiredService<OrchestratorDbContext>();
+                var g = await testDb.Groups.FindAsync("grp_test");
+                if (g != null)
+                {
+                    g.CurrentStreamId = $"{OrchestratorConstants.SpotifyPrefix}spot_active";
+                    g.MasterVolume = 80; // Reconciled from active Spotify source
+                    await testDb.SaveChangesAsync();
+                }
+            });
+
+        var request = new BroadcastPlayRequest(
+            AudioUrl: "http://example.com/doorbell.wav",
+            GroupIds: new List<string> { "grp_test" },
+            FadeDurationMs: 50
+        );
+
+        var result = await service.PlayUrlAsync(request, CancellationToken.None);
+        Assert.True(result.Success);
+
+        var freshGroup = await db.Groups.AsNoTracking().FirstOrDefaultAsync(g => g.Id == "grp_test");
+        Assert.Equal(80, freshGroup!.MasterVolume);
+
+        var lastCall = setVolumes.LastOrDefault(c => c.ClientId == "c_living");
+        Assert.Equal(80, lastCall.Volume);
     }
 }
