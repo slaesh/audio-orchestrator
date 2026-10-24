@@ -244,7 +244,7 @@ case "$1" in
 
   stop)
     echo "Sending STOP signal to abort any active broadcast..."
-    curl -s -X POST "$BASE_URL/api/broadcast/stop"
+    curl -fsSL -X POST "$BASE_URL/api/broadcast/stop"
     echo "Broadcast stopped."
     ;;
 

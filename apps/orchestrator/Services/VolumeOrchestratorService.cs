@@ -247,40 +247,53 @@ public class VolumeOrchestratorService
         if (group == null || string.IsNullOrEmpty(group.SnapcastGroupId)) return;
 
         var broadcastService = _serviceProvider?.GetService<IBroadcastService>();
-        if (!force && broadcastService?.IsGroupActiveInBroadcast(group.Id, group.SnapcastGroupId) == true)
+        var gate = broadcastService?.GetGroupGate(group.Id);
+        if (gate != null)
         {
-            return;
+            await gate.WaitAsync();
         }
 
-        var status = await _snapcast.GetStatusAsync();
-        var snapGroups = status?["server"]?["groups"]?.AsArray();
-        var snapGroup = snapGroups?.FirstOrDefault(g => g?["id"]?.GetValue<string>() == group.SnapcastGroupId);
-
-        if (snapGroup == null) return;
-
-        var clients = snapGroup["clients"]?.AsArray();
-        if (clients == null) return;
-
-        var settings = await _db.Settings.FirstOrDefaultAsync();
-        var profile = settings?.VolumeProfile ?? VolumeProfile.Cubic;
-        var roomsFromDb = await _db.Rooms.ToListAsync();
-
-        foreach (var client in clients)
+        try
         {
-            var mac = client?["id"]?.GetValue<string>();
-            if (string.IsNullOrEmpty(mac)) continue;
+            if (!force && broadcastService?.IsGroupActiveInBroadcast(group.Id, group.SnapcastGroupId) == true)
+            {
+                return;
+            }
 
-            var roomEntity = roomsFromDb.FirstOrDefault(r => r.MacAddress == mac);
-            var mixVolume = roomEntity?.MixVolume ?? 100;
-            var isRoomMuted = roomEntity?.IsMuted ?? false;
+            var status = await _snapcast.GetStatusAsync();
+            var snapGroups = status?["server"]?["groups"]?.AsArray();
+            var snapGroup = snapGroups?.FirstOrDefault(g => g?["id"]?.GetValue<string>() == group.SnapcastGroupId);
 
-            // Effective mute: Group mute OR individual room mute
-            bool effectiveMuted = group.IsMuted || isRoomMuted;
+            if (snapGroup == null) return;
 
-            int finalVolume = CalculateSnapcastVolume(group.MasterVolume, mixVolume, profile);
+            var clients = snapGroup["clients"]?.AsArray();
+            if (clients == null) return;
 
-            await _snapcast.SetClientVolumeAsync(mac, finalVolume, effectiveMuted);
-            await _hub.Clients.All.OnRoomVolumeChanged(mac, finalVolume, effectiveMuted);
+            var settings = await _db.Settings.FirstOrDefaultAsync();
+            var profile = settings?.VolumeProfile ?? VolumeProfile.Cubic;
+            var roomsFromDb = await _db.Rooms.ToListAsync();
+
+            foreach (var client in clients)
+            {
+                var mac = client?["id"]?.GetValue<string>();
+                if (string.IsNullOrEmpty(mac)) continue;
+
+                var roomEntity = roomsFromDb.FirstOrDefault(r => r.MacAddress == mac);
+                var mixVolume = roomEntity?.MixVolume ?? 100;
+                var isRoomMuted = roomEntity?.IsMuted ?? false;
+
+                // Effective mute: Group mute OR individual room mute
+                bool effectiveMuted = group.IsMuted || isRoomMuted;
+
+                int finalVolume = CalculateSnapcastVolume(group.MasterVolume, mixVolume, profile);
+
+                await _snapcast.SetClientVolumeAsync(mac, finalVolume, effectiveMuted);
+                await _hub.Clients.All.OnRoomVolumeChanged(mac, finalVolume, effectiveMuted);
+            }
+        }
+        finally
+        {
+            gate?.Release();
         }
     }
 }

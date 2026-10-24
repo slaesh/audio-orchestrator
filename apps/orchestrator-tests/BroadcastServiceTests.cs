@@ -884,4 +884,14 @@ public class BroadcastServiceTests
         var badReq = Assert.IsType<BadRequestObjectResult>(result.Result);
         Assert.Equal("Ungültige URL", badReq.Value);
     }
+
+    [Fact]
+    public void GetGroupGate_ShouldReturnSameSemaphore_ForSameGroupId()
+    {
+        var (_, _, _, _, _, service) = CreateTestContext();
+        var gate1 = service.GetGroupGate("group-1");
+        var gate2 = service.GetGroupGate("group-1");
+
+        Assert.Same(gate1, gate2);
+    }
 }
