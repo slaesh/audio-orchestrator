@@ -237,8 +237,12 @@ public class ReconciliationService : IReconciliationService, IDisposable
                     try { await _snapcast.SetGroupStreamAsync(group.SnapcastGroupId!, group.CurrentStreamId); } catch {}
                 }
             } else {
-                group.SnapcastGroupId = null;
-                dbChanged = true;
+                bool isBroadcasting = broadcastService?.IsGroupActiveInBroadcast(group.Id, group.SnapcastGroupId) == true;
+                if (!isBroadcasting)
+                {
+                    group.SnapcastGroupId = null;
+                    dbChanged = true;
+                }
             }
         }
 

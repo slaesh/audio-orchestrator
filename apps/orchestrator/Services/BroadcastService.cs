@@ -600,21 +600,21 @@ public class BroadcastService : IHostedService, IBroadcastService
                 // Acquire gates for active target groups before clearing ownership
                 // to serialize with any pending ordinary volume push and to apply deferred stream edits.
                 var gates = new List<SemaphoreSlim>();
-                List<string> targetGroupIds;
-                lock (_activeTargetGroupIds)
-                {
-                    targetGroupIds = _activeTargetGroupIds.ToList();
-                }
-
-                foreach (var gid in targetGroupIds)
-                {
-                    var gate = GetGroupGate(gid);
-                    await gate.WaitAsync();
-                    gates.Add(gate);
-                }
-
                 try
                 {
+                    List<string> targetGroupIds;
+                    lock (_activeTargetGroupIds)
+                    {
+                        targetGroupIds = _activeTargetGroupIds.ToList();
+                    }
+
+                    foreach (var gid in targetGroupIds)
+                    {
+                        var gate = GetGroupGate(gid);
+                        await gate.WaitAsync();
+                        gates.Add(gate);
+                    }
+
                     // Replay any deferred stream selections saved to SQLite during restoration
                     if (targetGroupIds.Count > 0)
                     {
@@ -772,16 +772,16 @@ public class BroadcastService : IHostedService, IBroadcastService
             }
 
             var targetGates = new List<SemaphoreSlim>();
-            foreach (var s in snapshots)
-            {
-                var gid = !s.IsNative ? s.GroupId : s.SnapcastGroupId;
-                var g = GetGroupGate(gid);
-                await g.WaitAsync(ct);
-                targetGates.Add(g);
-            }
-
             try
             {
+                foreach (var s in snapshots)
+                {
+                    var gid = !s.IsNative ? s.GroupId : s.SnapcastGroupId;
+                    var g = GetGroupGate(gid);
+                    await g.WaitAsync(ct);
+                    targetGates.Add(g);
+                }
+
                 lock (_activeTargetGroupIds)
                 {
                     _activeTargetGroupIds.AddRange(snapshots.Where(s => !s.IsNative).Select(s => s.GroupId));
@@ -1350,10 +1350,15 @@ public class BroadcastService : IHostedService, IBroadcastService
                 }
             }
 
-            // If stream restoration failed, this group is still attached to the shared announcement stream.
-            // Mute all its clients immediately so it cannot hear subsequent announcements through the shared FIFO.
+            // If stream restoration failed, detach from announcement stream to default silence and mute clients immediately
             if (!streamRestored)
             {
+                try
+                {
+                    await _snapcast.SetGroupStreamAsync(s.SnapcastGroupId, "default");
+                }
+                catch { /* Ignore */ }
+
                 foreach (var c in s.NativeClients.Concat(s.SelectedClients).Concat(s.UnselectedClients))
                 {
                     try
@@ -1428,7 +1433,8 @@ public class BroadcastService : IHostedService, IBroadcastService
                             // Reconcile source/sibling volume changes (for newly selected or unchanged Spotify streams)
                             var sourceId = targetStreamId.Replace(OrchestratorConstants.SpotifyPrefix, "");
                             var source = await db.SpotifySources.FindAsync(sourceId);
-                            var activeSibling = await db.Groups.FirstOrDefaultAsync(g => g.Id != currentGroup.Id && g.CurrentStreamId == targetStreamId);
+                            var broadcastGroupIds = snapshots.Where(snap => !snap.IsNative).Select(snap => snap.GroupId).ToHashSet();
+                            var activeSibling = await db.Groups.FirstOrDefaultAsync(g => g.Id != currentGroup.Id && !broadcastGroupIds.Contains(g.Id) && g.CurrentStreamId == targetStreamId);
                             if (activeSibling != null)
                             {
                                 currentGroup.MasterVolume = activeSibling.MasterVolume;
