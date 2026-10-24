@@ -444,29 +444,57 @@ public class VolumeOrchestratorService
         if (string.IsNullOrEmpty(currentStreamId) || !currentStreamId.StartsWith(OrchestratorConstants.SpotifyPrefix)) return;
         var sourceId = currentStreamId.Replace(OrchestratorConstants.SpotifyPrefix, "");
 
-        var source = await _db.SpotifySources.FindAsync(sourceId);
-        if (source != null && source.MasterVolume != masterVolume)
-        {
-            source.MasterVolume = masterVolume;
-        }
-
         var broadcastService = _serviceProvider?.GetService<IBroadcastService>();
-        var listeningGroups = await _db.Groups
-            .Where(g => g.CurrentStreamId == currentStreamId)
-            .ToListAsync();
+        var gate = broadcastService?.GetGroupGate(groupId);
+        if (gate != null) await gate.WaitAsync();
 
-        if (broadcastService != null)
+        List<GroupEntity> siblingGroups = new();
+        int finalVolume;
+        try
         {
-            listeningGroups = listeningGroups.Where(g => !broadcastService.IsGroupActiveInBroadcast(g.Id, g.SnapcastGroupId)).ToList();
+            var originGroup = await _db.Groups.FindAsync(groupId);
+            if (originGroup == null || originGroup.CurrentStreamId != currentStreamId)
+            {
+                return;
+            }
+
+            // Revalidate volume: If a newer user volume update completed on the originating group
+            // since broadcast captured masterVolume, do not overwrite newer user changes with the stale restoration replay.
+            if (originGroup.MasterVolume != masterVolume)
+            {
+                return;
+            }
+
+            finalVolume = originGroup.MasterVolume;
+
+            var source = await _db.SpotifySources.FindAsync(sourceId);
+            if (source != null && source.MasterVolume != finalVolume)
+            {
+                source.MasterVolume = finalVolume;
+            }
+
+            siblingGroups = await _db.Groups
+                .Where(g => g.Id != originGroup.Id && g.CurrentStreamId == currentStreamId)
+                .ToListAsync();
+
+            if (broadcastService != null)
+            {
+                siblingGroups = siblingGroups.Where(g => !broadcastService.IsGroupActiveInBroadcast(g.Id, g.SnapcastGroupId)).ToList();
+            }
+
+            foreach (var grp in siblingGroups)
+            {
+                grp.MasterVolume = finalVolume;
+            }
+
+            await _db.SaveChangesAsync();
+        }
+        finally
+        {
+            gate?.Release();
         }
 
-        foreach (var grp in listeningGroups)
-        {
-            grp.MasterVolume = masterVolume;
-        }
-        await _db.SaveChangesAsync();
-
-        foreach (var grp in listeningGroups)
+        foreach (var grp in siblingGroups)
         {
             await _hub.Clients.All.OnGroupVolumeChanged(grp.Id, grp.MasterVolume, grp.IsMuted);
             await RecalculateAndPushGroupAsync(grp.Id);
@@ -474,7 +502,7 @@ public class VolumeOrchestratorService
 
         try
         {
-            await _librespotApi.SetVolumeAsync(sourceId, masterVolume);
+            await _librespotApi.SetVolumeAsync(sourceId, finalVolume);
         }
         catch (Exception ex) when (ex is HttpRequestException || ex is ApiException)
         {

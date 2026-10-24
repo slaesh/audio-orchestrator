@@ -736,6 +736,69 @@ public class StabilityTests
         librespotMock.Verify(l => l.SetVolumeAsync("spotify-1", 70), Times.Once);
     }
 
+    [Fact]
+    public async Task VolumeOrchestrator_SyncSpotifySourceAndSiblingsAsync_DoesNotOverwrite_WhenOriginGroupVolumeIsNewer()
+    {
+        using var db = GetDbContext();
+        var source = new SpotifySourceEntity
+        {
+            Id = "spotify-1",
+            Name = "Spotify Test",
+            MasterVolume = 30
+        };
+        var grp1 = new GroupEntity
+        {
+            Id = "grp-1",
+            Name = "Group 1",
+            SnapcastGroupId = "snap-1",
+            CurrentStreamId = $"{OrchestratorConstants.SpotifyPrefix}spotify-1",
+            MasterVolume = 85 // User changed volume to 85 while broadcast gates were being released
+        };
+        var grp2 = new GroupEntity
+        {
+            Id = "grp-2",
+            Name = "Group 2",
+            SnapcastGroupId = "snap-2",
+            CurrentStreamId = $"{OrchestratorConstants.SpotifyPrefix}spotify-1",
+            MasterVolume = 30
+        };
+        db.SpotifySources.Add(source);
+        db.Groups.AddRange(grp1, grp2);
+        await db.SaveChangesAsync();
+
+        var librespotMock = new Mock<ILibrespotApiClient>();
+        var serviceProviderMock = new Mock<IServiceProvider>();
+        var broadcastMock = new Mock<IBroadcastService>();
+        broadcastMock.Setup(b => b.GetGroupGate(It.IsAny<string>())).Returns<string>(_ => new SemaphoreSlim(1, 1));
+        broadcastMock.Setup(b => b.IsGroupActiveInBroadcast(It.IsAny<string>(), It.IsAny<string>())).Returns(false);
+        serviceProviderMock.Setup(s => s.GetService(typeof(IBroadcastService))).Returns(broadcastMock.Object);
+
+        _snapMock.Setup(s => s.GetStatusAsync()).ReturnsAsync(System.Text.Json.Nodes.JsonNode.Parse(
+            """{"server":{"groups":[{"id":"snap-1","clients":[]},{"id":"snap-2","clients":[]}]}}"""));
+
+        var volumeOrchestrator = new VolumeOrchestratorService(
+            db,
+            _snapMock.Object,
+            librespotMock.Object,
+            _hubMock.Object,
+            serviceProviderMock.Object,
+            new Mock<ILogger<VolumeOrchestratorService>>().Object
+        );
+
+        // Stale volume replay attempted with captured volume 70
+        await volumeOrchestrator.SyncSpotifySourceAndSiblingsAsync("grp-1", $"{OrchestratorConstants.SpotifyPrefix}spotify-1", 70);
+
+        var freshSource = await db.SpotifySources.FindAsync("spotify-1");
+        var freshGrp1 = await db.Groups.FindAsync("grp-1");
+        var freshGrp2 = await db.Groups.FindAsync("grp-2");
+
+        // Should retain newer volume and not push stale volume to Spotify
+        Assert.Equal(85, freshGrp1!.MasterVolume);
+        Assert.Equal(30, freshSource!.MasterVolume);
+        Assert.Equal(30, freshGrp2!.MasterVolume);
+        librespotMock.Verify(l => l.SetVolumeAsync(It.IsAny<string>(), It.IsAny<int>()), Times.Never);
+    }
+
     private sealed class FakeHttpMessageHandler : HttpMessageHandler
     {
         private readonly Func<HttpRequestMessage, HttpResponseMessage> _responder;
