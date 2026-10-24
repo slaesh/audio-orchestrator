@@ -56,7 +56,8 @@ public class VolumeOrchestratorService
             await gate.WaitAsync();
         }
 
-        List<GroupEntity>? siblingGroups = null;
+        List<string>? siblingGroupIds = null;
+        string? targetStreamId = null;
         string? spotifySourceIdToSync = null;
 
         try
@@ -80,29 +81,21 @@ public class VolumeOrchestratorService
             if (syncStreamSource && !isBroadcasting && !string.IsNullOrEmpty(group.CurrentStreamId) && group.CurrentStreamId.StartsWith(OrchestratorConstants.SpotifyPrefix))
             {
                 var sourceId = group.CurrentStreamId.Replace(OrchestratorConstants.SpotifyPrefix, "");
+                targetStreamId = group.CurrentStreamId;
                 
                 // Sync Spotify Source master volume in DB
                 var source = await _db.SpotifySources.FindAsync(sourceId);
                 if (source != null && source.MasterVolume != masterVolume)
                 {
                     source.MasterVolume = masterVolume;
+                    await _db.SaveChangesAsync();
                 }
 
-                // Query sibling groups listening to the same Spotify source (excluding groups in an active broadcast)
-                siblingGroups = await _db.Groups
+                // Collect sibling group IDs listening to the same Spotify source
+                siblingGroupIds = await _db.Groups
                     .Where(g => g.Id != group.Id && g.CurrentStreamId == group.CurrentStreamId)
+                    .Select(g => g.Id)
                     .ToListAsync();
-
-                if (broadcastService != null)
-                {
-                    siblingGroups = siblingGroups.Where(g => !broadcastService.IsGroupActiveInBroadcast(g.Id, g.SnapcastGroupId)).ToList();
-                }
-
-                foreach (var sibling in siblingGroups)
-                {
-                    sibling.MasterVolume = masterVolume;
-                }
-                await _db.SaveChangesAsync();
 
                 if (!fromDocker)
                 {
@@ -126,13 +119,54 @@ public class VolumeOrchestratorService
             gate?.Release();
         }
 
-        // Independently update sibling groups AFTER releasing the current group's gate to prevent deadlocks
-        if (siblingGroups != null && siblingGroups.Count > 0)
+        // Independently update sibling groups AFTER releasing the current group's gate to prevent deadlocks.
+        // Acquire each sibling's gate, reload and revalidate stream and broadcast ownership under its gate before saving.
+        if (siblingGroupIds != null && siblingGroupIds.Count > 0 && targetStreamId != null)
         {
-            foreach (var sibling in siblingGroups)
+            foreach (var siblingId in siblingGroupIds)
             {
-                await _hub.Clients.All.OnGroupVolumeChanged(sibling.Id, sibling.MasterVolume, sibling.IsMuted);
-                await RecalculateAndPushGroupAsync(sibling.Id, force: force);
+                var sibling = await _db.Groups.FindAsync(siblingId);
+                if (sibling == null) continue;
+
+                var siblingGateIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { sibling.Id };
+                if (!string.IsNullOrEmpty(sibling.SnapcastGroupId)) siblingGateIds.Add(sibling.SnapcastGroupId);
+                var sortedSiblingGateIds = siblingGateIds.OrderBy(x => x, StringComparer.Ordinal).ToList();
+                var acquiredSiblingGates = new List<SemaphoreSlim>();
+
+                if (broadcastService != null)
+                {
+                    foreach (var gid in sortedSiblingGateIds)
+                    {
+                        var g = broadcastService.GetGroupGate(gid);
+                        if (g != null)
+                        {
+                            await g.WaitAsync();
+                            acquiredSiblingGates.Add(g);
+                        }
+                    }
+                }
+
+                try
+                {
+                    await _db.Entry(sibling).ReloadAsync();
+
+                    // Revalidate stream and broadcast ownership under sibling gate before saving
+                    if (sibling.CurrentStreamId != targetStreamId) continue;
+                    if (broadcastService?.IsGroupActiveInBroadcast(sibling.Id, sibling.SnapcastGroupId) == true) continue;
+
+                    if (sibling.MasterVolume != masterVolume)
+                    {
+                        sibling.MasterVolume = masterVolume;
+                        await _db.SaveChangesAsync();
+                    }
+
+                    await _hub.Clients.All.OnGroupVolumeChanged(sibling.Id, sibling.MasterVolume, sibling.IsMuted);
+                    await RecalculateAndPushGroupCoreAsync(sibling, force: force, broadcastService);
+                }
+                finally
+                {
+                    foreach (var g in acquiredSiblingGates) g.Release();
+                }
             }
         }
 
