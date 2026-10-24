@@ -263,6 +263,10 @@ public class ReconciliationService : IReconciliationService, IDisposable
 
                 if (string.IsNullOrEmpty(freshGroup.SnapcastGroupId))
                 {
+                    group.SnapcastGroupId = null;
+                    group.CurrentStreamId = freshGroup.CurrentStreamId;
+                    group.Name = freshGroup.Name;
+                    concurrentlyModifiedGroupIds.Add(group.Id);
                     continue;
                 }
 

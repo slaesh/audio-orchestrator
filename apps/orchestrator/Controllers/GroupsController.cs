@@ -198,6 +198,18 @@ public class GroupsController : ControllerBase
             bool gateRetained = false;
             try
             {
+                // Reload destination entity and occupied mappings under the gates
+                await _db.Entry(group).ReloadAsync();
+                otherOrchestratedSnapIds = await _db.Groups.Where(g => g.Id != group.Id && g.SnapcastGroupId != null)
+                    .Select(g => g.SnapcastGroupId!)
+                    .ToListAsync();
+
+                // If destination group mapping changed while waiting for gates, retry acquisition if new mapping requires gates
+                if (!string.IsNullOrEmpty(group.SnapcastGroupId) && !involvedGateIds.Contains(group.SnapcastGroupId))
+                {
+                    continue;
+                }
+
                 // Verify membership did not shift before gates were acquired
                 var freshStatus = await _snapcast.GetStatusAsync();
                 var freshSnapGroups = freshStatus?["server"]?["groups"]?.AsArray();
@@ -222,6 +234,15 @@ public class GroupsController : ControllerBase
                 {
                     continue;
                 }
+
+                var freshSourceDbGroups = await _db.Groups
+                    .Where(g => g.SnapcastGroupId != null && freshSourceSnapGroupIds.Contains(g.SnapcastGroupId))
+                    .ToListAsync();
+                if (freshSourceDbGroups.Any(dbg => !involvedGateIds.Contains(dbg.Id)))
+                {
+                    continue;
+                }
+                sourceDbGroups = freshSourceDbGroups;
 
                 var freshDestId = ResolveSnapcastGroupId(group, freshSnapGroups, clientIds[0], otherOrchestratedSnapIds);
                 if (string.IsNullOrEmpty(freshDestId) || !involvedGateIds.Contains(freshDestId))
@@ -319,6 +340,9 @@ public class GroupsController : ControllerBase
             bool postPruneResolved = false;
             for (int postPruneAttempt = 0; postPruneAttempt < 5; postPruneAttempt++)
             {
+                otherOrchestratedSnapIds = await _db.Groups.Where(g => g.Id != group.Id && g.SnapcastGroupId != null)
+                    .Select(g => g.SnapcastGroupId!)
+                    .ToListAsync();
                 var postPruneDestId = ResolveSnapcastGroupId(group, snapGroups, clientIds[0], otherOrchestratedSnapIds);
                 if (string.IsNullOrEmpty(postPruneDestId))
                     return BadRequest("Could not resolve a Snapcast group for this assignment");
