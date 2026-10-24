@@ -4,6 +4,20 @@
 
 - **Prefer Early Exits**: Always use early exits (`if (!test) return;`) instead of deeply nested `if/else` blocks. This keeps functions flat and readable.
 - **Prefer Type Inference**: Do NOT explicitly type the arguments of array functions (like `map`, `find`, `filter`) if the array is already typed. Let TypeScript infer the types automatically (e.g., `list.map(e => ...)` instead of `list.map((e: Dto) => ...)`).
+- **Strong Typing over Strings (Enums)**: Do NOT use raw strings for fixed value sets (e.g., `string? sourceType`). Always define a strongly typed C# enum decorated with:
+  ```csharp
+  [TranspilationSource]
+  [JsonConverter(typeof(JsonStringEnumConverter))]
+  public enum MyEnum
+  {
+      [JsonStringEnumMemberName("foo")]
+      Foo,
+      [JsonStringEnumMemberName("bar")]
+      Bar
+  }
+  ```
+  This ensures Tapper transpiles proper TypeScript string-union types (e.g. `"foo" | "bar"`) and System.Text.Json serializes them matching the API contract.
+- **Enum Persistence in EF Core**: When persisting enums to SQLite, always configure a string value converter in `OrchestratorDbContext` (e.g. `.HasConversion(v => v.ToString().ToLowerInvariant(), v => Enum.Parse<MyEnum>(v, true))`) to preserve backward compatibility with existing SQLite `TEXT` columns.
 - **Database Migrations**: ALWAYS use Entity Framework migrations for schema changes (`dotnet ef migrations add ...`). NEVER manually edit the production/shared database schema.
 
 ## Architecture & Monorepo Structure
@@ -31,7 +45,11 @@
   ```bash
   npm run generate-spotify-node-client
   ```
-- **DTO Consistency**: SignalR and OpenAPI clients **MUST** share the same DTO types. The Tapper-generated contracts in `ClientApp/src/app/core/signalr/AudioOrchestrator.Contracts.ts` are the source of truth. After regenerating the OpenAPI client, you must ensure that `ClientApp/src/app/generated/model/models.ts` (and `@api`) exports the Tapper DTOs instead of the OpenAPI-generated duplicates to maintain type compatibility across the application.
+- **DTO Consistency**: SignalR and OpenAPI clients **MUST** share the same DTO types. The Tapper-generated contracts in `ClientApp/src/app/core/signalr/AudioOrchestrator.Contracts.ts` are the source of truth. Whenever adding a new DTO or Enum:
+  1. Decorate the C# record/enum with `[TranspilationSource]`.
+  2. Add the type to `openapitools.json` under both `typeMappings` (`"MyDto": "MyDto"`) and `importMappings` (`"MyDto": "@contracts"`).
+  3. Run `npm run generate-api` to generate both Tapper contracts and the OpenAPI Angular client.
+  4. Ensure `ClientApp/src/app/generated/model/models.ts` (and `@api`) exports the Tapper DTOs instead of OpenAPI-generated duplicates to maintain type compatibility across the application.
 
 ## Service Commands (Docker)
 

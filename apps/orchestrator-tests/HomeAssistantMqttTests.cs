@@ -629,6 +629,8 @@ public class HomeAssistantMqttTests
         var mockHub = new Mock<IHubContext<AudioHub, IAudioClient>>();
         mockHub.Setup(h => h.Clients.All).Returns(Mock.Of<IAudioClient>());
 
+        var mockBroadcast = new Mock<IBroadcastService>();
+        services.AddSingleton(mockBroadcast.Object);
         services.AddSingleton(mockSnapcast.Object);
         services.AddSingleton(mockLibrespot.Object);
         services.AddSingleton(mockHub.Object);
@@ -2138,5 +2140,113 @@ public class HomeAssistantMqttTests
 
         Assert.Same(ensureTask, completedTask);
         await ensureTask;
+    }
+
+    [Fact]
+    public async Task HandleIncomingMessage_ShouldProcessBroadcastPlayCommand()
+    {
+        var (sp, db, mockClient, service, _) = CreateTestContext();
+        var mockBroadcast = Mock.Get(sp.GetRequiredService<IBroadcastService>());
+
+        mockClient.Setup(c => c.ConnectAsync(It.IsAny<MqttClientOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientConnectResult());
+        mockClient.Setup(c => c.SubscribeAsync(It.IsAny<MqttClientSubscribeOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientSubscribeResult(
+                1,
+                new List<MqttClientSubscribeResultItem>
+                {
+                    new(new MqttTopicFilter { Topic = "audio_orchestrator/groups/+/set/#" }, MqttClientSubscribeResultCode.GrantedQoS0),
+                    new(new MqttTopicFilter { Topic = "audio_orchestrator/broadcast/+" }, MqttClientSubscribeResultCode.GrantedQoS0),
+                    new(new MqttTopicFilter { Topic = "homeassistant/status" }, MqttClientSubscribeResultCode.GrantedQoS0)
+                },
+                string.Empty,
+                new List<MqttUserProperty>()
+            ));
+        mockClient.SetupGet(c => c.IsConnected).Returns(true);
+
+        await service.EnsureConnectionAsync(CancellationToken.None);
+
+        BroadcastPlayRequest? capturedRequest = null;
+        mockBroadcast.Setup(b => b.EnqueuePlayUrlAsync(It.IsAny<BroadcastPlayRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<BroadcastPlayRequest, CancellationToken>((req, _) => capturedRequest = req)
+            .ReturnsAsync(new BroadcastJobDto(
+                Id: "job-1",
+                CreatedAt: DateTime.UtcNow,
+                StartedAt: null,
+                CompletedAt: null,
+                AudioUrl: "url",
+                SourceType: BroadcastSourceType.Url,
+                TargetGroupIds: null,
+                TargetRoomIds: null,
+                Volume: null,
+                FadeDurationMs: null,
+                PausePlayback: false,
+                Status: BroadcastJobStatus.Queued,
+                DurationMs: 0,
+                ErrorMessage: null
+            ));
+
+        // 1. Send plain URL payload
+        var plainMsg = new MqttApplicationMessageBuilder()
+            .WithTopic("audio_orchestrator/broadcast/play")
+            .WithPayload("http://example.com/chime.mp3")
+            .Build();
+
+        await service.HandleIncomingMessageAsync(new MqttApplicationMessageReceivedEventArgs("c1", plainMsg, new MqttPublishPacket(), null));
+
+        Assert.NotNull(capturedRequest);
+        Assert.Equal("http://example.com/chime.mp3", capturedRequest!.AudioUrl);
+
+        // 2. Send JSON payload
+        var jsonMsg = new MqttApplicationMessageBuilder()
+            .WithTopic("audio_orchestrator/broadcast/play")
+            .WithPayload("{\"audioUrl\":\"http://example.com/alarm.wav\",\"volume\":90,\"fadeDurationMs\":500,\"pausePlayback\":true}")
+            .Build();
+
+        await service.HandleIncomingMessageAsync(new MqttApplicationMessageReceivedEventArgs("c1", jsonMsg, new MqttPublishPacket(), null));
+
+        Assert.Equal("http://example.com/alarm.wav", capturedRequest.AudioUrl);
+        Assert.Equal(90, capturedRequest.Volume);
+        Assert.Equal(500, capturedRequest.FadeDurationMs);
+        Assert.True(capturedRequest.PausePlayback);
+    }
+
+    [Fact]
+    public async Task HandleIncomingMessage_ShouldProcessBroadcastStopCommand()
+    {
+        var (sp, db, mockClient, service, _) = CreateTestContext();
+        var mockBroadcast = Mock.Get(sp.GetRequiredService<IBroadcastService>());
+
+        mockClient.Setup(c => c.ConnectAsync(It.IsAny<MqttClientOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientConnectResult());
+        mockClient.Setup(c => c.SubscribeAsync(It.IsAny<MqttClientSubscribeOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MqttClientSubscribeResult(
+                1,
+                new List<MqttClientSubscribeResultItem>
+                {
+                    new(new MqttTopicFilter { Topic = "audio_orchestrator/groups/+/set/#" }, MqttClientSubscribeResultCode.GrantedQoS0),
+                    new(new MqttTopicFilter { Topic = "audio_orchestrator/broadcast/+" }, MqttClientSubscribeResultCode.GrantedQoS0),
+                    new(new MqttTopicFilter { Topic = "homeassistant/status" }, MqttClientSubscribeResultCode.GrantedQoS0)
+                },
+                string.Empty,
+                new List<MqttUserProperty>()
+            ));
+        mockClient.SetupGet(c => c.IsConnected).Returns(true);
+
+        await service.EnsureConnectionAsync(CancellationToken.None);
+
+        var stopped = false;
+        mockBroadcast.Setup(b => b.StopAsync(It.IsAny<CancellationToken>()))
+            .Callback(() => stopped = true)
+            .Returns(Task.CompletedTask);
+
+        var stopMsg = new MqttApplicationMessageBuilder()
+            .WithTopic("audio_orchestrator/broadcast/stop")
+            .WithPayload("")
+            .Build();
+
+        await service.HandleIncomingMessageAsync(new MqttApplicationMessageReceivedEventArgs("c1", stopMsg, new MqttPublishPacket(), null));
+
+        Assert.True(stopped);
     }
 }

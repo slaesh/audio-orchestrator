@@ -234,3 +234,75 @@ public record SpotifyMetadataDto(
     string? CoverUrl
 );
 
+[TranspilationSource]
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum BroadcastSourceType
+{
+    [JsonStringEnumMemberName("url")]
+    Url,
+    [JsonStringEnumMemberName("upload")]
+    Upload
+}
+
+[TranspilationSource]
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum BroadcastJobStatus
+{
+    [JsonStringEnumMemberName("queued")]
+    Queued,
+    [JsonStringEnumMemberName("playing")]
+    Playing,
+    [JsonStringEnumMemberName("completed")]
+    Completed,
+    [JsonStringEnumMemberName("failed")]
+    Failed,
+    [JsonStringEnumMemberName("cancelled")]
+    Cancelled
+}
+
+[TranspilationSource]
+public record BroadcastPlayRequest(
+    string? AudioUrl = null,
+    List<string>? GroupIds = null,
+    List<string>? RoomIds = null,
+    int? Volume = null,
+    int? FadeDurationMs = null,
+    bool PausePlayback = false,
+    int? TimeoutSeconds = 60,
+    bool Interrupt = true
+);
+
+[TranspilationSource]
+public record BroadcastPlayResult(
+    bool Success,
+    string? Message = null,
+    int DurationMs = 0,
+    string? JobId = null
+);
+
+[TranspilationSource]
+public record BroadcastStatusDto(
+    bool IsPlaying,
+    string? CurrentAnnouncementId,
+    List<string> ActiveTargetGroupIds,
+    List<string>? ActiveSnapcastGroupIds = null
+);
+
+[TranspilationSource]
+public record BroadcastJobDto(
+    string Id,
+    DateTime CreatedAt,
+    DateTime? StartedAt,
+    DateTime? CompletedAt,
+    string? AudioUrl,
+    BroadcastSourceType SourceType,
+    List<string>? TargetGroupIds,
+    List<string>? TargetRoomIds,
+    int? Volume,
+    int? FadeDurationMs,
+    bool PausePlayback,
+    BroadcastJobStatus Status,
+    int DurationMs,
+    string? ErrorMessage
+);
+

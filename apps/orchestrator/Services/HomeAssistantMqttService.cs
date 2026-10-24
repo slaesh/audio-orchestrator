@@ -561,6 +561,7 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             // 1. Subscribe to command topics & HA status topic
             var subOptions = new MqttClientSubscribeOptionsBuilder()
                 .WithTopicFilter($"{baseTopic}/groups/+/set/#")
+                .WithTopicFilter($"{baseTopic}/broadcast/+")
                 .WithTopicFilter($"{discPrefix}/status")
                 .Build();
 
@@ -1224,6 +1225,15 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             return;
         }
 
+        // Check for broadcast commands: <baseTopic>/broadcast/<action>
+        var broadcastPrefix = $"{baseTopic}/broadcast/";
+        if (topic.StartsWith(broadcastPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            var bAction = topic.Substring(broadcastPrefix.Length).ToLowerInvariant();
+            await ProcessBroadcastCommandAsync(bAction, rawPayload, ct);
+            return;
+        }
+
         // Expected format: <baseTopic>/groups/<groupId>/set/<action>
         var prefix = $"{baseTopic}/groups/";
         if (!topic.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return;
@@ -1308,6 +1318,50 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         var freshState = await stateBuilder.BuildAsync();
         await hubContext.Clients.All.OnFullStateUpdate(freshState);
         await NotifyFullStateAsync(freshState, ct);
+    }
+
+    private async Task ProcessBroadcastCommandAsync(string action, string payload, CancellationToken ct)
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var broadcastService = scope.ServiceProvider.GetService<IBroadcastService>();
+        if (broadcastService == null) return;
+
+        if (action == "stop")
+        {
+            await broadcastService.StopAsync(ct);
+            return;
+        }
+
+        if (action == "play")
+        {
+            BroadcastPlayRequest? request = null;
+            if (!string.IsNullOrWhiteSpace(payload))
+            {
+                if (payload.TrimStart().StartsWith('{'))
+                {
+                    try
+                    {
+                        request = JsonSerializer.Deserialize<BroadcastPlayRequest>(payload, new JsonSerializerOptions
+                        {
+                            PropertyNameCaseInsensitive = true
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to parse BroadcastPlayRequest JSON payload: {Payload}", payload);
+                    }
+                }
+                else
+                {
+                    request = new BroadcastPlayRequest(AudioUrl: payload.Trim());
+                }
+            }
+
+            if (request != null)
+            {
+                await broadcastService.EnqueuePlayUrlAsync(request, ct);
+            }
+        }
     }
 
     public record SourceMappingResult(
@@ -1588,31 +1642,87 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         ISnapcastService snapcast,
         VolumeOrchestratorService volumeOrchestrator)
     {
-        group.CurrentStreamId = effectiveStreamId;
-        await db.SaveChangesAsync();
+        var broadcastService = _serviceProvider.GetService<IBroadcastService>();
+        var gate = broadcastService?.GetGroupGate(group.Id);
+        if (gate != null) await gate.WaitAsync();
 
-        if (!string.IsNullOrEmpty(group.SnapcastGroupId))
+        bool shouldRecalculateOutsideGate = false;
+        bool syncToSpotify = false;
+
+        try
         {
-            await snapcast.SetGroupStreamAsync(group.SnapcastGroupId, effectiveStreamId);
+            await db.Entry(group).ReloadAsync();
+            group.CurrentStreamId = effectiveStreamId;
+            await db.SaveChangesAsync();
+
+            bool isBroadcasting = broadcastService?.IsGroupActiveInBroadcast(group.Id, group.SnapcastGroupId) == true;
+
+            if (!string.IsNullOrEmpty(group.SnapcastGroupId) && !isBroadcasting)
+            {
+                await snapcast.SetGroupStreamAsync(group.SnapcastGroupId, effectiveStreamId);
+            }
+
+            if (effectiveStreamId.StartsWith(OrchestratorConstants.SpotifyPrefix))
+            {
+                var sourceId = effectiveStreamId.Replace(OrchestratorConstants.SpotifyPrefix, "");
+                var source = await db.SpotifySources.FindAsync(sourceId);
+                var activeSibling = (await db.Groups.Where(g => g.Id != group.Id && g.CurrentStreamId == effectiveStreamId).ToListAsync())
+                    .FirstOrDefault(g => broadcastService?.IsGroupActiveInBroadcast(g.Id, g.SnapcastGroupId) != true);
+                int targetVolume = activeSibling?.MasterVolume ?? (source != null && source.IsActive ? source.MasterVolume : group.MasterVolume);
+
+                // Recheck broadcast ownership under the gate before adopting or deferring
+                isBroadcasting = broadcastService?.IsGroupActiveInBroadcast(group.Id, group.SnapcastGroupId) == true;
+                if (isBroadcasting)
+                {
+                    if (group.MasterVolume != targetVolume)
+                    {
+                        group.MasterVolume = targetVolume;
+                        await db.SaveChangesAsync();
+                        var hubContext = _serviceProvider.GetService<Microsoft.AspNetCore.SignalR.IHubContext<AudioOrchestrator.Hubs.AudioHub, AudioOrchestrator.Contracts.IAudioClient>>();
+                        if (hubContext != null)
+                        {
+                            await hubContext.Clients.All.OnGroupVolumeChanged(group.Id, group.MasterVolume, group.IsMuted);
+                        }
+                    }
+                    broadcastService?.MarkDeferredVolumeUpdate(group.Id, group.SnapcastGroupId);
+                }
+                else
+                {
+                    // Persist adopted volume under the original gate
+                    if (group.MasterVolume != targetVolume)
+                    {
+                        group.MasterVolume = targetVolume;
+                        await db.SaveChangesAsync();
+                        var hubContext = _serviceProvider.GetService<Microsoft.AspNetCore.SignalR.IHubContext<AudioOrchestrator.Hubs.AudioHub, AudioOrchestrator.Contracts.IAudioClient>>();
+                        if (hubContext != null)
+                        {
+                            await hubContext.Clients.All.OnGroupVolumeChanged(group.Id, group.MasterVolume, group.IsMuted);
+                        }
+                    }
+
+                    if (activeSibling == null && (source == null || !source.IsActive))
+                    {
+                        syncToSpotify = true;
+                    }
+                    else
+                    {
+                        shouldRecalculateOutsideGate = true;
+                    }
+                }
+            }
+        }
+        finally
+        {
+            gate?.Release();
         }
 
-        if (effectiveStreamId.StartsWith(OrchestratorConstants.SpotifyPrefix))
+        if (shouldRecalculateOutsideGate)
         {
-            var sourceId = effectiveStreamId.Replace(OrchestratorConstants.SpotifyPrefix, "");
-            var source = await db.SpotifySources.FindAsync(sourceId);
-            var activeSibling = await db.Groups.FirstOrDefaultAsync(g => g.Id != group.Id && g.CurrentStreamId == effectiveStreamId);
-            if (activeSibling != null)
-            {
-                await volumeOrchestrator.SetGroupVolumeAsync(group.Id, activeSibling.MasterVolume, group.IsMuted, fromDocker: true);
-            }
-            else if (source != null && source.IsActive)
-            {
-                await volumeOrchestrator.SetGroupVolumeAsync(group.Id, source.MasterVolume, group.IsMuted, fromDocker: true);
-            }
-            else
-            {
-                await volumeOrchestrator.SetGroupVolumeAsync(group.Id, group.MasterVolume, group.IsMuted);
-            }
+            await volumeOrchestrator.RecalculateAndPushGroupAsync(group.Id);
+        }
+        else if (syncToSpotify)
+        {
+            await volumeOrchestrator.SyncSpotifySourceAndSiblingsAsync(group.Id, effectiveStreamId, group.MasterVolume);
         }
     }
 

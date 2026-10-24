@@ -3,6 +3,7 @@ README.md
 api.base.service.ts
 api.module.ts
 api/api.ts
+api/broadcast.service.ts
 api/events.service.ts
 api/externalControl.service.ts
 api/fullState.service.ts
@@ -17,10 +18,10 @@ configuration.ts
 encoder.ts
 git_push.sh
 index.ts
+model/apiBroadcastPlayPost400Response.ts
 model/createGroupRequest.ts
 model/createRadioStreamRequest.ts
 model/createSourceRequest.ts
-model/homeAssistantSettingsDto.ts
 model/models.ts
 model/playContextRequest.ts
 model/renameGroupRequest.ts
@@ -29,9 +30,6 @@ model/setMixRequest.ts
 model/setMuteRequest.ts
 model/setStreamRequest.ts
 model/setVolumeRequest.ts
-model/settingsDto.ts
-model/testMqttConnectionRequest.ts
-model/testMqttConnectionResponse.ts
 model/updateSourceRequest.ts
 model/volumeRequest.ts
 model/webhookEventPayload.ts

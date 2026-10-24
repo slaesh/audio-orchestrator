@@ -1,3 +1,5 @@
+export * from './broadcast.service';
+import { BroadcastService } from './broadcast.service';
 export * from './events.service';
 import { EventsService } from './events.service';
 export * from './externalControl.service';
@@ -18,4 +20,4 @@ export * from './settings.service';
 import { SettingsService } from './settings.service';
 export * from './spotifySources.service';
 import { SpotifySourcesService } from './spotifySources.service';
-export const APIS = [EventsService, ExternalControlService, FullStateService, GroupsService, RadioEventsService, RadioPluginsService, RadioStreamsService, RoomsService, SettingsService, SpotifySourcesService];
+export const APIS = [BroadcastService, EventsService, ExternalControlService, FullStateService, GroupsService, RadioEventsService, RadioPluginsService, RadioStreamsService, RoomsService, SettingsService, SpotifySourcesService];

@@ -12,6 +12,8 @@ public static class OrchestratorConstants
     // Stream/FIFO path prefixes
     public const string RadioPrefix = "radio_";
     public const string SpotifyPrefix = "spotify_";
+    public const string AnnouncementStreamId = "announcement";
+    public const string AnnouncementFifoPath = $"{FifoBaseDir}/announcement";
     
     // Persistence
     public const string LibrespotCacheVolume = "librespot_cache";

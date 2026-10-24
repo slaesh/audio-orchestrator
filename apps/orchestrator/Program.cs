@@ -24,9 +24,38 @@ builder.Services.AddOpenApi(options => {
         
         if (schema.Type != null && schema.Type.Value.HasFlag(JsonSchemaType.Integer))
         {
-            // Force it to be just an integer, removing any string-patterns that might confuse the generator
-            schema.Type = JsonSchemaType.Integer;
+            bool isNullable = schema.Type.Value.HasFlag(JsonSchemaType.Null);
+            // Force it to be integer (preserving null if nullable), removing any string-patterns that might confuse the generator
+            schema.Type = isNullable ? (JsonSchemaType.Integer | JsonSchemaType.Null) : JsonSchemaType.Integer;
             schema.Pattern = null;
+        }
+        return Task.CompletedTask;
+    });
+
+    options.AddDocumentTransformer((document, context, cancellationToken) => {
+        if (document.Paths != null)
+        {
+            var playPaths = new[] { "/api/Broadcast/play", "/api/Broadcast/play-file" };
+            foreach (var p in playPaths)
+            {
+                if (document.Paths.TryGetValue(p, out var pathItem) && pathItem.Operations != null && pathItem.Operations.TryGetValue(HttpMethod.Post, out var op))
+                {
+                    if (op.Responses != null && op.Responses.TryGetValue("400", out var response) && response.Content != null)
+                    {
+                        foreach (var content in response.Content.Values)
+                        {
+                            content.Schema = new OpenApiSchema
+                            {
+                                OneOf = new List<IOpenApiSchema>
+                                {
+                                    new OpenApiSchema { Type = JsonSchemaType.String },
+                                    new OpenApiSchemaReference("BroadcastJobDto", document)
+                                }
+                            };
+                        }
+                    }
+                }
+            }
         }
         return Task.CompletedTask;
     });
@@ -60,11 +89,15 @@ builder.Services.AddSingleton<AudioOrchestrator.Services.RadioMetadataService>()
 builder.Services.AddSingleton<AudioOrchestrator.Services.IMqttClientFactorySeam, AudioOrchestrator.Services.DefaultMqttClientFactorySeam>();
 builder.Services.AddSingleton<AudioOrchestrator.Services.HomeAssistantMqttService>();
 builder.Services.AddSingleton<AudioOrchestrator.Services.IHomeAssistantMqttService>(sp => sp.GetRequiredService<AudioOrchestrator.Services.HomeAssistantMqttService>());
+builder.Services.AddSingleton<AudioOrchestrator.Services.IAudioPlayerProcessRunner, AudioOrchestrator.Services.DefaultAudioPlayerProcessRunner>();
+builder.Services.AddSingleton<AudioOrchestrator.Services.BroadcastService>();
+builder.Services.AddSingleton<AudioOrchestrator.Services.IBroadcastService>(sp => sp.GetRequiredService<AudioOrchestrator.Services.BroadcastService>());
 
 if (!isDesignOrDocumentGen)
 {
     builder.Services.AddHostedService(sp => sp.GetRequiredService<AudioOrchestrator.Services.RadioMetadataService>());
     builder.Services.AddHostedService(sp => sp.GetRequiredService<AudioOrchestrator.Services.HomeAssistantMqttService>());
+    builder.Services.AddHostedService(sp => sp.GetRequiredService<AudioOrchestrator.Services.BroadcastService>());
     builder.Services.AddHostedService<AudioOrchestrator.Services.SnapcastTcpListenerService>();
     builder.Services.AddHostedService<AudioOrchestrator.Services.StartupReconciliationService>();
     builder.Services.AddHostedService<AudioOrchestrator.Services.ContainerHealthWatchdog>();

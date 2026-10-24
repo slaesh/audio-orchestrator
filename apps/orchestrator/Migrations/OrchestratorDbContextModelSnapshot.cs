@@ -17,6 +17,63 @@ namespace AudioOrchestrator.Migrations
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.6");
 
+            modelBuilder.Entity("AudioOrchestrator.Data.Entities.BroadcastJobEntity", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AudioUrl")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("DurationMs")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("FadeDurationMs")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("Interrupt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("PausePlayback")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SourceType")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("StartedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TargetGroupIdsJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TargetRoomIdsJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("TimeoutSeconds")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("Volume")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("BroadcastJobs");
+                });
+
             modelBuilder.Entity("AudioOrchestrator.Data.Entities.GroupEntity", b =>
                 {
                     b.Property<string>("Id")

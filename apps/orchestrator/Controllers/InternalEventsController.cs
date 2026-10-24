@@ -25,6 +25,7 @@ public class EventsController : ControllerBase
     private readonly ILibrespotApiClient _librespotApi;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IHomeAssistantMqttService _mqttService;
+    private readonly IBroadcastService? _broadcastService;
 
     public EventsController(
         ISnapcastService snapcast, 
@@ -35,7 +36,8 @@ public class EventsController : ControllerBase
         VolumeOrchestratorService volumeOrchestrator,
         ILibrespotApiClient librespotApi,
         IServiceScopeFactory scopeFactory,
-        IHomeAssistantMqttService mqttService)
+        IHomeAssistantMqttService mqttService,
+        IBroadcastService? broadcastService = null)
     {
         _snapcast = snapcast;
         _db = db;
@@ -46,6 +48,7 @@ public class EventsController : ControllerBase
         _librespotApi = librespotApi;
         _scopeFactory = scopeFactory;
         _mqttService = mqttService;
+        _broadcastService = broadcastService;
     }
 
     private async Task SyncMetadataToSource(SpotifySourceEntity source, WebhookEventPayload payload, OrchestratorDbContext db)
@@ -93,10 +96,14 @@ public class EventsController : ControllerBase
         string sourceStreamId = $"{OrchestratorConstants.SpotifyPrefix}{payload.GroupId}";
         var source = await _db.SpotifySources.FindAsync(payload.GroupId);
         
-        var listeningGroups = await _db.Groups
+        // Groups that are currently owned by a running broadcast must not be switched back to
+        // Spotify or have their (announcement) volume overwritten until restoration has finished.
+        var listeningGroups = (await _db.Groups
             .AsNoTracking()
             .Where(g => g.CurrentStreamId == sourceStreamId)
-            .ToListAsync();
+            .ToListAsync())
+            .Where(g => _broadcastService?.IsGroupActiveInBroadcast(g.Id, g.SnapcastGroupId) != true)
+            .ToList();
 
         List<SpotifyRecentContextDto>? currentRecentContexts = null;
 
@@ -171,16 +178,42 @@ public class EventsController : ControllerBase
                         }
                     }
 
+                    var bgBroadcast = scope.ServiceProvider.GetService<IBroadcastService>();
+
                     for (int i = 0; i < groupIds.Count; i++)
                     {
                         var id = groupIds[i];
                         var g = await bgDb.Groups.FindAsync(id);
                         if (g == null) continue;
                         var snapcastGroupId = g.SnapcastGroupId ?? g.Id;
-                        await bgSnapcast.SetGroupStreamAsync(snapcastGroupId, sourceStreamId);
-                        _logger.LogInformation("[Sync-BG] Group {GroupName} joined active source stream {StreamId}", groupNames[i], sourceStreamId);
-                        
-                        await bgVolume.SetGroupVolumeAsync(g.Id, g.MasterVolume, g.IsMuted, fromDocker: true);
+
+                        var gate = bgBroadcast?.GetGroupGate(g.Id);
+                        if (gate != null) await gate.WaitAsync();
+
+                        bool isBroadcasting = false;
+                        try
+                        {
+                            await bgDb.Entry(g).ReloadAsync();
+                            snapcastGroupId = g.SnapcastGroupId ?? g.Id;
+                            isBroadcasting = bgBroadcast?.IsGroupActiveInBroadcast(g.Id, snapcastGroupId) == true;
+                            if (isBroadcasting)
+                            {
+                                _logger.LogInformation("[Sync-BG] Group {GroupName} is currently active in a broadcast, skipping Spotify playback join", groupNames[i]);
+                                continue;
+                            }
+
+                            await bgSnapcast.SetGroupStreamAsync(snapcastGroupId, sourceStreamId);
+                            _logger.LogInformation("[Sync-BG] Group {GroupName} joined active source stream {StreamId}", groupNames[i], sourceStreamId);
+                        }
+                        finally
+                        {
+                            gate?.Release();
+                        }
+
+                        if (!isBroadcasting)
+                        {
+                            await bgVolume.SetGroupVolumeAsync(g.Id, g.MasterVolume, g.IsMuted, fromDocker: true, syncStreamSource: false);
+                        }
                     }
                 } catch (Exception ex) {
                     _logger.LogError(ex, "Failed to perform background stream/volume sync for 'playing' event");
@@ -267,12 +300,15 @@ public class EventsController : ControllerBase
                             var bgVolume = scope.ServiceProvider.GetRequiredService<VolumeOrchestratorService>();
                             var bgDb = scope.ServiceProvider.GetRequiredService<OrchestratorDbContext>();
 
+                            var bgBroadcast = scope.ServiceProvider.GetService<IBroadcastService>();
+
                             for (int i = 0; i < groupIds.Count; i++)
                             {
                                 var id = groupIds[i];
                                 var g = await bgDb.Groups.FindAsync(id);
                                 if (g == null) continue;
-                                await bgVolume.SetGroupVolumeAsync(g.Id, percent, g.IsMuted, fromDocker: true);
+                                if (bgBroadcast?.IsGroupActiveInBroadcast(g.Id, g.SnapcastGroupId) == true) continue;
+                                await bgVolume.SetGroupVolumeAsync(g.Id, percent, g.IsMuted, fromDocker: true, syncStreamSource: false);
                                 _logger.LogInformation("[Broadcast-BG] Synced Spotify volume ({Percent}%) to listening Group {GroupName}", percent, groupNames[i]);
                             }
                         } catch (Exception ex) {

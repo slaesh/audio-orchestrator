@@ -16,13 +16,13 @@ export interface WebhookEventPayload {
     coverUrl?: string | null;
     contextName?: string | null;
     contextUri?: string | null;
-    durationMs?: number;
+    durationMs?: number | null;
     event: string;
     groupId: string;
-    intervalMs?: number;
+    intervalMs?: number | null;
     isPlaying?: boolean | null;
-    positionMs?: number;
+    positionMs?: number | null;
     trackId?: string | null;
-    volume?: number;
+    volume?: number | null;
 }
 

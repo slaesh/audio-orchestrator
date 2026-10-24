@@ -66,6 +66,53 @@ Jede Gruppe wird als vollständige `media_player.<gruppe>`-Entität angelegt.
 
 ---
 
+## 3. Audio-Broadcasts & Durchsagen (Klingel, Alarm, TTS)
+
+Über die REST API und MQTT können externe Systeme (z. B. Home Assistant Automationen, Scripts, Türklingeln oder Alarmzentralen) kurze Audio-Clips (MP3, WAV, AAC, OGG, FLAC oder Remote-URLs) auf bestimmten Zonen, einzelnen Räumen oder im ganzen Haus abspielen.
+
+### Funktionsweise:
+- **Instant Alert / Klingel**: Mit `fadeDurationMs: 0` schaltet der Ton verzögerungsfrei um.
+- **Sanfte Durchsagen**: Mit z. B. `fadeDurationMs: 1000` blendet die laufende Musik sanft aus, die Durchsage wird bei der gewünschten Ziellautstärke abgespielt und danach blendet die Musik wieder ein.
+- **Zielauswahl**: Angabe von `groupIds` (Gruppen) oder `roomIds` (einzelne Räume). Werden keine Ziele angegeben, wird die Durchsage an **alle aktiven Zonen** im Haus übertragen.
+- **Wiederherstellung**: Nach Ende des Audio-Clips werden vorherige Streams, Lautstärken und Mute-Zustände garantiert wiederhergestellt.
+- **Optionale Pause**: Mit `pausePlayback: true` wird die aktive Wiedergabe (z. B. Spotify) für die Dauer der Durchsage pausiert und anschließend fortgesetzt.
+
+### Aufruf via REST API
+
+```bash
+# Beispiel 1: Türklingel auf Gruppe "Wohnzimmer" mit Lautstärke 80
+curl -X POST http://<orchestrator-ip>:5000/api/broadcast/play \
+  -H "Content-Type: application/json" \
+  -d '{
+    "audioUrl": "http://homeassistant:8123/local/doorbell.mp3",
+    "groupIds": ["Wohnzimmer"],
+    "volume": 80,
+    "fadeDurationMs": 0
+  }'
+
+# Beispiel 2: Alarm im ganzen Haus (alle Zonen) mit 95% Lautstärke
+curl -X POST http://<orchestrator-ip>:5000/api/broadcast/play \
+  -H "Content-Type: application/json" \
+  -d '{
+    "audioUrl": "http://homeassistant:8123/local/alarm.mp3",
+    "volume": 95,
+    "fadeDurationMs": 0,
+    "interrupt": true
+  }'
+
+# Notfall-Stopp (bricht laufende Durchsage sofort ab):
+curl -X POST http://<orchestrator-ip>:5000/api/broadcast/stop
+```
+
+### Aufruf via MQTT
+
+Sende an `<baseTopic>/broadcast/play` (Standard: `audio_orchestrator/broadcast/play`):
+- Als einfacher Text: Direkt die Audio-URL (z. B. `http://homeassistant:8123/local/chime.mp3`).
+- Als JSON: Vollständiges Konfigurationsobjekt (z. B. `{"audioUrl": "...", "volume": 85, "groupIds": ["Wohnzimmer"]}`).
+- An `<baseTopic>/broadcast/stop`: Bricht jede aktive Durchsage sofort ab.
+
+---
+
 ## Fazit & Empfehlung
 
 * Möchtest du die **beste visuelle Medien-Erfahrung** in Home Assistant? **Nimm HACS.**
