@@ -641,6 +641,14 @@ public class BroadcastService : IHostedService, IBroadcastService
                     {
                         allGateIds.Add(sid);
                     }
+                    foreach (var gid in deferredGroupIds)
+                    {
+                        allGateIds.Add(gid);
+                    }
+                    foreach (var sid in deferredNativeIds)
+                    {
+                        allGateIds.Add(sid);
+                    }
 
                     var sortedGateIds = allGateIds.OrderBy(x => x, StringComparer.Ordinal).ToList();
                     foreach (var gid in sortedGateIds)
@@ -708,29 +716,40 @@ public class BroadcastService : IHostedService, IBroadcastService
                             }
                         }
 
-                        // Replay native Snapcast groups (unassigned rooms) that had deferred edits
+                        // Replay native Snapcast groups (unassigned rooms) that had deferred edits or profile changes
                         var nativeSnapshots = snapshots?.Where(s => s.IsNative).ToList() ?? new List<GroupSnapshot>();
-                        foreach (var s in nativeSnapshots)
+                        var orchestratedSnapIds = dbGroups
+                            .Where(g => !string.IsNullOrEmpty(g.SnapcastGroupId))
+                            .Select(g => g.SnapcastGroupId!)
+                            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+                        var allNativeIds = nativeSnapshots.Select(s => s.SnapcastGroupId)
+                            .Concat(deferredNativeIds)
+                            .Where(sid => !orchestratedSnapIds.Contains(sid))
+                            .Distinct(StringComparer.OrdinalIgnoreCase);
+
+                        foreach (var nativeId in allNativeIds)
                         {
-                            bool nativeRoomEdited = s.NativeClients.Any(c =>
+                            var s = nativeSnapshots.FirstOrDefault(snap => snap.SnapcastGroupId == nativeId);
+                            bool nativeRoomEdited = s != null && s.NativeClients.Any(c =>
                             {
                                 var r = dbRooms.FirstOrDefault(room => room.MacAddress == c.ClientId);
                                 if (r == null) return false;
                                 return (c.InitialDbMixVolume.HasValue && r.MixVolume != c.InitialDbMixVolume.Value)
                                     || (c.InitialDbIsMuted.HasValue && r.IsMuted != c.InitialDbIsMuted.Value);
                             });
-                            bool nativeProfileChanged = currentProfile != s.InitialVolumeProfile;
-                            bool nativeIsDeferred = deferredNativeIds.Contains(s.SnapcastGroupId);
+                            bool nativeProfileChanged = s != null && currentProfile != s.InitialVolumeProfile;
+                            bool nativeIsDeferred = deferredNativeIds.Contains(nativeId);
 
                             if (nativeRoomEdited || nativeProfileChanged || nativeIsDeferred)
                             {
                                 try
                                 {
-                                    await volumeOrchestrator.ReplayNativeSnapcastGroupVolumeUnderGateAsync(s.SnapcastGroupId);
+                                    await volumeOrchestrator.ReplayNativeSnapcastGroupVolumeUnderGateAsync(nativeId);
                                 }
                                 catch (Exception ex)
                                 {
-                                    _logger.LogWarning(ex, "Failed replaying deferred volume/mute for native Snapcast group {Sid}", s.SnapcastGroupId);
+                                    _logger.LogWarning(ex, "Failed replaying deferred volume/mute for native Snapcast group {Sid}", nativeId);
                                 }
                             }
                         }

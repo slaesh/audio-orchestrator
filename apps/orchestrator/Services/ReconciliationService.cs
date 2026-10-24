@@ -219,8 +219,22 @@ public class ReconciliationService : IReconciliationService, IDisposable
         {
             if (string.IsNullOrEmpty(group.SnapcastGroupId)) continue;
 
-            var gate = broadcastService?.GetGroupGate(group.Id);
-            if (gate != null) await gate.WaitAsync();
+            var involvedGateIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { group.Id, group.SnapcastGroupId };
+            var sortedGateIds = involvedGateIds.OrderBy(x => x, StringComparer.Ordinal).ToList();
+            var acquiredGates = new List<SemaphoreSlim>();
+
+            if (broadcastService != null)
+            {
+                foreach (var gid in sortedGateIds)
+                {
+                    var g = broadcastService.GetGroupGate(gid);
+                    if (g != null)
+                    {
+                        await g.WaitAsync();
+                        acquiredGates.Add(g);
+                    }
+                }
+            }
 
             try
             {
@@ -251,7 +265,10 @@ public class ReconciliationService : IReconciliationService, IDisposable
             }
             finally
             {
-                gate?.Release();
+                foreach (var g in acquiredGates)
+                {
+                    g.Release();
+                }
             }
         }
 

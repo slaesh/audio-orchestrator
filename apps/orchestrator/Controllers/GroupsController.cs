@@ -132,6 +132,7 @@ public class GroupsController : ControllerBase
         var sourceSnapGroupIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         List<GroupEntity> sourceDbGroups = new();
         var acquiredGates = new List<SemaphoreSlim>();
+        var involvedGateIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         for (int attempt = 0; attempt < 5; attempt++)
         {
@@ -155,7 +156,8 @@ public class GroupsController : ControllerBase
                 .Where(g => g.SnapcastGroupId != null && sourceSnapGroupIds.Contains(g.SnapcastGroupId))
                 .ToListAsync();
 
-            var involvedGateIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { group.Id };
+            involvedGateIds.Clear();
+            involvedGateIds.Add(group.Id);
             if (!string.IsNullOrEmpty(group.SnapcastGroupId)) involvedGateIds.Add(group.SnapcastGroupId);
             foreach (var sgId in sourceSnapGroupIds)
             {
@@ -290,6 +292,45 @@ public class GroupsController : ControllerBase
             var snapcastGroupId = ResolveSnapcastGroupId(group, snapGroups, clientIds[0], otherOrchestratedSnapIds);
             if (string.IsNullOrEmpty(snapcastGroupId))
                 return BadRequest("Could not resolve a Snapcast group for this assignment");
+
+            // Reacquire gates in strict sorted order if the resolved group ID was not in the initial gate set
+            if (!involvedGateIds.Contains(snapcastGroupId))
+            {
+                foreach (var g in acquiredGates) g.Release();
+                acquiredGates.Clear();
+
+                involvedGateIds.Add(snapcastGroupId);
+                var reacquireSortedIds = involvedGateIds.OrderBy(gid => gid, StringComparer.Ordinal).ToList();
+                if (broadcastService != null)
+                {
+                    foreach (var gid in reacquireSortedIds)
+                    {
+                        var g = broadcastService.GetGroupGate(gid);
+                        if (g != null)
+                        {
+                            await g.WaitAsync();
+                            acquiredGates.Add(g);
+                        }
+                    }
+                }
+
+                // Revalidate membership under the complete reacquired gate set
+                status = await _snapcast.GetStatusAsync();
+                snapGroups = status?["server"]?["groups"]?.AsArray();
+                if (snapGroups == null) return StatusCode(500, "Snapserver unreachable");
+
+                var recheckedId = ResolveSnapcastGroupId(group, snapGroups, clientIds[0], otherOrchestratedSnapIds);
+                if (string.IsNullOrEmpty(recheckedId))
+                    return BadRequest("Could not resolve a Snapcast group for this assignment after reacquiring gates");
+                snapcastGroupId = recheckedId;
+            }
+
+            // Reject the assignment if the resolved group is actively participating in a broadcast
+            if (broadcastService?.IsGroupActiveInBroadcast(group.Id, snapcastGroupId) == true ||
+                broadcastService?.IsGroupActiveInBroadcast(null, snapcastGroupId) == true)
+            {
+                return Conflict("Membership changes cannot be performed while the resolved group is actively playing a broadcast.");
+            }
 
             // Persist the resolved mapping if it changed
             if (group.SnapcastGroupId != snapcastGroupId)
@@ -449,16 +490,60 @@ public class GroupsController : ControllerBase
         var gate = broadcastService?.GetGroupGate(group.Id);
         if (gate != null) await gate.WaitAsync();
 
-        bool isBroadcasting = false;
+        bool shouldPushVolumeOutsideGate = false;
+        int? volumeToPush = null;
+        bool pushFromDocker = false;
+
         try
         {
             group.CurrentStreamId = effectiveStreamId;
             await _db.SaveChangesAsync();
 
-            isBroadcasting = broadcastService?.IsGroupActiveInBroadcast(group.Id, group.SnapcastGroupId) == true;
+            bool isBroadcasting = broadcastService?.IsGroupActiveInBroadcast(group.Id, group.SnapcastGroupId) == true;
 
             if (!string.IsNullOrEmpty(group.SnapcastGroupId) && !isBroadcasting) {
                 await _snapcast.SetGroupStreamAsync(group.SnapcastGroupId, effectiveStreamId);
+            }
+
+            // If we switched TO a Spotify stream, adopt existing volume if active or push current group volume
+            if (effectiveStreamId.StartsWith(OrchestratorConstants.SpotifyPrefix))
+            {
+                var sourceId = effectiveStreamId.Replace(OrchestratorConstants.SpotifyPrefix, "");
+                var source = await _db.SpotifySources.FindAsync(sourceId);
+                var activeSibling = await _db.Groups.FirstOrDefaultAsync(g => g.Id != group.Id && g.CurrentStreamId == effectiveStreamId);
+                int targetVolume = activeSibling?.MasterVolume ?? (source != null && source.IsActive ? source.MasterVolume : group.MasterVolume);
+
+                // Recheck broadcast ownership under the gate before adopting or deferring
+                isBroadcasting = broadcastService?.IsGroupActiveInBroadcast(group.Id, group.SnapcastGroupId) == true;
+                if (isBroadcasting)
+                {
+                    if (group.MasterVolume != targetVolume)
+                    {
+                        group.MasterVolume = targetVolume;
+                        await _db.SaveChangesAsync();
+                        await _hub.Clients.All.OnGroupVolumeChanged(group.Id, group.MasterVolume, group.IsMuted);
+                    }
+                    broadcastService?.MarkDeferredVolumeUpdate(group.Id, group.SnapcastGroupId);
+                }
+                else
+                {
+                    shouldPushVolumeOutsideGate = true;
+                    if (activeSibling != null)
+                    {
+                        volumeToPush = activeSibling.MasterVolume;
+                        pushFromDocker = true;
+                    }
+                    else if (source != null && source.IsActive)
+                    {
+                        volumeToPush = source.MasterVolume;
+                        pushFromDocker = true;
+                    }
+                    else
+                    {
+                        volumeToPush = group.MasterVolume;
+                        pushFromDocker = false;
+                    }
+                }
             }
         }
         finally
@@ -466,39 +551,9 @@ public class GroupsController : ControllerBase
             gate?.Release();
         }
 
-        // If we switched TO a Spotify stream, adopt existing volume if active or push current group volume
-        if (effectiveStreamId.StartsWith(OrchestratorConstants.SpotifyPrefix))
+        if (shouldPushVolumeOutsideGate && volumeToPush.HasValue)
         {
-            var sourceId = effectiveStreamId.Replace(OrchestratorConstants.SpotifyPrefix, "");
-            var source = await _db.SpotifySources.FindAsync(sourceId);
-            var activeSibling = await _db.Groups.FirstOrDefaultAsync(g => g.Id != group.Id && g.CurrentStreamId == effectiveStreamId);
-            int targetVolume = activeSibling?.MasterVolume ?? (source != null && source.IsActive ? source.MasterVolume : group.MasterVolume);
-
-            if (isBroadcasting)
-            {
-                if (group.MasterVolume != targetVolume)
-                {
-                    group.MasterVolume = targetVolume;
-                    await _db.SaveChangesAsync();
-                    await _hub.Clients.All.OnGroupVolumeChanged(group.Id, group.MasterVolume, group.IsMuted);
-                }
-                broadcastService?.MarkDeferredVolumeUpdate(group.Id, group.SnapcastGroupId);
-            }
-            else
-            {
-                if (activeSibling != null)
-                {
-                    await _volumeOrchestrator.SetGroupVolumeAsync(group.Id, activeSibling.MasterVolume, group.IsMuted, fromDocker: true);
-                }
-                else if (source != null && source.IsActive)
-                {
-                    await _volumeOrchestrator.SetGroupVolumeAsync(group.Id, source.MasterVolume, group.IsMuted, fromDocker: true);
-                }
-                else
-                {
-                    await _volumeOrchestrator.SetGroupVolumeAsync(group.Id, group.MasterVolume, group.IsMuted);
-                }
-            }
+            await _volumeOrchestrator.SetGroupVolumeAsync(group.Id, volumeToPush.Value, group.IsMuted, fromDocker: pushFromDocker);
         }
         
         await BroadcastStateAsync();

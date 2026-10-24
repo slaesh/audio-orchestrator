@@ -334,6 +334,179 @@ public class StabilityTests
     }
 
     [Fact]
+    public async Task AssignClients_ShouldReacquireGatesAndReject_WhenResolvedGroupIsBroadcasting()
+    {
+        // Arrange
+        using var db = GetDbContext();
+        var targetGroup = new GroupEntity { Name = "Living Room", SnapcastGroupId = null, CurrentStreamId = "stream_rock" };
+        db.Groups.Add(targetGroup);
+        await db.SaveChangesAsync();
+
+        var snapStatus = JsonNode.Parse(@"
+        {
+            ""server"": {
+                ""groups"": [
+                    {
+                        ""id"": ""source-snap-1"",
+                        ""stream_id"": ""default"",
+                        ""clients"": [ { ""id"": ""client1"" }, { ""id"": ""client2"" } ]
+                    },
+                    {
+                        ""id"": ""resolved-native-group"",
+                        ""stream_id"": ""stream_rock"",
+                        ""name"": ""Living Room"",
+                        ""clients"": []
+                    }
+                ]
+            }
+        }");
+        _snapMock.Setup(s => s.GetStatusAsync()).ReturnsAsync(snapStatus);
+
+        var broadcastMock = new Mock<IBroadcastService>();
+        broadcastMock.Setup(b => b.GetGroupGate(It.IsAny<string>())).Returns<string>(_ => new SemaphoreSlim(1, 1));
+        broadcastMock.Setup(b => b.IsGroupActiveInBroadcast(null, "resolved-native-group")).Returns(true);
+
+        var serviceProviderMock = new Mock<IServiceProvider>();
+        serviceProviderMock.Setup(sp => sp.GetService(typeof(IBroadcastService))).Returns(broadcastMock.Object);
+
+        var controller = new GroupsController(_reconciliationMock.Object, _snapMock.Object, db, _loggerMock.Object, _hubMock.Object, _builderMock.Object, _volumeOrchestratorMock.Object)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new Microsoft.AspNetCore.Http.DefaultHttpContext
+                {
+                    RequestServices = serviceProviderMock.Object
+                }
+            }
+        };
+
+        // Act
+        var result = await controller.AssignClients(targetGroup.Id, new[] { "client1" });
+
+        // Assert
+        var conflict = Assert.IsType<ConflictObjectResult>(result);
+        Assert.Contains("actively playing a broadcast", conflict.Value?.ToString());
+    }
+
+    [Fact]
+    public async Task Unassign_ShouldRetryAndReject_WhenRoomMovedToBroadcastingGroupConcurrently()
+    {
+        // Arrange
+        using var db = GetDbContext();
+        var groupA = new GroupEntity { Name = "GroupA", SnapcastGroupId = "snap-group-1" };
+        var groupB = new GroupEntity { Name = "GroupB", SnapcastGroupId = "snap-group-2" };
+        db.Groups.AddRange(groupA, groupB);
+        await db.SaveChangesAsync();
+
+        // Initial query finds room1 in snap-group-1
+        var initialStatus = JsonNode.Parse(@"
+        {
+            ""server"": {
+                ""groups"": [
+                    {
+                        ""id"": ""snap-group-1"",
+                        ""clients"": [ { ""id"": ""room1"" }, { ""id"": ""room2"" } ]
+                    },
+                    {
+                        ""id"": ""snap-group-2"",
+                        ""clients"": []
+                    }
+                ]
+            }
+        }");
+
+        // While acquiring gates, room1 was moved concurrently to snap-group-2, which is broadcasting
+        var movedStatus = JsonNode.Parse(@"
+        {
+            ""server"": {
+                ""groups"": [
+                    {
+                        ""id"": ""snap-group-1"",
+                        ""clients"": [ { ""id"": ""room2"" } ]
+                    },
+                    {
+                        ""id"": ""snap-group-2"",
+                        ""clients"": [ { ""id"": ""room1"" } ]
+                    }
+                ]
+            }
+        }");
+
+        int callCount = 0;
+        _snapMock.Setup(s => s.GetStatusAsync())
+            .ReturnsAsync(() => callCount++ == 0 ? initialStatus : movedStatus);
+
+        var broadcastMock = new Mock<IBroadcastService>();
+        broadcastMock.Setup(b => b.GetGroupGate(It.IsAny<string>())).Returns<string>(_ => new SemaphoreSlim(1, 1));
+        broadcastMock.Setup(b => b.IsGroupActiveInBroadcast(groupB.Id, "snap-group-2")).Returns(true);
+
+        var serviceProviderMock = new Mock<IServiceProvider>();
+        serviceProviderMock.Setup(sp => sp.GetService(typeof(IBroadcastService))).Returns(broadcastMock.Object);
+
+        var controller = new RoomsController(_snapMock.Object, db, _hubMock.Object, _builderMock.Object, _volumeOrchestratorMock.Object)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new Microsoft.AspNetCore.Http.DefaultHttpContext
+                {
+                    RequestServices = serviceProviderMock.Object
+                }
+            }
+        };
+
+        // Act
+        var result = await controller.Unassign("room1");
+
+        // Assert
+        var conflict = Assert.IsType<ConflictObjectResult>(result);
+        Assert.Contains("actively playing a broadcast", conflict.Value?.ToString());
+    }
+
+    [Fact]
+    public async Task SetStream_ShouldAdoptSpotifyVolumeAndMarkDeferred_WhenBroadcasting()
+    {
+        // Arrange
+        using var db = GetDbContext();
+        var group = new GroupEntity { Name = "GroupA", SnapcastGroupId = "snap-group-1", MasterVolume = 40, CurrentStreamId = "default" };
+        var source = new SpotifySourceEntity { Id = "spot1", Name = "Spotify 1", MasterVolume = 75, IsActive = true };
+        db.Groups.Add(group);
+        db.SpotifySources.Add(source);
+        await db.SaveChangesAsync();
+
+        var broadcastMock = new Mock<IBroadcastService>();
+        broadcastMock.Setup(b => b.GetGroupGate(It.IsAny<string>())).Returns<string>(_ => new SemaphoreSlim(1, 1));
+        broadcastMock.Setup(b => b.IsGroupActiveInBroadcast(group.Id, "snap-group-1")).Returns(true);
+
+        bool markedDeferred = false;
+        broadcastMock.Setup(b => b.MarkDeferredVolumeUpdate(group.Id, "snap-group-1"))
+            .Callback(() => markedDeferred = true);
+
+        var serviceProviderMock = new Mock<IServiceProvider>();
+        serviceProviderMock.Setup(sp => sp.GetService(typeof(IBroadcastService))).Returns(broadcastMock.Object);
+
+        var controller = new GroupsController(_reconciliationMock.Object, _snapMock.Object, db, _loggerMock.Object, _hubMock.Object, _builderMock.Object, _volumeOrchestratorMock.Object)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new Microsoft.AspNetCore.Http.DefaultHttpContext
+                {
+                    RequestServices = serviceProviderMock.Object
+                }
+            }
+        };
+
+        // Act
+        var result = await controller.SetStream(group.Id, new SetStreamRequest { StreamId = $"{OrchestratorConstants.SpotifyPrefix}spot1" });
+
+        // Assert
+        Assert.IsType<OkResult>(result);
+        Assert.True(markedDeferred);
+
+        var updatedGroup = await db.Groups.FindAsync(group.Id);
+        Assert.Equal(75, updatedGroup!.MasterVolume);
+    }
+
+    [Fact]
     public async Task LibrespotApiClient_ShouldUseVersionedV1Routes()
     {
         var requestedUrls = new List<(HttpMethod Method, string Uri)>();

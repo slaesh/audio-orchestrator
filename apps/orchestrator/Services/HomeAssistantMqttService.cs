@@ -1646,17 +1646,64 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         var gate = broadcastService?.GetGroupGate(group.Id);
         if (gate != null) await gate.WaitAsync();
 
-        bool isBroadcasting = false;
+        bool shouldPushVolumeOutsideGate = false;
+        int? volumeToPush = null;
+        bool pushFromDocker = false;
+
         try
         {
             group.CurrentStreamId = effectiveStreamId;
             await db.SaveChangesAsync();
 
-            isBroadcasting = broadcastService?.IsGroupActiveInBroadcast(group.Id, group.SnapcastGroupId) == true;
+            bool isBroadcasting = broadcastService?.IsGroupActiveInBroadcast(group.Id, group.SnapcastGroupId) == true;
 
             if (!string.IsNullOrEmpty(group.SnapcastGroupId) && !isBroadcasting)
             {
                 await snapcast.SetGroupStreamAsync(group.SnapcastGroupId, effectiveStreamId);
+            }
+
+            if (effectiveStreamId.StartsWith(OrchestratorConstants.SpotifyPrefix))
+            {
+                var sourceId = effectiveStreamId.Replace(OrchestratorConstants.SpotifyPrefix, "");
+                var source = await db.SpotifySources.FindAsync(sourceId);
+                var activeSibling = await db.Groups.FirstOrDefaultAsync(g => g.Id != group.Id && g.CurrentStreamId == effectiveStreamId);
+                int targetVolume = activeSibling?.MasterVolume ?? (source != null && source.IsActive ? source.MasterVolume : group.MasterVolume);
+
+                // Recheck broadcast ownership under the gate before adopting or deferring
+                isBroadcasting = broadcastService?.IsGroupActiveInBroadcast(group.Id, group.SnapcastGroupId) == true;
+                if (isBroadcasting)
+                {
+                    if (group.MasterVolume != targetVolume)
+                    {
+                        group.MasterVolume = targetVolume;
+                        await db.SaveChangesAsync();
+                        var hubContext = _serviceProvider.GetService<Microsoft.AspNetCore.SignalR.IHubContext<AudioOrchestrator.Hubs.AudioHub, AudioOrchestrator.Contracts.IAudioClient>>();
+                        if (hubContext != null)
+                        {
+                            await hubContext.Clients.All.OnGroupVolumeChanged(group.Id, group.MasterVolume, group.IsMuted);
+                        }
+                    }
+                    broadcastService?.MarkDeferredVolumeUpdate(group.Id, group.SnapcastGroupId);
+                }
+                else
+                {
+                    shouldPushVolumeOutsideGate = true;
+                    if (activeSibling != null)
+                    {
+                        volumeToPush = activeSibling.MasterVolume;
+                        pushFromDocker = true;
+                    }
+                    else if (source != null && source.IsActive)
+                    {
+                        volumeToPush = source.MasterVolume;
+                        pushFromDocker = true;
+                    }
+                    else
+                    {
+                        volumeToPush = group.MasterVolume;
+                        pushFromDocker = false;
+                    }
+                }
             }
         }
         finally
@@ -1664,42 +1711,9 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             gate?.Release();
         }
 
-        if (effectiveStreamId.StartsWith(OrchestratorConstants.SpotifyPrefix))
+        if (shouldPushVolumeOutsideGate && volumeToPush.HasValue)
         {
-            var sourceId = effectiveStreamId.Replace(OrchestratorConstants.SpotifyPrefix, "");
-            var source = await db.SpotifySources.FindAsync(sourceId);
-            var activeSibling = await db.Groups.FirstOrDefaultAsync(g => g.Id != group.Id && g.CurrentStreamId == effectiveStreamId);
-            int targetVolume = activeSibling?.MasterVolume ?? (source != null && source.IsActive ? source.MasterVolume : group.MasterVolume);
-
-            if (isBroadcasting)
-            {
-                if (group.MasterVolume != targetVolume)
-                {
-                    group.MasterVolume = targetVolume;
-                    await db.SaveChangesAsync();
-                    var hubContext = _serviceProvider.GetService<Microsoft.AspNetCore.SignalR.IHubContext<AudioOrchestrator.Hubs.AudioHub, AudioOrchestrator.Contracts.IAudioClient>>();
-                    if (hubContext != null)
-                    {
-                        await hubContext.Clients.All.OnGroupVolumeChanged(group.Id, group.MasterVolume, group.IsMuted);
-                    }
-                }
-                broadcastService?.MarkDeferredVolumeUpdate(group.Id, group.SnapcastGroupId);
-            }
-            else
-            {
-                if (activeSibling != null)
-                {
-                    await volumeOrchestrator.SetGroupVolumeAsync(group.Id, activeSibling.MasterVolume, group.IsMuted, fromDocker: true);
-                }
-                else if (source != null && source.IsActive)
-                {
-                    await volumeOrchestrator.SetGroupVolumeAsync(group.Id, source.MasterVolume, group.IsMuted, fromDocker: true);
-                }
-                else
-                {
-                    await volumeOrchestrator.SetGroupVolumeAsync(group.Id, group.MasterVolume, group.IsMuted);
-                }
-            }
+            await volumeOrchestrator.SetGroupVolumeAsync(group.Id, volumeToPush.Value, group.IsMuted, fromDocker: pushFromDocker);
         }
     }
 

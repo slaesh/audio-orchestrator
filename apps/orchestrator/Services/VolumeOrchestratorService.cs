@@ -308,10 +308,21 @@ public class VolumeOrchestratorService
         if (group == null || string.IsNullOrEmpty(group.SnapcastGroupId)) return;
 
         var broadcastService = _serviceProvider?.GetService<IBroadcastService>();
-        var gate = broadcastService?.GetGroupGate(group.Id);
-        if (gate != null)
+        var involvedGateIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { group.Id, group.SnapcastGroupId };
+        var sortedGateIds = involvedGateIds.OrderBy(x => x, StringComparer.Ordinal).ToList();
+        var acquiredGates = new List<SemaphoreSlim>();
+
+        if (broadcastService != null)
         {
-            await gate.WaitAsync();
+            foreach (var gid in sortedGateIds)
+            {
+                var g = broadcastService.GetGroupGate(gid);
+                if (g != null)
+                {
+                    await g.WaitAsync();
+                    acquiredGates.Add(g);
+                }
+            }
         }
 
         try
@@ -320,7 +331,10 @@ public class VolumeOrchestratorService
         }
         finally
         {
-            gate?.Release();
+            foreach (var g in acquiredGates)
+            {
+                g.Release();
+            }
         }
     }
 
