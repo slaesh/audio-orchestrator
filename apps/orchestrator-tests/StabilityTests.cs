@@ -540,7 +540,7 @@ public class StabilityTests
         serviceProviderMock.Setup(s => s.GetService(typeof(IBroadcastService))).Returns(broadcastMock.Object);
 
         _snapMock.Setup(s => s.GetStatusAsync()).ReturnsAsync(System.Text.Json.Nodes.JsonNode.Parse(
-            """{"server":{"groups":[{"id":"snap-2","clients":[]}]}}"""));
+            """{"server":{"groups":[{"id":"snap-1","clients":[]},{"id":"snap-2","clients":[]}]}}"""));
 
         var volumeOrchestrator = new VolumeOrchestratorService(
             db,
@@ -554,9 +554,11 @@ public class StabilityTests
         await volumeOrchestrator.SyncSpotifySourceAndSiblingsAsync("grp-1", $"{OrchestratorConstants.SpotifyPrefix}spotify-1", 70);
 
         var freshSource = await db.SpotifySources.FindAsync("spotify-1");
+        var freshGrp1 = await db.Groups.FindAsync("grp-1");
         var freshGrp2 = await db.Groups.FindAsync("grp-2");
 
         Assert.Equal(70, freshSource!.MasterVolume);
+        Assert.Equal(70, freshGrp1!.MasterVolume);
         Assert.Equal(70, freshGrp2!.MasterVolume);
         librespotMock.Verify(l => l.SetVolumeAsync("spotify-1", 70), Times.Once);
     }

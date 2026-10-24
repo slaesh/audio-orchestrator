@@ -888,42 +888,65 @@ public class BroadcastService : IHostedService, IBroadcastService
             }
 
             // 1. Resolve Targets under gate coordination
-            var candidateGateIds = await ResolveCandidateGateIdsAsync(item.Request, db);
             var targetGates = new List<SemaphoreSlim>();
-            var acquiredGateIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             try
             {
-                foreach (var gid in candidateGateIds)
+                for (int attempt = 0; attempt < 5; attempt++)
                 {
-                    var g = GetGroupGate(gid);
-                    await g.WaitAsync(ct);
-                    targetGates.Add(g);
-                    acquiredGateIds.Add(gid);
-                }
+                    var candidateGateIds = await ResolveCandidateGateIdsAsync(item.Request, db);
+                    var sortedGateIds = candidateGateIds.OrderBy(x => x, StringComparer.Ordinal).ToList();
 
-                snapshots = await ResolveTargetSnapshotsAsync(item.Request, db);
-                if (snapshots.Count == 0)
-                {
-                    throw new InvalidOperationException("Keine Zielgruppen für die Durchsage gefunden.");
-                }
-
-                foreach (var s in snapshots)
-                {
-                    var gid = !s.IsNative ? s.GroupId : s.SnapcastGroupId;
-                    if (!acquiredGateIds.Contains(gid))
+                    targetGates.Clear();
+                    foreach (var gid in sortedGateIds)
                     {
                         var g = GetGroupGate(gid);
                         await g.WaitAsync(ct);
                         targetGates.Add(g);
-                        acquiredGateIds.Add(gid);
                     }
-                }
 
-                lock (_activeTargetGroupIds)
-                {
-                    _activeTargetGroupIds.AddRange(snapshots.Where(s => !s.IsNative).Select(s => s.GroupId));
-                    _activeTargetSnapcastGroupIds.AddRange(snapshots.Select(s => s.SnapcastGroupId));
-                    _currentSnapshots = snapshots;
+                    try
+                    {
+                        snapshots = await ResolveTargetSnapshotsAsync(item.Request, db);
+                        if (snapshots.Count == 0)
+                        {
+                            throw new InvalidOperationException("Keine Zielgruppen für die Durchsage gefunden.");
+                        }
+
+                        var requiredGateIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        foreach (var s in snapshots)
+                        {
+                            if (!s.IsNative)
+                            {
+                                requiredGateIds.Add(s.GroupId);
+                            }
+                            if (!string.IsNullOrEmpty(s.SnapcastGroupId))
+                            {
+                                requiredGateIds.Add(s.SnapcastGroupId);
+                            }
+                        }
+
+                        if (!requiredGateIds.IsSubsetOf(sortedGateIds))
+                        {
+                            // A required target gate was missing from candidate set; release and retry in strict ordinal order
+                            foreach (var g in targetGates) g.Release();
+                            targetGates.Clear();
+                            continue;
+                        }
+
+                        lock (_activeTargetGroupIds)
+                        {
+                            _activeTargetGroupIds.AddRange(snapshots.Where(s => !s.IsNative).Select(s => s.GroupId));
+                            _activeTargetSnapcastGroupIds.AddRange(snapshots.Select(s => s.SnapcastGroupId));
+                            _currentSnapshots = snapshots;
+                        }
+                        break;
+                    }
+                    catch
+                    {
+                        foreach (var g in targetGates) g.Release();
+                        targetGates.Clear();
+                        throw;
+                    }
                 }
             }
             finally

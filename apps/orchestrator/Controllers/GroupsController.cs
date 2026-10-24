@@ -179,38 +179,47 @@ public class GroupsController : ControllerBase
                 }
             }
 
-            // Verify membership did not shift before gates were acquired
-            var freshStatus = await _snapcast.GetStatusAsync();
-            var freshSnapGroups = freshStatus?["server"]?["groups"]?.AsArray();
-            if (freshSnapGroups == null)
+            bool gateRetained = false;
+            try
             {
-                foreach (var g in acquiredGates) g.Release();
-                acquiredGates.Clear();
-                return StatusCode(500, "Snapserver unreachable");
-            }
-
-            var freshSourceSnapGroupIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var cId in clientIds)
-            {
-                var sourceSnapGroup = freshSnapGroups.FirstOrDefault(sg => 
-                    sg?["clients"]?.AsArray()?.Any(c => c?["id"]?.GetValue<string>() == cId) == true);
-                var sGroupId = sourceSnapGroup?["id"]?.GetValue<string>();
-                if (!string.IsNullOrEmpty(sGroupId))
+                // Verify membership did not shift before gates were acquired
+                var freshStatus = await _snapcast.GetStatusAsync();
+                var freshSnapGroups = freshStatus?["server"]?["groups"]?.AsArray();
+                if (freshSnapGroups == null)
                 {
-                    freshSourceSnapGroupIds.Add(sGroupId);
+                    return StatusCode(500, "Snapserver unreachable");
+                }
+
+                var freshSourceSnapGroupIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var cId in clientIds)
+                {
+                    var sourceSnapGroup = freshSnapGroups.FirstOrDefault(sg => 
+                        sg?["clients"]?.AsArray()?.Any(c => c?["id"]?.GetValue<string>() == cId) == true);
+                    var sGroupId = sourceSnapGroup?["id"]?.GetValue<string>();
+                    if (!string.IsNullOrEmpty(sGroupId))
+                    {
+                        freshSourceSnapGroupIds.Add(sGroupId);
+                    }
+                }
+
+                if (!freshSourceSnapGroupIds.SetEquals(sourceSnapGroupIds))
+                {
+                    continue;
+                }
+
+                status = freshStatus;
+                snapGroups = freshSnapGroups;
+                gateRetained = true;
+                break;
+            }
+            finally
+            {
+                if (!gateRetained)
+                {
+                    foreach (var g in acquiredGates) g.Release();
+                    acquiredGates.Clear();
                 }
             }
-
-            if (!freshSourceSnapGroupIds.SetEquals(sourceSnapGroupIds))
-            {
-                foreach (var g in acquiredGates) g.Release();
-                acquiredGates.Clear();
-                continue;
-            }
-
-            status = freshStatus;
-            snapGroups = freshSnapGroups;
-            break;
         }
 
         if (acquiredGates.Count == 0 && broadcastService != null)

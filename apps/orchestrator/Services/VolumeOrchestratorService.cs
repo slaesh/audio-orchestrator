@@ -371,25 +371,25 @@ public class VolumeOrchestratorService
         }
 
         var broadcastService = _serviceProvider?.GetService<IBroadcastService>();
-        var siblingGroups = await _db.Groups
-            .Where(g => g.Id != groupId && g.CurrentStreamId == currentStreamId)
+        var listeningGroups = await _db.Groups
+            .Where(g => g.CurrentStreamId == currentStreamId)
             .ToListAsync();
 
         if (broadcastService != null)
         {
-            siblingGroups = siblingGroups.Where(g => !broadcastService.IsGroupActiveInBroadcast(g.Id, g.SnapcastGroupId)).ToList();
+            listeningGroups = listeningGroups.Where(g => !broadcastService.IsGroupActiveInBroadcast(g.Id, g.SnapcastGroupId)).ToList();
         }
 
-        foreach (var sibling in siblingGroups)
+        foreach (var grp in listeningGroups)
         {
-            sibling.MasterVolume = masterVolume;
+            grp.MasterVolume = masterVolume;
         }
         await _db.SaveChangesAsync();
 
-        foreach (var sibling in siblingGroups)
+        foreach (var grp in listeningGroups)
         {
-            await _hub.Clients.All.OnGroupVolumeChanged(sibling.Id, sibling.MasterVolume, sibling.IsMuted);
-            await RecalculateAndPushGroupAsync(sibling.Id);
+            await _hub.Clients.All.OnGroupVolumeChanged(grp.Id, grp.MasterVolume, grp.IsMuted);
+            await RecalculateAndPushGroupAsync(grp.Id);
         }
 
         try
