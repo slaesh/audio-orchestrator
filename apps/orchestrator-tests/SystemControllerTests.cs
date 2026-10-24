@@ -1,3 +1,4 @@
+using System.Reflection;
 using AudioOrchestrator.Contracts;
 using AudioOrchestrator.Controllers;
 using AudioOrchestrator.Data;
@@ -50,7 +51,13 @@ public class SystemControllerTests
 
         Assert.Equal(SystemStatus.Healthy, info.Status);
         Assert.Equal("Production", info.Environment);
-        Assert.Equal("0.4.1", info.Version);
+        
+        var expectedVersion = typeof(SystemController).Assembly
+            .GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>()?.InformationalVersion?.Split('+')[0]
+            ?? typeof(SystemController).Assembly.GetName().Version?.ToString(3);
+        Assert.Equal(expectedVersion, info.Version);
+        Assert.Matches(@"^\d+\.\d+\.\d+", info.Version);
+
         Assert.True(info.SnapserverConnected);
         Assert.True(info.DatabaseConnected);
         Assert.True(info.MqttConnected);
