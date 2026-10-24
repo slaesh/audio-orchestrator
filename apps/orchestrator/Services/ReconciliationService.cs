@@ -217,69 +217,87 @@ public class ReconciliationService : IReconciliationService, IDisposable
         foreach (var group in groups)
         {
             if (string.IsNullOrEmpty(group.SnapcastGroupId)) continue;
-            var match = snapGroups.FirstOrDefault(sg => 
-                sg?["id"]?.GetValue<string>() == group.SnapcastGroupId && 
-                !claimedSnapIds.Contains(group.SnapcastGroupId!));
 
-            if (match != null) {
-                claimedSnapIds.Add(group.SnapcastGroupId!);
+            var gate = broadcastService?.GetGroupGate(group.Id);
+            if (gate != null) await gate.WaitAsync();
+
+            try
+            {
+                var match = snapGroups.FirstOrDefault(sg => 
+                    sg?["id"]?.GetValue<string>() == group.SnapcastGroupId && 
+                    !claimedSnapIds.Contains(group.SnapcastGroupId!));
 
                 bool isBroadcasting = broadcastService?.IsGroupActiveInBroadcast(group.Id, group.SnapcastGroupId) == true;
                 if (isBroadcasting)
                 {
+                    if (match != null) claimedSnapIds.Add(group.SnapcastGroupId!);
                     continue;
                 }
 
-                if (match?["name"]?.GetValue<string>() != group.Name) {
-                    await _snapcast.SetGroupNameAsync(group.SnapcastGroupId!, group.Name);
-                }
-                if (!string.IsNullOrEmpty(group.CurrentStreamId) && match?["stream_id"]?.GetValue<string>() != group.CurrentStreamId) {
-                    try { await _snapcast.SetGroupStreamAsync(group.SnapcastGroupId!, group.CurrentStreamId); } catch {}
-                }
-            } else {
-                bool isBroadcasting = broadcastService?.IsGroupActiveInBroadcast(group.Id, group.SnapcastGroupId) == true;
-                if (!isBroadcasting)
-                {
+                if (match != null) {
+                    claimedSnapIds.Add(group.SnapcastGroupId!);
+
+                    if (match?["name"]?.GetValue<string>() != group.Name) {
+                        await _snapcast.SetGroupNameAsync(group.SnapcastGroupId!, group.Name);
+                    }
+                    if (!string.IsNullOrEmpty(group.CurrentStreamId) && match?["stream_id"]?.GetValue<string>() != group.CurrentStreamId) {
+                        try { await _snapcast.SetGroupStreamAsync(group.SnapcastGroupId!, group.CurrentStreamId); } catch {}
+                    }
+                } else {
                     group.SnapcastGroupId = null;
                     dbChanged = true;
                 }
+            }
+            finally
+            {
+                gate?.Release();
             }
         }
 
         // Second pass: Match orphaned DB groups by Name or Stream (Self-Healing)
         foreach (var group in groups.Where(g => string.IsNullOrEmpty(g.SnapcastGroupId) || !claimedSnapIds.Contains(g.SnapcastGroupId!)))
         {
-            if (broadcastService?.IsGroupActiveInBroadcast(group.Id, group.SnapcastGroupId) == true) continue;
+            var gate = broadcastService?.GetGroupGate(group.Id);
+            if (gate != null) await gate.WaitAsync();
 
-            var matchingSnapGroup = snapGroups.FirstOrDefault(sg => {
-                var sid = sg?["id"]?.GetValue<string>();
-                if (sid == null || claimedSnapIds.Contains(sid)) return false;
-                if (!string.IsNullOrEmpty(group.Name) && sg?["name"]?.GetValue<string>() == group.Name) return true;
-                if (!string.IsNullOrEmpty(group.CurrentStreamId) && 
-                    group.CurrentStreamId != "default" && 
-                    sg?["stream_id"]?.GetValue<string>() == group.CurrentStreamId) 
-                {
-                    var otherPossible = snapGroups.Count(s => s?["stream_id"]?.GetValue<string>() == group.CurrentStreamId);
-                    return otherPossible == 1; 
-                }
-                return false;
-            });
-
-            if (matchingSnapGroup != null)
+            try
             {
-                var actualSnapId = matchingSnapGroup["id"]?.GetValue<string>();
-                if (actualSnapId != null)
+                if (broadcastService?.IsGroupActiveInBroadcast(group.Id, group.SnapcastGroupId) == true) continue;
+
+                var matchingSnapGroup = snapGroups.FirstOrDefault(sg => {
+                    var sid = sg?["id"]?.GetValue<string>();
+                    if (sid == null || claimedSnapIds.Contains(sid)) return false;
+                    if (!string.IsNullOrEmpty(group.Name) && sg?["name"]?.GetValue<string>() == group.Name) return true;
+                    if (!string.IsNullOrEmpty(group.CurrentStreamId) && 
+                        group.CurrentStreamId != "default" && 
+                        sg?["stream_id"]?.GetValue<string>() == group.CurrentStreamId) 
+                    {
+                        var otherPossible = snapGroups.Count(s => s?["stream_id"]?.GetValue<string>() == group.CurrentStreamId);
+                        return otherPossible == 1; 
+                    }
+                    return false;
+                });
+
+                if (matchingSnapGroup != null)
                 {
-                    group.SnapcastGroupId = actualSnapId;
-                    claimedSnapIds.Add(actualSnapId);
-                    dbChanged = true;
-                    
-                    await _snapcast.SetGroupNameAsync(actualSnapId, group.Name);
-                    bool isBroadcasting = broadcastService?.IsGroupActiveInBroadcast(group.Id, actualSnapId) == true;
-                    if (!isBroadcasting && !string.IsNullOrEmpty(group.CurrentStreamId)) {
-                         try { await _snapcast.SetGroupStreamAsync(actualSnapId, group.CurrentStreamId); } catch {}
+                    var actualSnapId = matchingSnapGroup["id"]?.GetValue<string>();
+                    if (actualSnapId != null)
+                    {
+                        group.SnapcastGroupId = actualSnapId;
+                        claimedSnapIds.Add(actualSnapId);
+                        dbChanged = true;
+                        
+                        await _snapcast.SetGroupNameAsync(actualSnapId, group.Name);
+                        bool isBroadcasting = broadcastService?.IsGroupActiveInBroadcast(group.Id, actualSnapId) == true;
+                        if (!isBroadcasting && !string.IsNullOrEmpty(group.CurrentStreamId)) {
+                             try { await _snapcast.SetGroupStreamAsync(actualSnapId, group.CurrentStreamId); } catch {}
+                        }
                     }
                 }
+            }
+            finally
+            {
+                gate?.Release();
             }
         }
 
@@ -289,17 +307,27 @@ public class ReconciliationService : IReconciliationService, IDisposable
             var sid = sg?["id"]?.GetValue<string>();
             if (sid == null || claimedSnapIds.Contains(sid)) continue;
 
-            // Preserve native Snapcast groups currently playing a broadcast
-            if (broadcastService?.IsGroupActiveInBroadcast(null, sid) == true) continue;
+            var gate = broadcastService?.GetGroupGate(sid);
+            if (gate != null) await gate.WaitAsync();
 
-            if (sg?["stream_id"]?.GetValue<string>() != "default" || !string.IsNullOrEmpty(sg?["name"]?.GetValue<string>()))
+            try
             {
-                try {
-                    await _snapcast.SetGroupNameAsync(sid, "");
-                    await _snapcast.SetGroupStreamAsync(sid, "default");
-                } catch (Exception ex) {
-                    _logger.LogWarning("Failed to silence orphan group {Sid}: {Message}", sid, ex.Message);
+                // Preserve native Snapcast groups currently playing a broadcast
+                if (broadcastService?.IsGroupActiveInBroadcast(null, sid) == true) continue;
+
+                if (sg?["stream_id"]?.GetValue<string>() != "default" || !string.IsNullOrEmpty(sg?["name"]?.GetValue<string>()))
+                {
+                    try {
+                        await _snapcast.SetGroupNameAsync(sid, "");
+                        await _snapcast.SetGroupStreamAsync(sid, "default");
+                    } catch (Exception ex) {
+                        _logger.LogWarning("Failed to silence orphan group {Sid}: {Message}", sid, ex.Message);
+                    }
                 }
+            }
+            finally
+            {
+                gate?.Release();
             }
         }
 

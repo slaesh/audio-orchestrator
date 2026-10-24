@@ -91,22 +91,32 @@ public class RoomsController : ControllerBase
 
         if (dbGroup == null)
         {
-            // Unassigned room: mix volume is 1:1 with volume
-            room.MixVolume = req.Percent;
-            await _db.SaveChangesAsync();
-
             var broadcastService = HttpContext.RequestServices.GetService<IBroadcastService>();
-            if (snapGroupId != null && broadcastService?.IsGroupActiveInBroadcast(null, snapGroupId) == true)
+            var gate = snapGroupId != null ? broadcastService?.GetGroupGate(snapGroupId) : null;
+            if (gate != null) await gate.WaitAsync();
+
+            try
             {
-                return Ok();
+                // Unassigned room: mix volume is 1:1 with volume
+                room.MixVolume = req.Percent;
+                await _db.SaveChangesAsync();
+
+                if (snapGroupId != null && broadcastService?.IsGroupActiveInBroadcast(null, snapGroupId) == true)
+                {
+                    return Ok();
+                }
+
+                var settings = await _db.Settings.FirstOrDefaultAsync();
+                var profile = settings?.VolumeProfile ?? AudioOrchestrator.Contracts.VolumeProfile.Cubic;
+                int snapcastVolume = VolumeOrchestratorService.CalculateSnapcastVolume(req.Percent, 100, profile);
+
+                await _snapcast.SetClientVolumeAsync(id, snapcastVolume, req.Muted);
+                await _hub.Clients.All.OnRoomVolumeChanged(id, snapcastVolume, req.Muted);
             }
-
-            var settings = await _db.Settings.FirstOrDefaultAsync();
-            var profile = settings?.VolumeProfile ?? AudioOrchestrator.Contracts.VolumeProfile.Cubic;
-            int snapcastVolume = VolumeOrchestratorService.CalculateSnapcastVolume(req.Percent, 100, profile);
-
-            await _snapcast.SetClientVolumeAsync(id, snapcastVolume, req.Muted);
-            await _hub.Clients.All.OnRoomVolumeChanged(id, snapcastVolume, req.Muted);
+            finally
+            {
+                gate?.Release();
+            }
         }
         else
         {

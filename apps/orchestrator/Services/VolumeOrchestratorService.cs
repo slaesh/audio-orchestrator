@@ -259,23 +259,35 @@ public class VolumeOrchestratorService
         foreach (var sg in snapGroups)
         {
             var sid = sg?["id"]?.GetValue<string>();
-            if (sid != null && (orchestratedSnapIds.Contains(sid) || broadcastService?.IsGroupActiveInBroadcast(null, sid) == true)) continue;
+            if (sid == null || orchestratedSnapIds.Contains(sid)) continue;
 
-            var clients = sg?["clients"]?.AsArray();
-            if (clients == null) continue;
+            var gate = broadcastService?.GetGroupGate(sid);
+            if (gate != null) await gate.WaitAsync();
 
-            foreach (var client in clients)
+            try
             {
-                var mac = client?["id"]?.GetValue<string>();
-                if (string.IsNullOrEmpty(mac)) continue;
+                if (broadcastService?.IsGroupActiveInBroadcast(null, sid) == true) continue;
 
-                var roomEntity = roomsFromDb.FirstOrDefault(r => r.MacAddress == mac);
-                var mixVolume = roomEntity?.MixVolume ?? 100;
-                var isMuted = roomEntity?.IsMuted ?? false;
+                var clients = sg?["clients"]?.AsArray();
+                if (clients == null) continue;
 
-                int snapcastVolume = CalculateSnapcastVolume(mixVolume, 100, profile);
-                await _snapcast.SetClientVolumeAsync(mac, snapcastVolume, isMuted);
-                await _hub.Clients.All.OnRoomVolumeChanged(mac, snapcastVolume, isMuted);
+                foreach (var client in clients)
+                {
+                    var mac = client?["id"]?.GetValue<string>();
+                    if (string.IsNullOrEmpty(mac)) continue;
+
+                    var roomEntity = roomsFromDb.FirstOrDefault(r => r.MacAddress == mac);
+                    var mixVolume = roomEntity?.MixVolume ?? 100;
+                    var isMuted = roomEntity?.IsMuted ?? false;
+
+                    int snapcastVolume = CalculateSnapcastVolume(mixVolume, 100, profile);
+                    await _snapcast.SetClientVolumeAsync(mac, snapcastVolume, isMuted);
+                    await _hub.Clients.All.OnRoomVolumeChanged(mac, snapcastVolume, isMuted);
+                }
+            }
+            finally
+            {
+                gate?.Release();
             }
         }
     }

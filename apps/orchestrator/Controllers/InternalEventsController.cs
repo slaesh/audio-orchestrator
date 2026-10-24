@@ -186,16 +186,32 @@ public class EventsController : ControllerBase
                         var g = await bgDb.Groups.FindAsync(id);
                         if (g == null) continue;
                         var snapcastGroupId = g.SnapcastGroupId ?? g.Id;
-                        if (bgBroadcast?.IsGroupActiveInBroadcast(g.Id, snapcastGroupId) == true)
+
+                        var gate = bgBroadcast?.GetGroupGate(g.Id);
+                        if (gate != null) await gate.WaitAsync();
+
+                        bool isBroadcasting = false;
+                        try
                         {
-                            _logger.LogInformation("[Sync-BG] Group {GroupName} is currently active in a broadcast, skipping Spotify playback join", groupNames[i]);
-                            continue;
+                            isBroadcasting = bgBroadcast?.IsGroupActiveInBroadcast(g.Id, snapcastGroupId) == true;
+                            if (isBroadcasting)
+                            {
+                                _logger.LogInformation("[Sync-BG] Group {GroupName} is currently active in a broadcast, skipping Spotify playback join", groupNames[i]);
+                                continue;
+                            }
+
+                            await bgSnapcast.SetGroupStreamAsync(snapcastGroupId, sourceStreamId);
+                            _logger.LogInformation("[Sync-BG] Group {GroupName} joined active source stream {StreamId}", groupNames[i], sourceStreamId);
+                        }
+                        finally
+                        {
+                            gate?.Release();
                         }
 
-                        await bgSnapcast.SetGroupStreamAsync(snapcastGroupId, sourceStreamId);
-                        _logger.LogInformation("[Sync-BG] Group {GroupName} joined active source stream {StreamId}", groupNames[i], sourceStreamId);
-                        
-                        await bgVolume.SetGroupVolumeAsync(g.Id, g.MasterVolume, g.IsMuted, fromDocker: true, syncStreamSource: false);
+                        if (!isBroadcasting)
+                        {
+                            await bgVolume.SetGroupVolumeAsync(g.Id, g.MasterVolume, g.IsMuted, fromDocker: true, syncStreamSource: false);
+                        }
                     }
                 } catch (Exception ex) {
                     _logger.LogError(ex, "Failed to perform background stream/volume sync for 'playing' event");

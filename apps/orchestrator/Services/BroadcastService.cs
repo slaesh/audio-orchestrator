@@ -835,7 +835,11 @@ public class BroadcastService : IHostedService, IBroadcastService
                         await _librespotApi.SendCommandAsync(sourceId, "pause");
                         s.PausedSpotifySourceId = sourceId;
                     }
-                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
                     {
                         _logger.LogWarning(ex, "Failed to pause Spotify source {SourceId}", sourceId);
                     }
@@ -1014,6 +1018,7 @@ public class BroadcastService : IHostedService, IBroadcastService
         public bool OriginalIsMuted { get; init; }
         public int InitialDbVolume { get; init; } = 100;
         public bool InitialDbIsMuted { get; init; }
+        public VolumeProfile InitialVolumeProfile { get; init; } = VolumeProfile.Cubic;
         public string? PausedSpotifySourceId { get; set; }
 
         /// <summary>True for native Snapcast groups without an orchestrator group (e.g. unassigned rooms).</summary>
@@ -1117,6 +1122,8 @@ public class BroadcastService : IHostedService, IBroadcastService
     {
         var allGroups = await db.Groups.ToListAsync();
         var allRooms = await db.Rooms.ToListAsync();
+        var initialSettings = await db.Settings.FirstOrDefaultAsync();
+        var initialProfile = initialSettings?.VolumeProfile ?? VolumeProfile.Cubic;
         var snapStatus = await _snapcast.GetStatusAsync();
         var snapGroups = snapStatus?["server"]?["groups"]?.AsArray();
 
@@ -1256,7 +1263,8 @@ public class BroadcastService : IHostedService, IBroadcastService
                     OriginalVolume = group.MasterVolume,
                     OriginalIsMuted = group.IsMuted,
                     InitialDbVolume = group.MasterVolume,
-                    InitialDbIsMuted = group.IsMuted
+                    InitialDbIsMuted = group.IsMuted,
+                    InitialVolumeProfile = initialProfile
                 };
 
                 snapshot.SelectedClients.AddRange(matchingClientsInGroup);
@@ -1309,7 +1317,8 @@ public class BroadcastService : IHostedService, IBroadcastService
                 {
                     SnapcastGroupId = sgId,
                     OriginalStreamId = sg?["stream_id"]?.GetValue<string>() ?? "default",
-                    IsNative = true
+                    IsNative = true,
+                    InitialVolumeProfile = initialProfile
                 };
                 nativeSnapshot.NativeClients.AddRange(targeted);
                 nativeSnapshot.UnselectedClients.AddRange(others);
@@ -1616,6 +1625,7 @@ public class BroadcastService : IHostedService, IBroadcastService
                 : (s.OriginalVolume, s.OriginalIsMuted);
 
             bool groupSettingsChanged = !s.IsNative && (resolvedGrpVol != s.OriginalVolume || resolvedGrpMuted != s.OriginalIsMuted);
+            bool profileChanged = profile != s.InitialVolumeProfile;
 
             foreach (var c in s.NativeClients.Concat(s.SelectedClients).Concat(s.UnselectedClients))
             {
@@ -1632,7 +1642,7 @@ public class BroadcastService : IHostedService, IBroadcastService
 
                 if (s.IsNative)
                 {
-                    if (roomMixChanged || roomMuteChanged)
+                    if (profileChanged || roomMixChanged || roomMuteChanged)
                     {
                         int mixVol = currentRoom?.MixVolume ?? (c.InitialDbMixVolume ?? 100);
                         finalVol = VolumeOrchestratorService.CalculateSnapcastVolume(mixVol, 100, profile);
@@ -1641,7 +1651,7 @@ public class BroadcastService : IHostedService, IBroadcastService
                 }
                 else
                 {
-                    if (groupSettingsChanged || roomMixChanged || roomMuteChanged)
+                    if (profileChanged || groupSettingsChanged || roomMixChanged || roomMuteChanged)
                     {
                         int mixVol = currentRoom?.MixVolume ?? (c.InitialDbMixVolume ?? 100);
                         bool roomMuted = currentRoom?.IsMuted ?? (c.InitialDbIsMuted ?? false);
