@@ -398,6 +398,8 @@ export type BroadcastStatusDto = {
     currentAnnouncementId?: string;
     /** Transpiled from System.Collections.Generic.List<string> */
     activeTargetGroupIds: string[];
+    /** Transpiled from System.Collections.Generic.List<string>? */
+    activeSnapcastGroupIds?: string[];
 }
 
 /** Transpiled from AudioOrchestrator.Contracts.BroadcastJobDto */

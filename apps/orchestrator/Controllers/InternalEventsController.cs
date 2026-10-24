@@ -98,13 +98,11 @@ public class EventsController : ControllerBase
         
         // Groups that are currently owned by a running broadcast must not be switched back to
         // Spotify or have their (announcement) volume overwritten until restoration has finished.
-        var broadcastGroupIds = _broadcastService?.GetStatus().ActiveTargetGroupIds ?? new List<string>();
-
         var listeningGroups = (await _db.Groups
             .AsNoTracking()
             .Where(g => g.CurrentStreamId == sourceStreamId)
             .ToListAsync())
-            .Where(g => !broadcastGroupIds.Contains(g.Id))
+            .Where(g => _broadcastService?.IsGroupActiveInBroadcast(g.Id, g.SnapcastGroupId) != true)
             .ToList();
 
         List<SpotifyRecentContextDto>? currentRecentContexts = null;

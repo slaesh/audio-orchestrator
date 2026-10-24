@@ -87,7 +87,7 @@ public class VolumeOrchestratorService
                 {
                     sibling.MasterVolume = masterVolume;
                     await _hub.Clients.All.OnGroupVolumeChanged(sibling.Id, sibling.MasterVolume, sibling.IsMuted);
-                    await RecalculateAndPushGroupAsync(sibling.Id);
+                    await RecalculateAndPushGroupAsync(sibling.Id, force: !syncStreamSource);
                 }
             }
             await _db.SaveChangesAsync();
@@ -116,7 +116,7 @@ public class VolumeOrchestratorService
             }
         }
 
-        await RecalculateAndPushGroupAsync(group.Id);
+        await RecalculateAndPushGroupAsync(group.Id, force: !syncStreamSource);
     }
 
     public virtual async Task SetRoomMixVolumeAsync(string roomMac, int mixVolume)
@@ -234,10 +234,16 @@ public class VolumeOrchestratorService
         }
     }
 
-    public virtual async Task RecalculateAndPushGroupAsync(string groupId)
+    public virtual async Task RecalculateAndPushGroupAsync(string groupId, bool force = false)
     {
         var group = await _db.Groups.FindAsync(groupId);
         if (group == null || string.IsNullOrEmpty(group.SnapcastGroupId)) return;
+
+        var broadcastService = _serviceProvider?.GetService<IBroadcastService>();
+        if (!force && broadcastService?.IsGroupActiveInBroadcast(group.Id, group.SnapcastGroupId) == true)
+        {
+            return;
+        }
 
         var status = await _snapcast.GetStatusAsync();
         var snapGroups = status?["server"]?["groups"]?.AsArray();

@@ -804,4 +804,38 @@ public class BroadcastServiceTests
         var reloadedG1 = await db.Groups.FindAsync("g1");
         Assert.Equal(40, reloadedG1!.MasterVolume);
     }
+
+    [Fact]
+    public async Task RecalculateAndPushGroupAsync_ShouldDefer_WhenGroupIsActiveInBroadcastAndNotForced()
+    {
+        var (sp, db, mockSnapcast, mockLibrespot, _, _) = CreateTestContext();
+
+        var g1 = new GroupEntity { Id = "g1", Name = "Group 1", SnapcastGroupId = "sg1", MasterVolume = 50 };
+        db.Groups.Add(g1);
+        await db.SaveChangesAsync();
+
+        var mockBroadcast = new Mock<IBroadcastService>();
+        mockBroadcast.Setup(b => b.IsGroupActiveInBroadcast("g1", "sg1")).Returns(true);
+
+        var mockSp = new Mock<IServiceProvider>();
+        mockSp.Setup(s => s.GetService(typeof(IBroadcastService))).Returns(mockBroadcast.Object);
+
+        var mockClients = new Mock<IHubClients<IAudioClient>>();
+        mockClients.Setup(c => c.All).Returns(Mock.Of<IAudioClient>());
+        var mockHub = new Mock<IHubContext<AudioHub, IAudioClient>>();
+        mockHub.Setup(h => h.Clients).Returns(mockClients.Object);
+
+        var volOrch = new VolumeOrchestratorService(
+            db,
+            mockSnapcast.Object,
+            mockLibrespot.Object,
+            mockHub.Object,
+            mockSp.Object,
+            Mock.Of<ILogger<VolumeOrchestratorService>>()
+        );
+
+        await volOrch.RecalculateAndPushGroupAsync("g1", force: false);
+
+        mockSnapcast.Verify(s => s.GetStatusAsync(), Times.Never);
+    }
 }

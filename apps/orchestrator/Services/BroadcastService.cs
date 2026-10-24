@@ -670,6 +670,24 @@ public class BroadcastService : IHostedService, IBroadcastService
         {
             await _fifoService.EnsureFifoAsync(OrchestratorConstants.AnnouncementFifoPath);
 
+            // Ensure Snapcast announcement stream is registered before switching targets
+            try
+            {
+                var snapStatus = await _snapcast.GetStatusAsync();
+                var snapStreams = snapStatus?["server"]?["streams"]?.AsArray();
+                var annStreamId = OrchestratorConstants.AnnouncementStreamId;
+                if (snapStreams == null || !snapStreams.Any(s => s?["id"]?.GetValue<string>() == annStreamId))
+                {
+                    var fifoPath = OrchestratorConstants.AnnouncementFifoPath;
+                    var streamUri = $"pipe://{fifoPath}?name={annStreamId}&sampleformat=44100:16:2&idle_threshold_ms=1000";
+                    try { await _snapcast.AddStreamAsync(streamUri); } catch { /* Already exists? */ }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to verify or register announcement stream in Snapcast");
+            }
+
             // 1. Resolve Targets
             snapshots = await ResolveTargetSnapshotsAsync(item.Request, db);
             if (snapshots.Count == 0)
@@ -720,14 +738,21 @@ public class BroadcastService : IHostedService, IBroadcastService
             }
 
             // 5. Set announcement playback volume (group-isolated, never touches sibling groups / source volume)
+            var settings = await db.Settings.FirstOrDefaultAsync();
+            var profile = settings?.VolumeProfile ?? VolumeProfile.Cubic;
+            var roomsFromDb = await db.Rooms.ToListAsync();
+
             foreach (var s in snapshots)
             {
                 if (s.IsNative)
                 {
+                    var nativeVol = item.Request.Volume.HasValue ? Math.Clamp(item.Request.Volume.Value, 0, 100) : 50;
                     foreach (var c in s.NativeClients)
                     {
-                        var nativeVol = item.Request.Volume.HasValue ? Math.Clamp(item.Request.Volume.Value, 0, 100) : c.Volume;
-                        await _snapcast.SetClientVolumeAsync(c.ClientId, nativeVol, muted: false);
+                        var roomEntity = roomsFromDb.FirstOrDefault(r => r.MacAddress == c.ClientId);
+                        var mixVolume = roomEntity?.MixVolume ?? 100;
+                        var announcementVol = VolumeOrchestratorService.CalculateSnapcastVolume(nativeVol, mixVolume, profile);
+                        await _snapcast.SetClientVolumeAsync(c.ClientId, announcementVol, muted: false);
                     }
                     continue;
                 }
@@ -745,11 +770,15 @@ public class BroadcastService : IHostedService, IBroadcastService
                 // Explicitly unmute targeted clients in the group so room-level mutes do not silence the announcement
                 foreach (var c in s.SelectedClients)
                 {
-                    if (c.Muted)
+                    var roomEntity = roomsFromDb.FirstOrDefault(r => r.MacAddress == c.ClientId);
+                    bool wasMuted = c.Muted || (roomEntity?.IsMuted ?? false);
+                    if (wasMuted)
                     {
                         try
                         {
-                            await _snapcast.SetClientVolumeAsync(c.ClientId, c.Volume, muted: false);
+                            var mixVolume = roomEntity?.MixVolume ?? 100;
+                            var announcementVol = VolumeOrchestratorService.CalculateSnapcastVolume(targetVol, mixVolume, profile);
+                            await _snapcast.SetClientVolumeAsync(c.ClientId, announcementVol, muted: false);
                         }
                         catch (Exception ex)
                         {
@@ -938,22 +967,37 @@ public class BroadcastService : IHostedService, IBroadcastService
 
         var snapshots = new List<GroupSnapshot>();
         var visitedSnapGroupIds = new HashSet<string>();
+        bool dbChanged = false;
         foreach (var group in allGroups)
         {
             var snapGroupId = group.SnapcastGroupId;
-            if (string.IsNullOrEmpty(snapGroupId) && snapGroups != null)
+            bool snapGroupExists = snapGroups != null && !string.IsNullOrEmpty(snapGroupId) &&
+                snapGroups.Any(sg => sg?["id"]?.GetValue<string>() == snapGroupId);
+
+            if (!snapGroupExists && snapGroups != null)
             {
                 var matchingSnapGroup = snapGroups.FirstOrDefault(sg =>
                     sg?["name"]?.GetValue<string>() == group.Name
                     || sg?["id"]?.GetValue<string>() == group.Id);
-                snapGroupId = matchingSnapGroup?["id"]?.GetValue<string>();
+                var resolvedId = matchingSnapGroup?["id"]?.GetValue<string>();
+                if (!string.IsNullOrEmpty(resolvedId))
+                {
+                    snapGroupId = resolvedId;
+                    if (group.SnapcastGroupId != resolvedId)
+                    {
+                        group.SnapcastGroupId = resolvedId;
+                        dbChanged = true;
+                    }
+                }
             }
 
             if (string.IsNullOrEmpty(snapGroupId)) continue;
 
+            var sgNode = snapGroups?.FirstOrDefault(sg => sg?["id"]?.GetValue<string>() == snapGroupId);
+            if (sgNode == null && snapGroups != null) continue;
+
             visitedSnapGroupIds.Add(snapGroupId);
 
-            var sgNode = snapGroups?.FirstOrDefault(sg => sg?["id"]?.GetValue<string>() == snapGroupId);
             var clients = sgNode?["clients"]?.AsArray();
 
             bool isGroupExplicitlyTargeted = targetedGroupIds.Contains(group.Id);
@@ -1035,6 +1079,18 @@ public class BroadcastService : IHostedService, IBroadcastService
                 nativeSnapshot.NativeClients.AddRange(targeted);
                 nativeSnapshot.UnselectedClients.AddRange(others);
                 snapshots.Add(nativeSnapshot);
+            }
+        }
+
+        if (dbChanged)
+        {
+            try
+            {
+                await db.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to backfill resolved SnapcastGroupId on groups");
             }
         }
 
