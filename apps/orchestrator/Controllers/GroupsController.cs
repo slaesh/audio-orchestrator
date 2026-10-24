@@ -306,7 +306,61 @@ public class GroupsController : ControllerBase
                 }
             }
 
-            // 2. Persist the resolved mapping if it changed
+            // 2. POST-PRUNING RESOLUTION: Re-resolve destination from post-pruning status
+            try {
+                status = await _snapcast.GetStatusAsync();
+                if (status != null) snapGroups = status["server"]?["groups"]?.AsArray();
+            } catch (Exception ex) {
+                _logger.LogWarning($"Intermediate status refresh failed during assignment: {ex.Message}. Proceeding with cached info.");
+            }
+
+            if (snapGroups == null) return StatusCode(500, "Snapserver unreachable");
+
+            var postPruneDestId = ResolveSnapcastGroupId(group, snapGroups, clientIds[0], otherOrchestratedSnapIds);
+            if (string.IsNullOrEmpty(postPruneDestId))
+                return BadRequest("Could not resolve a Snapcast group for this assignment");
+
+            if (!involvedGateIds.Contains(postPruneDestId))
+            {
+                foreach (var g in acquiredGates) g.Release();
+                acquiredGates.Clear();
+
+                involvedGateIds.Add(postPruneDestId);
+                var reacquireSorted = involvedGateIds.OrderBy(gid => gid, StringComparer.Ordinal).ToList();
+                if (broadcastService != null)
+                {
+                    foreach (var gid in reacquireSorted)
+                    {
+                        var g = broadcastService.GetGroupGate(gid);
+                        if (g != null)
+                        {
+                            await g.WaitAsync();
+                            acquiredGates.Add(g);
+                        }
+                    }
+                }
+
+                status = await _snapcast.GetStatusAsync();
+                snapGroups = status?["server"]?["groups"]?.AsArray();
+                if (snapGroups == null) return StatusCode(500, "Snapserver unreachable");
+
+                var recheckedId = ResolveSnapcastGroupId(group, snapGroups, clientIds[0], otherOrchestratedSnapIds);
+                if (string.IsNullOrEmpty(recheckedId) || !involvedGateIds.Contains(recheckedId))
+                {
+                    return BadRequest("Could not resolve a stable Snapcast group for this assignment");
+                }
+                postPruneDestId = recheckedId;
+            }
+
+            if (broadcastService?.IsGroupActiveInBroadcast(group.Id, postPruneDestId) == true ||
+                broadcastService?.IsGroupActiveInBroadcast(null, postPruneDestId) == true)
+            {
+                return Conflict("Membership changes cannot be performed while the resolved destination group is actively playing a broadcast.");
+            }
+
+            snapcastGroupId = postPruneDestId;
+
+            // 3. Persist the resolved mapping if it changed
             if (group.SnapcastGroupId != snapcastGroupId)
             {
                 // EXCLUSIVITY ENFORCEMENT: If another group was using this Snapcast ID, they must let it go.
@@ -319,7 +373,7 @@ public class GroupsController : ControllerBase
                 await _db.SaveChangesAsync();
             }
 
-            // 3. MERGE PHASE: get existing clients in target group, add new ones
+            // 4. MERGE PHASE: get existing clients in target group, add new ones
             var targetSnapGroup = snapGroups.FirstOrDefault(g => g?["id"]?.GetValue<string>() == snapcastGroupId);
             var mergedClients = targetSnapGroup?["clients"]?.AsArray()
                 ?.Select(c => c?["id"]?.GetValue<string>())

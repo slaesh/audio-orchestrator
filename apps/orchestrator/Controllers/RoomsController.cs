@@ -280,6 +280,10 @@ public class RoomsController : ControllerBase
             // If there are other rooms, prune this ID. 
             // Snapserver moves the removed client to its own new group.
             await _snapcast.SetGroupClientsAsync(snapGroupId!, otherClients.ToArray()!);
+
+            // Release original gates before acquiring the orphan gate to avoid lock-order inversion deadlock
+            foreach (var g in acquiredGates) g.Release();
+            acquiredGates.Clear();
             
             // IMPORTANT: Find the newly created group for this client and silence it
             try {
