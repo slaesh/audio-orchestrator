@@ -79,31 +79,55 @@ public class RoomsController : ControllerBase
             room.IsMuted = req.Muted;
         }
 
-        // Check if room belongs to an orchestrated group
-        var status = await _snapcast.GetStatusAsync();
-        var snapGroups = status?["server"]?["groups"]?.AsArray();
-        var currentSnapGroup = snapGroups?.FirstOrDefault(g => 
-            g?["clients"]?.AsArray()?.Any(c => c?["id"]?.GetValue<string>() == id) ?? false);
-        var snapGroupId = currentSnapGroup?["id"]?.GetValue<string>();
-        var dbGroup = !string.IsNullOrEmpty(snapGroupId) 
-            ? await _db.Groups.FirstOrDefaultAsync(g => g.SnapcastGroupId == snapGroupId) 
-            : null;
+        var broadcastService = HttpContext?.RequestServices?.GetService<IBroadcastService>();
 
-        if (dbGroup == null)
+        for (int attempt = 0; attempt < 5; attempt++)
         {
-            var broadcastService = HttpContext?.RequestServices?.GetService<IBroadcastService>();
+            // Check if room belongs to an orchestrated group
+            var status = await _snapcast.GetStatusAsync();
+            var snapGroups = status?["server"]?["groups"]?.AsArray();
+            var currentSnapGroup = snapGroups?.FirstOrDefault(g => 
+                g?["clients"]?.AsArray()?.Any(c => c?["id"]?.GetValue<string>() == id) ?? false);
+            var snapGroupId = currentSnapGroup?["id"]?.GetValue<string>();
+            var dbGroup = !string.IsNullOrEmpty(snapGroupId) 
+                ? await _db.Groups.AsNoTracking().FirstOrDefaultAsync(g => g.SnapcastGroupId == snapGroupId) 
+                : null;
+
+            if (dbGroup != null)
+            {
+                await _db.SaveChangesAsync();
+                // In an orchestrated group, recalculate to combine room.IsMuted with group.IsMuted
+                await _volumeOrchestrator.RecalculateAndPushGroupAsync(dbGroup.Id);
+                return Ok();
+            }
+
             var gate = snapGroupId != null ? broadcastService?.GetGroupGate(snapGroupId) : null;
             if (gate != null) await gate.WaitAsync();
 
             try
             {
+                // Revalidate membership under gate
+                var freshStatus = await _snapcast.GetStatusAsync();
+                var freshSnapGroups = freshStatus?["server"]?["groups"]?.AsArray();
+                var freshSnapGroup = freshSnapGroups?.FirstOrDefault(g => 
+                    g?["clients"]?.AsArray()?.Any(c => c?["id"]?.GetValue<string>() == id) ?? false);
+                var freshSnapGroupId = freshSnapGroup?["id"]?.GetValue<string>();
+                var freshDbGroup = !string.IsNullOrEmpty(freshSnapGroupId) 
+                    ? await _db.Groups.AsNoTracking().FirstOrDefaultAsync(g => g.SnapcastGroupId == freshSnapGroupId) 
+                    : null;
+
+                if (!string.Equals(freshSnapGroupId, snapGroupId, StringComparison.OrdinalIgnoreCase) || freshDbGroup != null)
+                {
+                    continue; // Room moved while acquiring gate, retry with fresh owner
+                }
+
                 // Unassigned room: mix volume is 1:1 with volume
                 room.MixVolume = req.Percent;
                 await _db.SaveChangesAsync();
 
-                if (snapGroupId != null && broadcastService?.IsGroupActiveInBroadcast(null, snapGroupId) == true)
+                if (freshSnapGroupId != null && broadcastService?.IsGroupActiveInBroadcast(null, freshSnapGroupId) == true)
                 {
-                    broadcastService?.MarkDeferredVolumeUpdate(null, snapGroupId);
+                    broadcastService?.MarkDeferredVolumeUpdate(null, freshSnapGroupId);
                     return Ok();
                 }
 
@@ -113,17 +137,12 @@ public class RoomsController : ControllerBase
 
                 await _snapcast.SetClientVolumeAsync(id, snapcastVolume, req.Muted);
                 await _hub.Clients.All.OnRoomVolumeChanged(id, snapcastVolume, req.Muted);
+                return Ok();
             }
             finally
             {
                 gate?.Release();
             }
-        }
-        else
-        {
-            await _db.SaveChangesAsync();
-            // In an orchestrated group, recalculate to combine room.IsMuted with group.IsMuted
-            await _volumeOrchestrator.RecalculateAndPushGroupAsync(dbGroup.Id);
         }
 
         return Ok();
@@ -274,11 +293,20 @@ public class RoomsController : ControllerBase
                 if (orphanGroup != null) {
                     var ogId = orphanGroup["id"]?.GetValue<string>();
                     if (!string.IsNullOrEmpty(ogId)) {
-                        // Check broadcast status on orphan before resetting stream
-                        if (broadcastService?.IsGroupActiveInBroadcast(null, ogId) != true)
+                        var ogGate = broadcastService?.GetGroupGate(ogId);
+                        if (ogGate != null) await ogGate.WaitAsync();
+                        try
                         {
-                            await _snapcast.SetGroupStreamAsync(ogId, "default");
-                            await _snapcast.SetGroupNameAsync(ogId, "");
+                            // Check broadcast status on orphan under gate before resetting stream
+                            if (broadcastService?.IsGroupActiveInBroadcast(null, ogId) != true)
+                            {
+                                await _snapcast.SetGroupStreamAsync(ogId, "default");
+                                await _snapcast.SetGroupNameAsync(ogId, "");
+                            }
+                        }
+                        finally
+                        {
+                            ogGate?.Release();
                         }
                     }
                 }

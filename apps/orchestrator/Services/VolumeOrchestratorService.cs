@@ -163,51 +163,89 @@ public class VolumeOrchestratorService
             room.MixVolume = mixVolume;
         }
 
-        // Find which group this room belongs to (from Snapcast status)
-        var status = await _snapcast.GetStatusAsync();
-        var snapGroups = status?["server"]?["groups"]?.AsArray();
-        var snapGroup = snapGroups?.FirstOrDefault(g => 
-            g?["clients"]?.AsArray()?.Any(c => c?["id"]?.GetValue<string>() == roomMac) ?? false);
-        var snapGroupId = snapGroup?["id"]?.GetValue<string>();
-        var dbGroup = !string.IsNullOrEmpty(snapGroupId)
-            ? await _db.Groups.FirstOrDefaultAsync(g => g.SnapcastGroupId == snapGroupId)
-            : null;
-
         var broadcastService = _serviceProvider?.GetService<IBroadcastService>();
-        var gateId = dbGroup?.Id ?? snapGroupId;
-        var gate = !string.IsNullOrEmpty(gateId) ? broadcastService?.GetGroupGate(gateId) : null;
-        if (gate != null)
-        {
-            await gate.WaitAsync();
-        }
 
-        try
+        for (int attempt = 0; attempt < 5; attempt++)
         {
-            await _db.SaveChangesAsync();
+            // Find which group this room belongs to (from Snapcast status)
+            var status = await _snapcast.GetStatusAsync();
+            var snapGroups = status?["server"]?["groups"]?.AsArray();
+            var snapGroup = snapGroups?.FirstOrDefault(g => 
+                g?["clients"]?.AsArray()?.Any(c => c?["id"]?.GetValue<string>() == roomMac) ?? false);
+            var snapGroupId = snapGroup?["id"]?.GetValue<string>();
+            var dbGroup = !string.IsNullOrEmpty(snapGroupId)
+                ? await _db.Groups.AsNoTracking().FirstOrDefaultAsync(g => g.SnapcastGroupId == snapGroupId)
+                : null;
 
-            if (dbGroup != null)
+            var involvedGateIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (!string.IsNullOrEmpty(snapGroupId)) involvedGateIds.Add(snapGroupId);
+            if (dbGroup != null) involvedGateIds.Add(dbGroup.Id);
+
+            var sortedGateIds = involvedGateIds.OrderBy(gid => gid, StringComparer.Ordinal).ToList();
+            var acquiredGates = new List<SemaphoreSlim>();
+
+            if (broadcastService != null)
             {
-                await RecalculateAndPushGroupCoreAsync(dbGroup, force: false, broadcastService);
-                return;
+                foreach (var gid in sortedGateIds)
+                {
+                    var g = broadcastService.GetGroupGate(gid);
+                    if (g != null)
+                    {
+                        await g.WaitAsync();
+                        acquiredGates.Add(g);
+                    }
+                }
             }
 
-            if (snapGroupId != null && broadcastService?.IsGroupActiveInBroadcast(null, snapGroupId) == true)
+            try
             {
-                broadcastService.MarkDeferredVolumeUpdate(null, snapGroupId);
+                // Revalidate membership under the gate
+                var freshStatus = await _snapcast.GetStatusAsync();
+                var freshSnapGroups = freshStatus?["server"]?["groups"]?.AsArray();
+                var freshSnapGroup = freshSnapGroups?.FirstOrDefault(g => 
+                    g?["clients"]?.AsArray()?.Any(c => c?["id"]?.GetValue<string>() == roomMac) ?? false);
+                var freshSnapGroupId = freshSnapGroup?["id"]?.GetValue<string>();
+                var freshDbGroup = !string.IsNullOrEmpty(freshSnapGroupId)
+                    ? await _db.Groups.AsNoTracking().FirstOrDefaultAsync(g => g.SnapcastGroupId == freshSnapGroupId)
+                    : null;
+
+                if (!string.Equals(freshSnapGroupId, snapGroupId, StringComparison.OrdinalIgnoreCase) ||
+                    freshDbGroup?.Id != dbGroup?.Id)
+                {
+                    continue; // Retry with new owner's gates
+                }
+
+                await _db.SaveChangesAsync();
+
+                if (freshDbGroup != null)
+                {
+                    var trackedDbGroup = await _db.Groups.FindAsync(freshDbGroup.Id);
+                    await RecalculateAndPushGroupCoreAsync(trackedDbGroup ?? freshDbGroup, force: false, broadcastService);
+                    return;
+                }
+
+                if (freshSnapGroupId != null && broadcastService?.IsGroupActiveInBroadcast(null, freshSnapGroupId) == true)
+                {
+                    broadcastService.MarkDeferredVolumeUpdate(null, freshSnapGroupId);
+                    return;
+                }
+
+                // If not in a group, just push absolute volume (1:1 with mix) and preserve room mute
+                var settings = await _db.Settings.FirstOrDefaultAsync();
+                var profile = settings?.VolumeProfile ?? VolumeProfile.Cubic;
+                int snapcastVolume = CalculateSnapcastVolume(mixVolume, 100, profile);
+
+                await _snapcast.SetClientVolumeAsync(roomMac, snapcastVolume, room.IsMuted);
+                await _hub.Clients.All.OnRoomVolumeChanged(roomMac, snapcastVolume, room.IsMuted);
                 return;
             }
-
-            // If not in a group, just push absolute volume (1:1 with mix) and preserve room mute
-            var settings = await _db.Settings.FirstOrDefaultAsync();
-            var profile = settings?.VolumeProfile ?? VolumeProfile.Cubic;
-            int snapcastVolume = CalculateSnapcastVolume(mixVolume, 100, profile);
-
-            await _snapcast.SetClientVolumeAsync(roomMac, snapcastVolume, room.IsMuted);
-            await _hub.Clients.All.OnRoomVolumeChanged(roomMac, snapcastVolume, room.IsMuted);
-        }
-        finally
-        {
-            gate?.Release();
+            finally
+            {
+                foreach (var g in acquiredGates)
+                {
+                    g.Release();
+                }
+            }
         }
     }
 
@@ -304,36 +342,50 @@ public class VolumeOrchestratorService
 
     public virtual async Task RecalculateAndPushGroupAsync(string groupId, bool force = false, bool markDeferred = true)
     {
-        var group = await _db.Groups.FindAsync(groupId);
-        if (group == null || string.IsNullOrEmpty(group.SnapcastGroupId)) return;
-
         var broadcastService = _serviceProvider?.GetService<IBroadcastService>();
-        var involvedGateIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { group.Id, group.SnapcastGroupId };
-        var sortedGateIds = involvedGateIds.OrderBy(x => x, StringComparer.Ordinal).ToList();
-        var acquiredGates = new List<SemaphoreSlim>();
 
-        if (broadcastService != null)
+        for (int attempt = 0; attempt < 5; attempt++)
         {
-            foreach (var gid in sortedGateIds)
+            var initialGroup = await _db.Groups.AsNoTracking().FirstOrDefaultAsync(g => g.Id == groupId);
+            if (initialGroup == null || string.IsNullOrEmpty(initialGroup.SnapcastGroupId)) return;
+
+            var involvedGateIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { initialGroup.Id, initialGroup.SnapcastGroupId };
+            var sortedGateIds = involvedGateIds.OrderBy(x => x, StringComparer.Ordinal).ToList();
+            var acquiredGates = new List<SemaphoreSlim>();
+
+            if (broadcastService != null)
             {
-                var g = broadcastService.GetGroupGate(gid);
-                if (g != null)
+                foreach (var gid in sortedGateIds)
                 {
-                    await g.WaitAsync();
-                    acquiredGates.Add(g);
+                    var g = broadcastService.GetGroupGate(gid);
+                    if (g != null)
+                    {
+                        await g.WaitAsync();
+                        acquiredGates.Add(g);
+                    }
                 }
             }
-        }
 
-        try
-        {
-            await RecalculateAndPushGroupCoreAsync(group, force, broadcastService, markDeferred);
-        }
-        finally
-        {
-            foreach (var g in acquiredGates)
+            try
             {
-                g.Release();
+                // Reload group state fresh from DB under acquired gates
+                var freshGroup = await _db.Groups.AsNoTracking().FirstOrDefaultAsync(g => g.Id == groupId);
+                if (freshGroup == null || string.IsNullOrEmpty(freshGroup.SnapcastGroupId)) return;
+
+                if (!string.Equals(freshGroup.SnapcastGroupId, initialGroup.SnapcastGroupId, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue; // Retry with new snapcast group ID's gate
+                }
+
+                await RecalculateAndPushGroupCoreAsync(freshGroup, force, broadcastService, markDeferred);
+                return;
+            }
+            finally
+            {
+                foreach (var g in acquiredGates)
+                {
+                    g.Release();
+                }
             }
         }
     }

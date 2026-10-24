@@ -1666,7 +1666,8 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             {
                 var sourceId = effectiveStreamId.Replace(OrchestratorConstants.SpotifyPrefix, "");
                 var source = await db.SpotifySources.FindAsync(sourceId);
-                var activeSibling = await db.Groups.FirstOrDefaultAsync(g => g.Id != group.Id && g.CurrentStreamId == effectiveStreamId);
+                var activeSibling = (await db.Groups.Where(g => g.Id != group.Id && g.CurrentStreamId == effectiveStreamId).ToListAsync())
+                    .FirstOrDefault(g => broadcastService?.IsGroupActiveInBroadcast(g.Id, g.SnapcastGroupId) != true);
                 int targetVolume = activeSibling?.MasterVolume ?? (source != null && source.IsActive ? source.MasterVolume : group.MasterVolume);
 
                 // Recheck broadcast ownership under the gate before adopting or deferring
