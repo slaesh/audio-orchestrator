@@ -13,6 +13,8 @@ public class SnapcastService : ISnapcastService
         _logger = logger;
     }
 
+    public bool IsConnected => _connection.IsConnected;
+
     private async Task<JsonNode?> SendRequestAsync(string method, object? @params = null)
     {
         try

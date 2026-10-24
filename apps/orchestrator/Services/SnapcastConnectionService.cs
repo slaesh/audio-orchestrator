@@ -20,6 +20,7 @@ public class SnapcastConnectionService : IDisposable
 
     public event EventHandler<JsonNode>? EventReceived;
     public event EventHandler? Connected;
+    public bool IsConnected => _client?.Connected == true && _stream != null;
 
     public SnapcastConnectionService(ILogger<SnapcastConnectionService> logger, IConfiguration configuration)
     {

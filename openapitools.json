@@ -45,7 +45,9 @@
           "BroadcastStatusDto": "BroadcastStatusDto",
           "BroadcastJobStatus": "BroadcastJobStatus",
           "BroadcastSourceType": "BroadcastSourceType",
-          "BroadcastJobDto": "BroadcastJobDto"
+          "BroadcastJobDto": "BroadcastJobDto",
+          "SystemStatus": "SystemStatus",
+          "SystemInfoDto": "SystemInfoDto"
         },
         "importMappings": {
           "FullStateDto": "@contracts",
@@ -78,7 +80,9 @@
           "BroadcastStatusDto": "@contracts",
           "BroadcastJobStatus": "@contracts",
           "BroadcastSourceType": "@contracts",
-          "BroadcastJobDto": "@contracts"
+          "BroadcastJobDto": "@contracts",
+          "SystemStatus": "@contracts",
+          "SystemInfoDto": "@contracts"
         }
       }
     }

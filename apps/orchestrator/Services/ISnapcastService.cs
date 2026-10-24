@@ -4,6 +4,7 @@ namespace AudioOrchestrator.Services;
 
 public interface ISnapcastService
 {
+    bool IsConnected { get; }
     Task<JsonNode?> GetStatusAsync();
     Task<string> AddStreamAsync(string streamUri);
     Task RemoveStreamAsync(string streamId);
