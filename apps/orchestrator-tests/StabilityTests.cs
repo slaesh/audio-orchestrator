@@ -234,6 +234,106 @@ public class StabilityTests
     }
 
     [Fact]
+    public async Task AssignClients_ShouldReturnConflict_WhenDestinationGroupIsBroadcasting()
+    {
+        // Arrange
+        using var db = GetDbContext();
+        var targetGroup = new GroupEntity { Name = "GroupB", SnapcastGroupId = "target-snap-id" };
+        db.Groups.Add(targetGroup);
+        await db.SaveChangesAsync();
+
+        var snapStatus = JsonNode.Parse(@"
+        {
+            ""server"": {
+                ""groups"": [
+                    {
+                        ""id"": ""source-snap-id"",
+                        ""clients"": [ { ""id"": ""client1"" } ]
+                    },
+                    {
+                        ""id"": ""target-snap-id"",
+                        ""clients"": []
+                    }
+                ]
+            }
+        }");
+        _snapMock.Setup(s => s.GetStatusAsync()).ReturnsAsync(snapStatus);
+
+        var broadcastMock = new Mock<IBroadcastService>();
+        broadcastMock.Setup(b => b.GetGroupGate(It.IsAny<string>())).Returns<string>(_ => new SemaphoreSlim(1, 1));
+        broadcastMock.Setup(b => b.IsGroupActiveInBroadcast(targetGroup.Id, "target-snap-id")).Returns(true);
+
+        var serviceProviderMock = new Mock<IServiceProvider>();
+        serviceProviderMock.Setup(sp => sp.GetService(typeof(IBroadcastService))).Returns(broadcastMock.Object);
+
+        var controller = new GroupsController(_reconciliationMock.Object, _snapMock.Object, db, _loggerMock.Object, _hubMock.Object, _builderMock.Object, _volumeOrchestratorMock.Object)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new Microsoft.AspNetCore.Http.DefaultHttpContext
+                {
+                    RequestServices = serviceProviderMock.Object
+                }
+            }
+        };
+
+        // Act
+        var result = await controller.AssignClients(targetGroup.Id, new[] { "client1" });
+
+        // Assert
+        var conflictResult = Assert.IsType<ConflictObjectResult>(result);
+        Assert.Contains("actively playing a broadcast", conflictResult.Value?.ToString());
+    }
+
+    [Fact]
+    public async Task Unassign_ShouldReturnConflict_WhenGroupIsBroadcasting()
+    {
+        // Arrange
+        using var db = GetDbContext();
+        var group = new GroupEntity { Name = "GroupA", SnapcastGroupId = "snap-group-1" };
+        db.Groups.Add(group);
+        await db.SaveChangesAsync();
+
+        var snapStatus = JsonNode.Parse(@"
+        {
+            ""server"": {
+                ""groups"": [
+                    {
+                        ""id"": ""snap-group-1"",
+                        ""clients"": [ { ""id"": ""room1"" }, { ""id"": ""room2"" } ]
+                    }
+                ]
+            }
+        }");
+        _snapMock.Setup(s => s.GetStatusAsync()).ReturnsAsync(snapStatus);
+
+        var broadcastMock = new Mock<IBroadcastService>();
+        broadcastMock.Setup(b => b.GetGroupGate(It.IsAny<string>())).Returns<string>(_ => new SemaphoreSlim(1, 1));
+        broadcastMock.Setup(b => b.IsGroupActiveInBroadcast(group.Id, "snap-group-1")).Returns(true);
+
+        var serviceProviderMock = new Mock<IServiceProvider>();
+        serviceProviderMock.Setup(sp => sp.GetService(typeof(IBroadcastService))).Returns(broadcastMock.Object);
+
+        var controller = new RoomsController(_snapMock.Object, db, _hubMock.Object, _builderMock.Object, _volumeOrchestratorMock.Object)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new Microsoft.AspNetCore.Http.DefaultHttpContext
+                {
+                    RequestServices = serviceProviderMock.Object
+                }
+            }
+        };
+
+        // Act
+        var result = await controller.Unassign("room1");
+
+        // Assert
+        var conflictResult = Assert.IsType<ConflictObjectResult>(result);
+        Assert.Contains("actively playing a broadcast", conflictResult.Value?.ToString());
+    }
+
+    [Fact]
     public async Task LibrespotApiClient_ShouldUseVersionedV1Routes()
     {
         var requestedUrls = new List<(HttpMethod Method, string Uri)>();

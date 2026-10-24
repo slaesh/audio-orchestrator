@@ -24,8 +24,9 @@ builder.Services.AddOpenApi(options => {
         
         if (schema.Type != null && schema.Type.Value.HasFlag(JsonSchemaType.Integer))
         {
-            // Force it to be just an integer, removing any string-patterns that might confuse the generator
-            schema.Type = JsonSchemaType.Integer;
+            bool isNullable = schema.Type.Value.HasFlag(JsonSchemaType.Null);
+            // Force it to be integer (preserving null if nullable), removing any string-patterns that might confuse the generator
+            schema.Type = isNullable ? (JsonSchemaType.Integer | JsonSchemaType.Null) : JsonSchemaType.Integer;
             schema.Pattern = null;
         }
         return Task.CompletedTask;

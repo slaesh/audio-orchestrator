@@ -91,7 +91,7 @@ public class RoomsController : ControllerBase
 
         if (dbGroup == null)
         {
-            var broadcastService = HttpContext.RequestServices.GetService<IBroadcastService>();
+            var broadcastService = HttpContext?.RequestServices?.GetService<IBroadcastService>();
             var gate = snapGroupId != null ? broadcastService?.GetGroupGate(snapGroupId) : null;
             if (gate != null) await gate.WaitAsync();
 
@@ -151,54 +151,87 @@ public class RoomsController : ControllerBase
         var snapGroupId = currentSnapGroup["id"]?.GetValue<string>();
         if (string.IsNullOrEmpty(snapGroupId)) return Ok();
 
-        // 3. Find if this Snapcast group is currently linked to an Orchestrator DB group
+        // 2. Find if this Snapcast group is currently linked to an Orchestrator DB group
         var dbGroup = await _db.Groups.FirstOrDefaultAsync(g => g.SnapcastGroupId == snapGroupId);
-        if (dbGroup == null) return Ok();
 
-        var otherClients = currentSnapGroup["clients"]?.AsArray()
-            ?.Select(c => c?["id"]?.GetValue<string>())
-            .Where(cId => !string.IsNullOrEmpty(cId) && cId != id)
-            .ToList();
+        var broadcastService = HttpContext?.RequestServices?.GetService<IBroadcastService>();
+        var involvedGateIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { snapGroupId };
+        if (dbGroup != null) involvedGateIds.Add(dbGroup.Id);
 
-        if (otherClients == null || otherClients.Count == 0)
+        var sortedGateIds = involvedGateIds.OrderBy(gid => gid, StringComparer.Ordinal).ToList();
+        var acquiredGates = new List<SemaphoreSlim>();
+
+        try
         {
-            // If this was the LAST room, we "dissolve" the orchestration link for this snapcast group.
-            // It stays alive on Snapserver, but the Orchestrator now treats it as Unassigned.
-            dbGroup.SnapcastGroupId = null;
-            await _db.SaveChangesAsync();
+            if (broadcastService != null)
+            {
+                foreach (var gid in sortedGateIds)
+                {
+                    var g = broadcastService.GetGroupGate(gid);
+                    await g.WaitAsync();
+                    acquiredGates.Add(g);
+                }
+            }
 
-            // IMPORTANT: Reset the name and stream so the self-healing reconciliation 
-            // doesn't 'claim' it back immediately via Name-matching.
-            try { await _snapcast.SetGroupNameAsync(snapGroupId, ""); } catch {}
-            try { await _snapcast.SetGroupStreamAsync(snapGroupId, "default"); } catch {}
+            if (broadcastService?.IsGroupActiveInBroadcast(dbGroup?.Id, snapGroupId) == true)
+            {
+                return Conflict("Membership changes cannot be performed while the group is actively playing a broadcast.");
+            }
+
+            if (dbGroup == null) return Ok();
+
+            var otherClients = currentSnapGroup["clients"]?.AsArray()
+                ?.Select(c => c?["id"]?.GetValue<string>())
+                .Where(cId => !string.IsNullOrEmpty(cId) && cId != id)
+                .ToList();
+
+            if (otherClients == null || otherClients.Count == 0)
+            {
+                // If this was the LAST room, we "dissolve" the orchestration link for this snapcast group.
+                // It stays alive on Snapserver, but the Orchestrator now treats it as Unassigned.
+                dbGroup.SnapcastGroupId = null;
+                await _db.SaveChangesAsync();
+
+                // IMPORTANT: Reset the name and stream so the self-healing reconciliation 
+                // doesn't 'claim' it back immediately via Name-matching.
+                try { await _snapcast.SetGroupNameAsync(snapGroupId, ""); } catch {}
+                try { await _snapcast.SetGroupStreamAsync(snapGroupId, "default"); } catch {}
+                await _hub.Clients.All.OnFullStateUpdate(await _stateBuilder.BuildAsync());
+                return Ok();
+            }
+
+            // If there are other rooms, prune this ID. 
+            // Snapserver moves the removed client to its own new group.
+            await _snapcast.SetGroupClientsAsync(snapGroupId, otherClients.ToArray()!);
+            
+            // IMPORTANT: Find the newly created group for this client and silence it
+            try {
+                // Small delay to let Snapserver settle the move
+                await Task.Delay(100);
+                var newStatus = await _snapcast.GetStatusAsync();
+                var newGroups = newStatus?["server"]?["groups"]?.AsArray();
+                var orphanGroup = newGroups?.FirstOrDefault(g => 
+                    g?["clients"]?.AsArray()?.Any(c => c?["id"]?.GetValue<string>() == id) ?? false);
+                
+                if (orphanGroup != null) {
+                    var ogId = orphanGroup["id"]?.GetValue<string>();
+                    if (!string.IsNullOrEmpty(ogId)) {
+                        await _snapcast.SetGroupStreamAsync(ogId, "default");
+                        await _snapcast.SetGroupNameAsync(ogId, "");
+                    }
+                }
+            } catch {}
+            
             await _hub.Clients.All.OnFullStateUpdate(await _stateBuilder.BuildAsync());
             return Ok();
         }
-
-        // If there are other rooms, prune this ID. 
-        // Snapserver moves the removed client to its own new group.
-        await _snapcast.SetGroupClientsAsync(snapGroupId, otherClients.ToArray()!);
-        
-        // IMPORTANT: Find the newly created group for this client and silence it
-        try {
-            // Small delay to let Snapserver settle the move
-            await Task.Delay(100);
-            var newStatus = await _snapcast.GetStatusAsync();
-            var newGroups = newStatus?["server"]?["groups"]?.AsArray();
-            var orphanGroup = newGroups?.FirstOrDefault(g => 
-                g?["clients"]?.AsArray()?.Any(c => c?["id"]?.GetValue<string>() == id) ?? false);
-            
-            if (orphanGroup != null) {
-                var ogId = orphanGroup["id"]?.GetValue<string>();
-                if (!string.IsNullOrEmpty(ogId)) {
-                    await _snapcast.SetGroupStreamAsync(ogId, "default");
-                    await _snapcast.SetGroupNameAsync(ogId, "");
-                }
+        finally
+        {
+            foreach (var g in acquiredGates)
+            {
+                g.Release();
             }
-        } catch {}
-        
-        await _hub.Clients.All.OnFullStateUpdate(await _stateBuilder.BuildAsync());
-        return Ok();
+        }
     }
 
     [HttpDelete("{id}")]

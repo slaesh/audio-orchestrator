@@ -1196,9 +1196,16 @@ public class BroadcastService : IHostedService, IBroadcastService
 
             if (!snapGroupExists && snapGroups != null)
             {
-                var matchingSnapGroup = snapGroups.FirstOrDefault(sg =>
-                    sg?["name"]?.GetValue<string>() == group.Name
-                    || sg?["id"]?.GetValue<string>() == group.Id);
+                var otherMappedSnapIds = allGroups
+                    .Where(g => g.Id != group.Id && !string.IsNullOrEmpty(g.SnapcastGroupId))
+                    .Select(g => g.SnapcastGroupId!)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+                var matchingSnapGroup = snapGroups.FirstOrDefault(sg => {
+                    var sid = sg?["id"]?.GetValue<string>();
+                    if (string.IsNullOrEmpty(sid) || otherMappedSnapIds.Contains(sid)) return false;
+                    return sg?["name"]?.GetValue<string>() == group.Name || sid == group.Id;
+                });
                 var resolvedId = matchingSnapGroup?["id"]?.GetValue<string>();
                 if (!string.IsNullOrEmpty(resolvedId))
                 {

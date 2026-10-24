@@ -129,128 +129,196 @@ public class GroupsController : ControllerBase
         var snapGroups = status?["server"]?["groups"]?.AsArray();
         if (snapGroups == null) return StatusCode(500, "Snapserver unreachable");
 
-        // 1. PRUNING PHASE: Extract moving clients from any existing sibling groups
-        // This ensures that dragging ONE client doesn't hijack its roommates.
-        var otherOrchestratedSnapIds = await _db.Groups.Where(g => g.Id != group.Id && g.SnapcastGroupId != null)
-            .Select(g => g.SnapcastGroupId!)
-            .ToListAsync();
+        var broadcastService = HttpContext?.RequestServices?.GetService<IBroadcastService>();
 
-        var processedSourceGroupIds = new HashSet<string>();
+        var sourceSnapGroupIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var cId in clientIds)
         {
             var sourceSnapGroup = snapGroups.FirstOrDefault(sg => 
                 sg?["clients"]?.AsArray()?.Any(c => c?["id"]?.GetValue<string>() == cId) == true);
-            
-            if (sourceSnapGroup == null) continue;
-            var sGroupId = sourceSnapGroup["id"]?.GetValue<string>();
-            if (string.IsNullOrEmpty(sGroupId) || !processedSourceGroupIds.Add(sGroupId)) continue;
-
-            // Find all clients in this source group that are NOT part of the moving clientIds
-            var remainingClients = sourceSnapGroup["clients"]?.AsArray()
-                ?.Select(c => c?["id"]?.GetValue<string>())
-                .Where(id => !string.IsNullOrEmpty(id) && !clientIds.Contains(id!))
-                .ToList();
-
-            // If there are other clients staying in the source group, keep only them
-            if (remainingClients != null && remainingClients.Count > 0)
+            var sGroupId = sourceSnapGroup?["id"]?.GetValue<string>();
+            if (!string.IsNullOrEmpty(sGroupId))
             {
-                await _snapcast.SetGroupClientsAsync(sGroupId, remainingClients.ToArray()!);
+                sourceSnapGroupIds.Add(sGroupId);
             }
         }
 
-        // 2. RESOLUTION PHASE: Always dynamically resolve - Snapcast group IDs are transient
-        // This intermediate refresh is now semi-resilient. If it fails, we keep going with the previous status
-        // to prevent orphaning rooms in the void.
-        try {
-            status = await _snapcast.GetStatusAsync();
-            if (status != null) snapGroups = status["server"]?["groups"]?.AsArray();
-        } catch (Exception ex) {
-            _logger.LogWarning($"Intermediate status refresh failed during assignment: {ex.Message}. Proceeding with cached info.");
+        var sourceDbGroups = await _db.Groups
+            .Where(g => g.SnapcastGroupId != null && sourceSnapGroupIds.Contains(g.SnapcastGroupId))
+            .ToListAsync();
+
+        var involvedGateIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { group.Id };
+        if (!string.IsNullOrEmpty(group.SnapcastGroupId)) involvedGateIds.Add(group.SnapcastGroupId);
+        foreach (var sgId in sourceSnapGroupIds)
+        {
+            var matchingDb = sourceDbGroups.FirstOrDefault(g => g.SnapcastGroupId == sgId);
+            if (matchingDb != null)
+            {
+                involvedGateIds.Add(matchingDb.Id);
+            }
+            involvedGateIds.Add(sgId);
         }
 
-        if (snapGroups == null) return StatusCode(500, "Snapserver unreachable");
+        var sortedGateIds = involvedGateIds.OrderBy(gid => gid, StringComparer.Ordinal).ToList();
+        var acquiredGates = new List<SemaphoreSlim>();
 
-        var snapcastGroupId = ResolveSnapcastGroupId(group, snapGroups, clientIds[0], otherOrchestratedSnapIds);
-        if (string.IsNullOrEmpty(snapcastGroupId))
-            return BadRequest("Could not resolve a Snapcast group for this assignment");
-
-        // Persist the resolved mapping if it changed
-        if (group.SnapcastGroupId != snapcastGroupId)
+        try
         {
-            // EXCLUSIVITY ENFORCEMENT: If another group was using this Snapcast ID, they must let it go.
-            var otherGroupsWithSameId = await _db.Groups.Where(g => g.Id != group.Id && g.SnapcastGroupId == snapcastGroupId).ToListAsync();
-            foreach (var og in otherGroupsWithSameId) {
-                og.SnapcastGroupId = null;
+            if (broadcastService != null)
+            {
+                foreach (var gid in sortedGateIds)
+                {
+                    var g = broadcastService.GetGroupGate(gid);
+                    await g.WaitAsync();
+                    acquiredGates.Add(g);
+                }
             }
 
-            group.SnapcastGroupId = snapcastGroupId;
-            await _db.SaveChangesAsync();
-        }
+            if (broadcastService?.IsGroupActiveInBroadcast(group.Id, group.SnapcastGroupId) == true)
+            {
+                return Conflict("Membership changes cannot be performed while the group is actively playing a broadcast.");
+            }
 
-        // 3. MERGE PHASE: get existing clients in target group, add new ones
-        var targetSnapGroup = snapGroups.FirstOrDefault(g => g?["id"]?.GetValue<string>() == snapcastGroupId);
-        var mergedClients = targetSnapGroup?["clients"]?.AsArray()
-            ?.Select(c => c?["id"]?.GetValue<string>())
-            .Where(cid => !string.IsNullOrEmpty(cid))
-            .ToList() ?? new List<string?>();
+            foreach (var sgId in sourceSnapGroupIds)
+            {
+                var matchingDb = sourceDbGroups.FirstOrDefault(g => g.SnapcastGroupId == sgId);
+                if (broadcastService?.IsGroupActiveInBroadcast(matchingDb?.Id, sgId) == true)
+                {
+                    return Conflict("Membership changes cannot be performed while a source group is actively playing a broadcast.");
+                }
+            }
 
-        foreach (var cId in clientIds)
-        {
-            if (!mergedClients.Contains(cId))
-                mergedClients.Add(cId);
-        }
+            // 1. PRUNING PHASE: Extract moving clients from any existing sibling groups
+            // This ensures that dragging ONE client doesn't hijack its roommates.
+            var otherOrchestratedSnapIds = await _db.Groups.Where(g => g.Id != group.Id && g.SnapcastGroupId != null)
+                .Select(g => g.SnapcastGroupId!)
+                .ToListAsync();
 
-        await _snapcast.SetGroupClientsAsync(snapcastGroupId, mergedClients.ToArray()!);
+            var processedSourceGroupIds = new HashSet<string>();
+            foreach (var cId in clientIds)
+            {
+                var sourceSnapGroup = snapGroups.FirstOrDefault(sg => 
+                    sg?["clients"]?.AsArray()?.Any(c => c?["id"]?.GetValue<string>() == cId) == true);
+                
+                if (sourceSnapGroup == null) continue;
+                var sGroupId = sourceSnapGroup["id"]?.GetValue<string>();
+                if (string.IsNullOrEmpty(sGroupId) || !processedSourceGroupIds.Add(sGroupId)) continue;
 
-        // 4. RE-RESOLUTION PHASE: Snapserver is dynamic. 
-        // Adding a client might have caused the group ID to change or rotate!
-        // This refresh is now NON-FATAL. If it glitches, we allow the request to succeed
-        // and let the 2s background reconciliation handle the final wiring.
-        try {
-            status = await _snapcast.GetStatusAsync();
-            snapGroups = status?["server"]?["groups"]?.AsArray();
-            if (snapGroups != null) {
-                var freshId = ResolveSnapcastGroupId(group, snapGroups, clientIds[0], otherOrchestratedSnapIds);
-                if (!string.IsNullOrEmpty(freshId)) {
-                    if (snapcastGroupId != freshId) {
-                        _logger.LogInformation($"Group ID rotated from {snapcastGroupId} to {freshId} after client assignment.");
-                        snapcastGroupId = freshId;
-                        group.SnapcastGroupId = snapcastGroupId;
-                        await _db.SaveChangesAsync();
+                // Find all clients in this source group that are NOT part of the moving clientIds
+                var remainingClients = sourceSnapGroup["clients"]?.AsArray()
+                    ?.Select(c => c?["id"]?.GetValue<string>())
+                    .Where(cid => !string.IsNullOrEmpty(cid) && !clientIds.Contains(cid!))
+                    .ToList();
+
+                // If there are other clients staying in the source group, keep only them
+                if (remainingClients != null && remainingClients.Count > 0)
+                {
+                    await _snapcast.SetGroupClientsAsync(sGroupId, remainingClients.ToArray()!);
+                }
+            }
+
+            // 2. RESOLUTION PHASE: Always dynamically resolve - Snapcast group IDs are transient
+            // This intermediate refresh is now semi-resilient. If it fails, we keep going with the previous status
+            // to prevent orphaning rooms in the void.
+            try {
+                status = await _snapcast.GetStatusAsync();
+                if (status != null) snapGroups = status["server"]?["groups"]?.AsArray();
+            } catch (Exception ex) {
+                _logger.LogWarning($"Intermediate status refresh failed during assignment: {ex.Message}. Proceeding with cached info.");
+            }
+
+            if (snapGroups == null) return StatusCode(500, "Snapserver unreachable");
+
+            var snapcastGroupId = ResolveSnapcastGroupId(group, snapGroups, clientIds[0], otherOrchestratedSnapIds);
+            if (string.IsNullOrEmpty(snapcastGroupId))
+                return BadRequest("Could not resolve a Snapcast group for this assignment");
+
+            // Persist the resolved mapping if it changed
+            if (group.SnapcastGroupId != snapcastGroupId)
+            {
+                // EXCLUSIVITY ENFORCEMENT: If another group was using this Snapcast ID, they must let it go.
+                var otherGroupsWithSameId = await _db.Groups.Where(g => g.Id != group.Id && g.SnapcastGroupId == snapcastGroupId).ToListAsync();
+                foreach (var og in otherGroupsWithSameId) {
+                    og.SnapcastGroupId = null;
+                }
+
+                group.SnapcastGroupId = snapcastGroupId;
+                await _db.SaveChangesAsync();
+            }
+
+            // 3. MERGE PHASE: get existing clients in target group, add new ones
+            var targetSnapGroup = snapGroups.FirstOrDefault(g => g?["id"]?.GetValue<string>() == snapcastGroupId);
+            var mergedClients = targetSnapGroup?["clients"]?.AsArray()
+                ?.Select(c => c?["id"]?.GetValue<string>())
+                .Where(cid => !string.IsNullOrEmpty(cid))
+                .ToList() ?? new List<string?>();
+
+            foreach (var cId in clientIds)
+            {
+                if (!mergedClients.Contains(cId))
+                    mergedClients.Add(cId);
+            }
+
+            await _snapcast.SetGroupClientsAsync(snapcastGroupId, mergedClients.ToArray()!);
+
+            // 4. RE-RESOLUTION PHASE: Snapserver is dynamic. 
+            // Adding a client might have caused the group ID to change or rotate!
+            // This refresh is now NON-FATAL. If it glitches, we allow the request to succeed
+            // and let the 2s background reconciliation handle the final wiring.
+            try {
+                status = await _snapcast.GetStatusAsync();
+                snapGroups = status?["server"]?["groups"]?.AsArray();
+                if (snapGroups != null) {
+                    var freshId = ResolveSnapcastGroupId(group, snapGroups, clientIds[0], otherOrchestratedSnapIds);
+                    if (!string.IsNullOrEmpty(freshId)) {
+                        if (snapcastGroupId != freshId) {
+                            _logger.LogInformation($"Group ID rotated from {snapcastGroupId} to {freshId} after client assignment.");
+                            snapcastGroupId = freshId;
+                            group.SnapcastGroupId = snapcastGroupId;
+                            await _db.SaveChangesAsync();
+                        }
                     }
                 }
-            }
 
-            // 5. CONFIGURATION PHASE: Configure group identity and stream
-            // Failure here is also non-fatal since reconciliation will fix it.
-            try {
-                await _snapcast.SetGroupNameAsync(snapcastGroupId, group.Name);
-            } catch (Exception ex) {
-                _logger.LogWarning($"Non-critical failure setting group name for {snapcastGroupId}: {ex.Message}");
-            }
-
-            if (!string.IsNullOrEmpty(group.CurrentStreamId))
-            {
-                try { 
-                    await _snapcast.SetGroupStreamAsync(snapcastGroupId, group.CurrentStreamId); 
+                // 5. CONFIGURATION PHASE: Configure group identity and stream
+                // Failure here is also non-fatal since reconciliation will fix it.
+                try {
+                    await _snapcast.SetGroupNameAsync(snapcastGroupId, group.Name);
+                } catch (Exception ex) {
+                    _logger.LogWarning($"Non-critical failure setting group name for {snapcastGroupId}: {ex.Message}");
                 }
-                catch (Exception ex) { 
-                    _logger.LogWarning($"Failure setting stream for {snapcastGroupId}: {ex.Message}. It will be auto-corrected by background reconciliation.");
+
+                bool isBroadcasting = broadcastService?.IsGroupActiveInBroadcast(group.Id, snapcastGroupId) == true;
+                if (!isBroadcasting && !string.IsNullOrEmpty(group.CurrentStreamId))
+                {
+                    try { 
+                        await _snapcast.SetGroupStreamAsync(snapcastGroupId, group.CurrentStreamId); 
+                    }
+                    catch (Exception ex) { 
+                        _logger.LogWarning($"Failure setting stream for {snapcastGroupId}: {ex.Message}. It will be auto-corrected by background reconciliation.");
+                    }
                 }
+
+                // 6. VOLUME PHASE: Recalculate and push group volume to the newly assigned clients
+                try {
+                    await _volumeOrchestrator.RecalculateAndPushGroupAsync(group.Id);
+                } catch (Exception ex) {
+                    _logger.LogWarning($"Failure recalculating group volume for {group.Id}: {ex.Message}");
+                }
+            } catch (Exception ex) {
+                _logger.LogWarning($"Assignment confirmation check failed: {ex.Message}. The room likely moved successfully; background reconciliation will verify.");
             }
 
-            // 6. VOLUME PHASE: Recalculate and push group volume to the newly assigned clients
-            try {
-                await _volumeOrchestrator.RecalculateAndPushGroupAsync(group.Id);
-            } catch (Exception ex) {
-                _logger.LogWarning($"Failure recalculating group volume for {group.Id}: {ex.Message}");
-            }
-        } catch (Exception ex) {
-            _logger.LogWarning($"Assignment confirmation check failed: {ex.Message}. The room likely moved successfully; background reconciliation will verify.");
+            await BroadcastStateAsync();
+            return Ok();
         }
-
-        await BroadcastStateAsync();
-        return Ok();
+        finally
+        {
+            foreach (var g in acquiredGates)
+            {
+                g.Release();
+            }
+        }
     }
 
     /// <summary>
@@ -316,7 +384,7 @@ public class GroupsController : ControllerBase
         // If 'No active stream' is selected (empty string), we fall back to the system 'default' (silence).
         var effectiveStreamId = string.IsNullOrEmpty(req.StreamId) ? "default" : req.StreamId;
 
-        var broadcastService = HttpContext.RequestServices.GetService<IBroadcastService>();
+        var broadcastService = HttpContext?.RequestServices?.GetService<IBroadcastService>();
         var gate = broadcastService?.GetGroupGate(group.Id);
         if (gate != null) await gate.WaitAsync();
 
