@@ -203,6 +203,7 @@ public class ReconciliationService : IReconciliationService, IDisposable
 
         if (snapGroups == null) return;
 
+        var broadcastService = _serviceProvider.GetService<IBroadcastService>();
         var claimedSnapIds = new HashSet<string>();
         bool dbChanged = false;
         
@@ -219,7 +220,8 @@ public class ReconciliationService : IReconciliationService, IDisposable
                 if (match?["name"]?.GetValue<string>() != group.Name) {
                     await _snapcast.SetGroupNameAsync(group.SnapcastGroupId!, group.Name);
                 }
-                if (!string.IsNullOrEmpty(group.CurrentStreamId) && match?["stream_id"]?.GetValue<string>() != group.CurrentStreamId) {
+                bool isBroadcasting = broadcastService?.IsGroupActiveInBroadcast(group.Id, group.SnapcastGroupId) == true;
+                if (!isBroadcasting && !string.IsNullOrEmpty(group.CurrentStreamId) && match?["stream_id"]?.GetValue<string>() != group.CurrentStreamId) {
                     try { await _snapcast.SetGroupStreamAsync(group.SnapcastGroupId!, group.CurrentStreamId); } catch {}
                 }
             } else {
@@ -255,7 +257,8 @@ public class ReconciliationService : IReconciliationService, IDisposable
                     dbChanged = true;
                     
                     await _snapcast.SetGroupNameAsync(actualSnapId, group.Name);
-                    if (!string.IsNullOrEmpty(group.CurrentStreamId)) {
+                    bool isBroadcasting = broadcastService?.IsGroupActiveInBroadcast(group.Id, actualSnapId) == true;
+                    if (!isBroadcasting && !string.IsNullOrEmpty(group.CurrentStreamId)) {
                          try { await _snapcast.SetGroupStreamAsync(actualSnapId, group.CurrentStreamId); } catch {}
                     }
                 }
@@ -267,6 +270,9 @@ public class ReconciliationService : IReconciliationService, IDisposable
         {
             var sid = sg?["id"]?.GetValue<string>();
             if (sid == null || claimedSnapIds.Contains(sid)) continue;
+
+            // Preserve native Snapcast groups currently playing a broadcast
+            if (broadcastService?.IsGroupActiveInBroadcast(null, sid) == true) continue;
 
             if (sg?["stream_id"]?.GetValue<string>() != "default" || !string.IsNullOrEmpty(sg?["name"]?.GetValue<string>()))
             {

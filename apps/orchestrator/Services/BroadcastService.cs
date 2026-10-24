@@ -146,6 +146,7 @@ public class BroadcastService : IHostedService, IBroadcastService
     private Task? _workerTask;
     private string? _currentJobId;
     private readonly List<string> _activeTargetGroupIds = new();
+    private readonly List<string> _activeTargetSnapcastGroupIds = new();
 
     public BroadcastService(
         ILogger<BroadcastService> logger,
@@ -286,8 +287,19 @@ public class BroadcastService : IHostedService, IBroadcastService
             return new BroadcastStatusDto(
                 IsPlaying: _currentJobId != null,
                 CurrentAnnouncementId: _currentJobId,
-                ActiveTargetGroupIds: _activeTargetGroupIds.ToList()
+                ActiveTargetGroupIds: _activeTargetGroupIds.ToList(),
+                ActiveSnapcastGroupIds: _activeTargetSnapcastGroupIds.ToList()
             );
+        }
+    }
+
+    public bool IsGroupActiveInBroadcast(string? orchestratorGroupId, string? snapcastGroupId = null)
+    {
+        lock (_activeTargetGroupIds)
+        {
+            if (orchestratorGroupId != null && _activeTargetGroupIds.Contains(orchestratorGroupId)) return true;
+            if (snapcastGroupId != null && _activeTargetSnapcastGroupIds.Contains(snapcastGroupId)) return true;
+            return false;
         }
     }
 
@@ -568,6 +580,7 @@ public class BroadcastService : IHostedService, IBroadcastService
                 {
                     _currentJobId = null;
                     _activeTargetGroupIds.Clear();
+                    _activeTargetSnapcastGroupIds.Clear();
                 }
 
                 // Cleanup temp file if upload
@@ -667,6 +680,7 @@ public class BroadcastService : IHostedService, IBroadcastService
             lock (_activeTargetGroupIds)
             {
                 _activeTargetGroupIds.AddRange(snapshots.Where(s => !s.IsNative).Select(s => s.GroupId));
+                _activeTargetSnapcastGroupIds.AddRange(snapshots.Select(s => s.SnapcastGroupId));
             }
 
             // 2. Fade down current volume (if requested)
@@ -726,6 +740,22 @@ public class BroadcastService : IHostedService, IBroadcastService
                 catch (Exception ex)
                 {
                     _logger.LogWarning(ex, "Failed to set announcement volume on group {GroupId}", s.GroupId);
+                }
+
+                // Explicitly unmute targeted clients in the group so room-level mutes do not silence the announcement
+                foreach (var c in s.SelectedClients)
+                {
+                    if (c.Muted)
+                    {
+                        try
+                        {
+                            await _snapcast.SetClientVolumeAsync(c.ClientId, c.Volume, muted: false);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Failed temporarily unmuting selected client {ClientId} for announcement", c.ClientId);
+                        }
+                    }
                 }
             }
 
@@ -787,7 +817,12 @@ public class BroadcastService : IHostedService, IBroadcastService
         {
             try
             {
-                await RestoreSnapshotsAsync(snapshots, item.Request.FadeDurationMs ?? 0, item.Request.PausePlayback, volumeOrchestrator);
+                var restorationErrors = await RestoreSnapshotsAsync(snapshots, item.Request.FadeDurationMs ?? 0, item.Request.PausePlayback, volumeOrchestrator);
+                if (restorationErrors.Count > 0 && finalStatus == BroadcastJobStatus.Completed)
+                {
+                    finalStatus = BroadcastJobStatus.Failed;
+                    errorMessage = $"Fehler bei der Wiederherstellung: {string.Join("; ", restorationErrors)}";
+                }
                 var freshState = await stateBuilder.BuildAsync();
                 await hub.Clients.All.OnFullStateUpdate(freshState);
                 if (mqtt != null)
@@ -798,6 +833,11 @@ public class BroadcastService : IHostedService, IBroadcastService
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to fully restore audio states after broadcast");
+                if (finalStatus == BroadcastJobStatus.Completed)
+                {
+                    finalStatus = BroadcastJobStatus.Failed;
+                    errorMessage = $"Fehler bei der Wiederherstellung: {ex.Message}";
+                }
             }
         }
 
@@ -827,6 +867,7 @@ public class BroadcastService : IHostedService, IBroadcastService
         /// <summary>True for native Snapcast groups without an orchestrator group (e.g. unassigned rooms).</summary>
         public bool IsNative { get; init; }
         public List<(string ClientId, int Volume, bool Muted)> NativeClients { get; } = new();
+        public List<(string ClientId, int Volume, bool Muted)> SelectedClients { get; } = new();
         public List<(string ClientId, int Volume, bool Muted)> UnselectedClients { get; } = new();
     }
 
@@ -916,7 +957,7 @@ public class BroadcastService : IHostedService, IBroadcastService
             var clients = sgNode?["clients"]?.AsArray();
 
             bool isGroupExplicitlyTargeted = targetedGroupIds.Contains(group.Id);
-            var matchingClientsInGroup = new List<string>();
+            var matchingClientsInGroup = new List<(string ClientId, int Volume, bool Muted)>();
             var unselectedClientsInGroup = new List<(string ClientId, int Volume, bool Muted)>();
 
             if (clients != null)
@@ -929,7 +970,7 @@ public class BroadcastService : IHostedService, IBroadcastService
 
                     if (isGroupExplicitlyTargeted || targetedRoomMacs.Contains(cid))
                     {
-                        matchingClientsInGroup.Add(cid);
+                        matchingClientsInGroup.Add((cid, cVol, cMuted));
                     }
                     else
                     {
@@ -948,6 +989,8 @@ public class BroadcastService : IHostedService, IBroadcastService
                     OriginalVolume = group.MasterVolume,
                     OriginalIsMuted = group.IsMuted
                 };
+
+                snapshot.SelectedClients.AddRange(matchingClientsInGroup);
 
                 if (matchingClientsInGroup.Count > 0 && unselectedClientsInGroup.Count > 0)
                 {
@@ -1056,12 +1099,13 @@ public class BroadcastService : IHostedService, IBroadcastService
         }
     }
 
-    private async Task RestoreSnapshotsAsync(
+    private async Task<List<string>> RestoreSnapshotsAsync(
         List<GroupSnapshot> snapshots,
         int fadeDurationMs,
         bool resumePlayback,
         VolumeOrchestratorService volumeOrchestrator)
     {
+        var restorationErrors = new List<string>();
         var fadeMs = Math.Clamp(fadeDurationMs, 0, MaxFadeDurationMs);
 
         // 1. Establish a safe volume before switching back so the original stream never
@@ -1079,6 +1123,7 @@ public class BroadcastService : IHostedService, IBroadcastService
                     catch (Exception ex)
                     {
                         _logger.LogWarning(ex, "Failed preparing volume before restoring stream on native client {ClientId}", c.ClientId);
+                        restorationErrors.Add($"Native client {c.ClientId} volume prep: {ex.Message}");
                     }
                 }
                 continue;
@@ -1091,6 +1136,21 @@ public class BroadcastService : IHostedService, IBroadcastService
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Failed preparing volume before restoring stream on group {GroupId}", s.GroupId);
+                restorationErrors.Add($"Group {s.GroupId} volume prep: {ex.Message}");
+            }
+
+            // Excluded clients must remain muted until after the stream switch has completed
+            foreach (var c in s.UnselectedClients)
+            {
+                try
+                {
+                    await _snapcast.SetClientVolumeAsync(c.ClientId, c.Volume, muted: true);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed keeping unselected client {ClientId} muted before stream switch", c.ClientId);
+                    restorationErrors.Add($"Client {c.ClientId} mute hold: {ex.Message}");
+                }
             }
         }
 
@@ -1104,6 +1164,7 @@ public class BroadcastService : IHostedService, IBroadcastService
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Failed restoring stream {StreamId} on group {GroupId}", s.OriginalStreamId, s.SnapcastGroupId);
+                restorationErrors.Add($"Group {s.SnapcastGroupId} stream restore: {ex.Message}");
             }
         }
 
@@ -1121,6 +1182,7 @@ public class BroadcastService : IHostedService, IBroadcastService
                 catch (Exception ex)
                 {
                     _logger.LogWarning(ex, "Failed resuming Spotify source {SourceId}", s.PausedSpotifySourceId);
+                    restorationErrors.Add($"Spotify source {s.PausedSpotifySourceId} resume: {ex.Message}");
                 }
             }
         }
@@ -1141,6 +1203,7 @@ public class BroadcastService : IHostedService, IBroadcastService
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Failed setting final original volume on group {GroupId}", s.GroupId);
+                restorationErrors.Add($"Group {s.GroupId} final volume: {ex.Message}");
             }
         }
 
@@ -1148,7 +1211,7 @@ public class BroadcastService : IHostedService, IBroadcastService
         // every client's volume/mute from the database and would overwrite them.
         foreach (var s in snapshots)
         {
-            foreach (var c in s.NativeClients.Concat(s.UnselectedClients))
+            foreach (var c in s.NativeClients.Concat(s.SelectedClients).Concat(s.UnselectedClients))
             {
                 try
                 {
@@ -1157,9 +1220,12 @@ public class BroadcastService : IHostedService, IBroadcastService
                 catch (Exception ex)
                 {
                     _logger.LogWarning(ex, "Failed restoring client {ClientId} volume/mute state", c.ClientId);
+                    restorationErrors.Add($"Client {c.ClientId} final restore: {ex.Message}");
                 }
             }
         }
+
+        return restorationErrors;
     }
 
     private static BroadcastJobDto MapToDto(BroadcastJobEntity j)

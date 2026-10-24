@@ -180,16 +180,24 @@ public class EventsController : ControllerBase
                         }
                     }
 
+                    var bgBroadcast = scope.ServiceProvider.GetService<IBroadcastService>();
+
                     for (int i = 0; i < groupIds.Count; i++)
                     {
                         var id = groupIds[i];
                         var g = await bgDb.Groups.FindAsync(id);
                         if (g == null) continue;
                         var snapcastGroupId = g.SnapcastGroupId ?? g.Id;
+                        if (bgBroadcast?.IsGroupActiveInBroadcast(g.Id, snapcastGroupId) == true)
+                        {
+                            _logger.LogInformation("[Sync-BG] Group {GroupName} is currently active in a broadcast, skipping Spotify playback join", groupNames[i]);
+                            continue;
+                        }
+
                         await bgSnapcast.SetGroupStreamAsync(snapcastGroupId, sourceStreamId);
                         _logger.LogInformation("[Sync-BG] Group {GroupName} joined active source stream {StreamId}", groupNames[i], sourceStreamId);
                         
-                        await bgVolume.SetGroupVolumeAsync(g.Id, g.MasterVolume, g.IsMuted, fromDocker: true);
+                        await bgVolume.SetGroupVolumeAsync(g.Id, g.MasterVolume, g.IsMuted, fromDocker: true, syncStreamSource: false);
                     }
                 } catch (Exception ex) {
                     _logger.LogError(ex, "Failed to perform background stream/volume sync for 'playing' event");
@@ -276,12 +284,15 @@ public class EventsController : ControllerBase
                             var bgVolume = scope.ServiceProvider.GetRequiredService<VolumeOrchestratorService>();
                             var bgDb = scope.ServiceProvider.GetRequiredService<OrchestratorDbContext>();
 
+                            var bgBroadcast = scope.ServiceProvider.GetService<IBroadcastService>();
+
                             for (int i = 0; i < groupIds.Count; i++)
                             {
                                 var id = groupIds[i];
                                 var g = await bgDb.Groups.FindAsync(id);
                                 if (g == null) continue;
-                                await bgVolume.SetGroupVolumeAsync(g.Id, percent, g.IsMuted, fromDocker: true);
+                                if (bgBroadcast?.IsGroupActiveInBroadcast(g.Id, g.SnapcastGroupId) == true) continue;
+                                await bgVolume.SetGroupVolumeAsync(g.Id, percent, g.IsMuted, fromDocker: true, syncStreamSource: false);
                                 _logger.LogInformation("[Broadcast-BG] Synced Spotify volume ({Percent}%) to listening Group {GroupName}", percent, groupNames[i]);
                             }
                         } catch (Exception ex) {

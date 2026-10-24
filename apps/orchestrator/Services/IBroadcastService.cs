@@ -21,4 +21,5 @@ public interface IBroadcastService
     Task StopAsync(CancellationToken ct = default);
     Task<bool> CancelJobAsync(string jobId, CancellationToken ct = default);
     BroadcastStatusDto GetStatus();
+    bool IsGroupActiveInBroadcast(string? orchestratorGroupId, string? snapcastGroupId = null);
 }

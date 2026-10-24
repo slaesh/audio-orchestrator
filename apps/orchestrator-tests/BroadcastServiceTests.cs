@@ -110,6 +110,46 @@ public class BroadcastServiceTests
         };
     }
 
+    private static JsonNode CreateSnapcastStatusWithClients(params (string SnapGroupId, string StreamId, (string ClientId, int Volume, bool Muted)[] Clients)[] groups)
+    {
+        var snapGroups = new JsonArray();
+        foreach (var (sgId, streamId, clientsList) in groups)
+        {
+            var clients = new JsonArray();
+            foreach (var (cid, vol, muted) in clientsList)
+            {
+                clients.Add(new JsonObject
+                {
+                    ["id"] = cid,
+                    ["config"] = new JsonObject
+                    {
+                        ["volume"] = new JsonObject
+                        {
+                            ["percent"] = vol,
+                            ["muted"] = muted
+                        }
+                    }
+                });
+            }
+
+            snapGroups.Add(new JsonObject
+            {
+                ["id"] = sgId,
+                ["name"] = sgId,
+                ["stream_id"] = streamId,
+                ["clients"] = clients
+            });
+        }
+
+        return new JsonObject
+        {
+            ["server"] = new JsonObject
+            {
+                ["groups"] = snapGroups
+            }
+        };
+    }
+
     [Fact]
     public async Task PlayUrlAsync_ShouldSwitchGroupStreamToAnnouncement_AndRestoreOriginalStreamAndVolume()
     {
@@ -519,8 +559,12 @@ public class BroadcastServiceTests
         var job1 = await service.EnqueuePlayUrlAsync(new BroadcastPlayRequest(AudioUrl: "http://example.com/1.wav", GroupIds: new List<string> { "g1" }));
         await firstJobStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-        // Job 2 is queued behind Job 1
-        var job2 = await service.EnqueuePlayUrlAsync(new BroadcastPlayRequest(AudioUrl: "http://example.com/2.wav", GroupIds: new List<string> { "g1" }));
+        // Job 2 is queued behind Job 1 (Interrupt = false to avoid cancelling active Job 1)
+        var job2 = await service.EnqueuePlayUrlAsync(new BroadcastPlayRequest(
+            AudioUrl: "http://example.com/2.wav",
+            GroupIds: new List<string> { "g1" },
+            Interrupt: false
+        ));
         var waiterTask = service.WaitForJobAsync(job2.Id);
 
         // Cancel Job 2 while Job 1 is still blocking the worker
@@ -604,5 +648,160 @@ public class BroadcastServiceTests
         var finalJob = await service.GetJobAsync(job.Id);
         Assert.NotNull(finalJob);
         Assert.Equal(BroadcastJobStatus.Completed, finalJob!.Status);
+    }
+
+    [Fact]
+    public async Task PlayUrlAsync_ShouldFailAndReportError_WhenStreamRestorationFails()
+    {
+        var (sp, db, mockSnapcast, _, _, service) = CreateTestContext();
+
+        db.Groups.Add(new GroupEntity { Id = "g1", Name = "Wohnzimmer", SnapcastGroupId = "sg1", CurrentStreamId = "radio_1", MasterVolume = 50 });
+        await db.SaveChangesAsync();
+
+        mockSnapcast.Setup(s => s.GetStatusAsync())
+            .ReturnsAsync(CreateSnapcastStatus(("sg1", "radio_1", new[] { "c1" })));
+
+        // Restoration switch back to radio_1 fails
+        mockSnapcast.Setup(s => s.SetGroupStreamAsync("sg1", "radio_1"))
+            .ThrowsAsync(new InvalidOperationException("Snapcast socket closed during restoration"));
+
+        var result = await service.PlayUrlAsync(new BroadcastPlayRequest(
+            AudioUrl: "http://example.com/sound.wav",
+            GroupIds: new List<string> { "g1" }
+        ));
+
+        Assert.False(result.Success);
+        Assert.Contains("Wiederherstellung", result.Message);
+        Assert.Contains("Snapcast socket closed", result.Message);
+
+        var job = await service.GetJobAsync(result.JobId!);
+        Assert.NotNull(job);
+        Assert.Equal(BroadcastJobStatus.Failed, job!.Status);
+        Assert.Contains("Snapcast socket closed", job.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task PlayUrlAsync_ShouldUnmuteTargetedMutedRoom_AndRestoreMutedStateAfterward()
+    {
+        var (sp, db, mockSnapcast, _, _, service) = CreateTestContext();
+
+        db.Groups.Add(new GroupEntity { Id = "g1", Name = "Wohnzimmer", SnapcastGroupId = "sg1", CurrentStreamId = "radio_1", MasterVolume = 50, IsMuted = false });
+        await db.SaveChangesAsync();
+
+        // c1 is initially muted in Snapcast
+        mockSnapcast.Setup(s => s.GetStatusAsync())
+            .ReturnsAsync(CreateSnapcastStatusWithClients(("sg1", "radio_1", new[] { ("c1", 70, true) })));
+
+        var clientMuteEvents = new List<bool>();
+        mockSnapcast.Setup(s => s.SetClientVolumeAsync("c1", It.IsAny<int>(), It.IsAny<bool>()))
+            .Callback<string, int, bool>((_, _, muted) => clientMuteEvents.Add(muted))
+            .Returns(Task.CompletedTask);
+
+        var result = await service.PlayUrlAsync(new BroadcastPlayRequest(
+            AudioUrl: "http://example.com/sound.wav",
+            GroupIds: new List<string> { "g1" }
+        ));
+
+        Assert.True(result.Success);
+        // c1 was temporarily unmuted (false) during broadcast, and restored to muted (true) at the end
+        Assert.Contains(false, clientMuteEvents);
+        Assert.True(clientMuteEvents.Last());
+    }
+
+    [Fact]
+    public async Task Reconciliation_ShouldPreserveBroadcastOwnedTargetsAndNativeGroups()
+    {
+        var (sp, db, mockSnapcast, _, _, _) = CreateTestContext();
+
+        var mockBroadcast = new Mock<IBroadcastService>();
+        mockBroadcast.Setup(b => b.IsGroupActiveInBroadcast("g1", "sg1")).Returns(true);
+        mockBroadcast.Setup(b => b.IsGroupActiveInBroadcast(null, "sg_native")).Returns(true);
+
+        var mockSp = new Mock<IServiceProvider>();
+        mockSp.Setup(s => s.GetService(typeof(IBroadcastService))).Returns(mockBroadcast.Object);
+
+        var recon = new ReconciliationService(
+            Mock.Of<Docker.DotNet.IDockerClient>(),
+            Mock.Of<ILogger<ReconciliationService>>(),
+            mockSp.Object,
+            Mock.Of<IContainerLifecycleService>(),
+            Mock.Of<IFifoService>(),
+            mockSnapcast.Object
+        );
+
+        var groups = new List<GroupEntity>
+        {
+            new() { Id = "g1", Name = "Wohnzimmer", SnapcastGroupId = "sg1", CurrentStreamId = "spotify_1" }
+        };
+
+        var snapcastStatus = new JsonObject
+        {
+            ["server"] = new JsonObject
+            {
+                ["streams"] = new JsonArray(),
+                ["groups"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["id"] = "sg1",
+                        ["name"] = "Wohnzimmer",
+                        ["stream_id"] = "announcement",
+                        ["clients"] = new JsonArray()
+                    },
+                    new JsonObject
+                    {
+                        ["id"] = "sg_native",
+                        ["name"] = "",
+                        ["stream_id"] = "announcement",
+                        ["clients"] = new JsonArray()
+                    }
+                }
+            }
+        };
+
+        await recon.ReconcileSnapcastAsync(groups, new List<RadioStreamEntity>(), new List<SpotifySourceEntity>(), snapcastStatus);
+
+        // Neither sg1 nor sg_native should have been switched back to their persisted stream or default
+        mockSnapcast.Verify(s => s.SetGroupStreamAsync("sg1", It.IsAny<string>()), Times.Never);
+        mockSnapcast.Verify(s => s.SetGroupStreamAsync("sg_native", "default"), Times.Never);
+    }
+
+    [Fact]
+    public async Task SiblingVolumePropagation_ShouldNotAffectBroadcastOwnedGroups()
+    {
+        var (sp, db, mockSnapcast, mockLibrespot, _, _) = CreateTestContext();
+
+        var g1 = new GroupEntity { Id = "g1", Name = "Group 1", SnapcastGroupId = "sg1", CurrentStreamId = "spotify_s1", MasterVolume = 40 };
+        var g2 = new GroupEntity { Id = "g2", Name = "Group 2", SnapcastGroupId = "sg2", CurrentStreamId = "spotify_s1", MasterVolume = 40 };
+        db.Groups.AddRange(g1, g2);
+        await db.SaveChangesAsync();
+
+        var mockBroadcast = new Mock<IBroadcastService>();
+        mockBroadcast.Setup(b => b.IsGroupActiveInBroadcast("g1", "sg1")).Returns(true);
+        mockBroadcast.Setup(b => b.IsGroupActiveInBroadcast("g2", "sg2")).Returns(false);
+
+        var mockSp = new Mock<IServiceProvider>();
+        mockSp.Setup(s => s.GetService(typeof(IBroadcastService))).Returns(mockBroadcast.Object);
+
+        var mockClients = new Mock<IHubClients<IAudioClient>>();
+        mockClients.Setup(c => c.All).Returns(Mock.Of<IAudioClient>());
+        var mockHub = new Mock<IHubContext<AudioHub, IAudioClient>>();
+        mockHub.Setup(h => h.Clients).Returns(mockClients.Object);
+
+        var volOrch = new VolumeOrchestratorService(
+            db,
+            mockSnapcast.Object,
+            mockLibrespot.Object,
+            mockHub.Object,
+            mockSp.Object,
+            Mock.Of<ILogger<VolumeOrchestratorService>>()
+        );
+
+        // Changing volume on sibling group g2
+        await volOrch.SetGroupVolumeAsync("g2", 80, isMuted: false, syncStreamSource: true);
+
+        // Group 1 volume in DB should remain unchanged at 40 because it is in an active broadcast
+        var reloadedG1 = await db.Groups.FindAsync("g1");
+        Assert.Equal(40, reloadedG1!.MasterVolume);
     }
 }

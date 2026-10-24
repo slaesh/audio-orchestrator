@@ -56,8 +56,11 @@ public class VolumeOrchestratorService
         await _hub.Clients.All.OnGroupVolumeChanged(group.Id, group.MasterVolume, group.IsMuted);
 
         // If the group is listening to a Spotify source, sync with that source and all sibling groups
-        // (skipped for transient, group-isolated changes such as broadcasts)
-        if (syncStreamSource && !string.IsNullOrEmpty(group.CurrentStreamId) && group.CurrentStreamId.StartsWith(OrchestratorConstants.SpotifyPrefix))
+        // (skipped for transient, group-isolated changes such as broadcasts or groups currently in a broadcast)
+        var broadcastService = _serviceProvider?.GetService<IBroadcastService>();
+        bool isBroadcasting = broadcastService?.IsGroupActiveInBroadcast(group.Id, group.SnapcastGroupId) == true;
+
+        if (syncStreamSource && !isBroadcasting && !string.IsNullOrEmpty(group.CurrentStreamId) && group.CurrentStreamId.StartsWith(OrchestratorConstants.SpotifyPrefix))
         {
             var sourceId = group.CurrentStreamId.Replace(OrchestratorConstants.SpotifyPrefix, "");
             
@@ -68,10 +71,15 @@ public class VolumeOrchestratorService
                 source.MasterVolume = masterVolume;
             }
 
-            // Sync all other groups listening to the same Spotify source
+            // Sync all other groups listening to the same Spotify source (excluding groups in an active broadcast)
             var siblingGroups = await _db.Groups
                 .Where(g => g.Id != group.Id && g.CurrentStreamId == group.CurrentStreamId)
                 .ToListAsync();
+
+            if (broadcastService != null)
+            {
+                siblingGroups = siblingGroups.Where(g => !broadcastService.IsGroupActiveInBroadcast(g.Id, g.SnapcastGroupId)).ToList();
+            }
 
             foreach (var sibling in siblingGroups)
             {

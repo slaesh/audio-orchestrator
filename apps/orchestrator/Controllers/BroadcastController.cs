@@ -57,6 +57,10 @@ public class BroadcastController : ControllerBase
     }
 
     [HttpPost("play")]
+    [ProducesResponseType(typeof(BroadcastJobDto), StatusCodes.Status202Accepted)]
+    [ProducesResponseType(typeof(BroadcastJobDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(string), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(BroadcastJobDto), StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<BroadcastJobDto>> Play(
         [FromBody] BroadcastPlayRequest request,
         [FromQuery] bool wait = false)
@@ -85,6 +89,10 @@ public class BroadcastController : ControllerBase
 
     [HttpPost("play-file")]
     [Consumes("multipart/form-data")]
+    [ProducesResponseType(typeof(BroadcastJobDto), StatusCodes.Status202Accepted)]
+    [ProducesResponseType(typeof(BroadcastJobDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(string), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(BroadcastJobDto), StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<BroadcastJobDto>> PlayFile(
         IFormFile file,
         [FromForm] string? groupIds = null,

@@ -284,7 +284,8 @@ public record BroadcastPlayResult(
 public record BroadcastStatusDto(
     bool IsPlaying,
     string? CurrentAnnouncementId,
-    List<string> ActiveTargetGroupIds
+    List<string> ActiveTargetGroupIds,
+    List<string>? ActiveSnapcastGroupIds = null
 );
 
 [TranspilationSource]

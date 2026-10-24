@@ -29,8 +29,18 @@ poll_job_until_done() {
   while true; do
     sleep 2
     elapsed=$((elapsed + 2))
+    local response
+    response=$(curl -s -w "\n%{http_code}" "$BASE_URL/api/broadcast/jobs/$job_id" || echo -e "{}\n000")
+    local http_code
+    http_code=$(echo "$response" | tail -n 1)
     local job_json
-    job_json=$(curl -s "$BASE_URL/api/broadcast/jobs/$job_id" || echo "{}")
+    job_json=$(echo "$response" | sed '$d')
+
+    if [ "$http_code" != "200" ]; then
+      echo "✗ Failed to query job $job_id (HTTP $http_code): $job_json" >&2
+      return 1
+    fi
+
     local status
     status=$(echo "$job_json" | jq -r '.status // "unknown"')
     local err
