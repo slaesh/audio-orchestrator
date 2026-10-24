@@ -14,6 +14,7 @@ api/radioStreams.service.ts
 api/rooms.service.ts
 api/settings.service.ts
 api/spotifySources.service.ts
+api/system.service.ts
 configuration.ts
 encoder.ts
 git_push.sh

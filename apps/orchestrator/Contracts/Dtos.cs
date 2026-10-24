@@ -306,3 +306,28 @@ public record BroadcastJobDto(
     string? ErrorMessage
 );
 
+[TranspilationSource]
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum SystemStatus
+{
+    [JsonStringEnumMemberName("healthy")]
+    Healthy,
+    [JsonStringEnumMemberName("degraded")]
+    Degraded,
+    [JsonStringEnumMemberName("unhealthy")]
+    Unhealthy
+}
+
+[TranspilationSource]
+public record SystemInfoDto(
+    SystemStatus Status,
+    string Version,
+    string Environment,
+    DateTime StartTimeUtc,
+    long UptimeSeconds,
+    string UptimeFormatted,
+    bool SnapserverConnected,
+    bool DatabaseConnected,
+    bool MqttConnected
+);
+

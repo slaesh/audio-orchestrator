@@ -33,7 +33,7 @@ public class HomeAssistantMqttTests
     {
         await using var db = new OrchestratorDbContext(_dbOptions);
         var mockVolume = new Mock<VolumeOrchestratorService>(db, Mock.Of<ISnapcastService>(), Mock.Of<ILibrespotApiClient>(), Mock.Of<IHubContext<AudioHub, IAudioClient>>(), Mock.Of<ILogger<VolumeOrchestratorService>>());
-        var mockStateBuilder = new Mock<FullStateBuilder>(db, Mock.Of<ISnapcastService>(), null, null, null, null);
+        var mockStateBuilder = new Mock<FullStateBuilder>(db, Mock.Of<ISnapcastService>());
         var mockHub = new Mock<IHubContext<AudioHub, IAudioClient>>();
         var mockMqtt = new Mock<IHomeAssistantMqttService>();
         mockMqtt.Setup(m => m.IsConnected).Returns(false);
@@ -58,7 +58,7 @@ public class HomeAssistantMqttTests
     {
         await using var db = new OrchestratorDbContext(_dbOptions);
         var mockVolume = new Mock<VolumeOrchestratorService>(db, Mock.Of<ISnapcastService>(), Mock.Of<ILibrespotApiClient>(), Mock.Of<IHubContext<AudioHub, IAudioClient>>(), Mock.Of<ILogger<VolumeOrchestratorService>>());
-        var mockStateBuilder = new Mock<FullStateBuilder>(db, Mock.Of<ISnapcastService>(), null, null, null, null);
+        var mockStateBuilder = new Mock<FullStateBuilder>(db, Mock.Of<ISnapcastService>());
         mockStateBuilder.Setup(s => s.BuildAsync()).ReturnsAsync(new FullStateDto(new List<GroupDto>(), new List<RoomDto>(), new List<StreamDto>(), new List<SpotifySourceDto>(), new List<StreamDto>(), null, VolumeProfile.Linear));
 
         var mockClients = new Mock<IHubClients<IAudioClient>>();
@@ -115,7 +115,7 @@ public class HomeAssistantMqttTests
     {
         await using var db = new OrchestratorDbContext(_dbOptions);
         var mockVolume = new Mock<VolumeOrchestratorService>(db, Mock.Of<ISnapcastService>(), Mock.Of<ILibrespotApiClient>(), Mock.Of<IHubContext<AudioHub, IAudioClient>>(), Mock.Of<ILogger<VolumeOrchestratorService>>());
-        var mockStateBuilder = new Mock<FullStateBuilder>(db, Mock.Of<ISnapcastService>(), null, null, null, null);
+        var mockStateBuilder = new Mock<FullStateBuilder>(db, Mock.Of<ISnapcastService>());
         mockStateBuilder.Setup(s => s.BuildAsync()).ReturnsAsync(new FullStateDto(new List<GroupDto>(), new List<RoomDto>(), new List<StreamDto>(), new List<SpotifySourceDto>(), new List<StreamDto>(), null, VolumeProfile.Linear));
 
         var mockClients = new Mock<IHubClients<IAudioClient>>();
@@ -169,7 +169,7 @@ public class HomeAssistantMqttTests
     {
         await using var db = new OrchestratorDbContext(_dbOptions);
         var mockVolume = new Mock<VolumeOrchestratorService>(db, Mock.Of<ISnapcastService>(), Mock.Of<ILibrespotApiClient>(), Mock.Of<IHubContext<AudioHub, IAudioClient>>(), Mock.Of<ILogger<VolumeOrchestratorService>>());
-        var mockStateBuilder = new Mock<FullStateBuilder>(db, Mock.Of<ISnapcastService>(), null, null, null, null);
+        var mockStateBuilder = new Mock<FullStateBuilder>(db, Mock.Of<ISnapcastService>());
         var mockHub = new Mock<IHubContext<AudioHub, IAudioClient>>();
         var mockMqtt = new Mock<IHomeAssistantMqttService>();
         var mockLogger = new Mock<ILogger<SettingsController>>();
@@ -203,7 +203,7 @@ public class HomeAssistantMqttTests
         await db.SaveChangesAsync();
 
         var mockVolume = new Mock<VolumeOrchestratorService>(db, Mock.Of<ISnapcastService>(), Mock.Of<ILibrespotApiClient>(), Mock.Of<IHubContext<AudioHub, IAudioClient>>(), Mock.Of<ILogger<VolumeOrchestratorService>>());
-        var mockStateBuilder = new Mock<FullStateBuilder>(db, Mock.Of<ISnapcastService>(), null, null, null, null);
+        var mockStateBuilder = new Mock<FullStateBuilder>(db, Mock.Of<ISnapcastService>());
         mockStateBuilder.Setup(s => s.BuildAsync()).ReturnsAsync(new FullStateDto(new List<GroupDto>(), new List<RoomDto>(), new List<StreamDto>(), new List<SpotifySourceDto>(), new List<StreamDto>(), null, VolumeProfile.Linear));
 
         var mockClients = new Mock<IHubClients<IAudioClient>>();
@@ -261,7 +261,7 @@ public class HomeAssistantMqttTests
         await db.SaveChangesAsync();
 
         var mockVolume = new Mock<VolumeOrchestratorService>(db, Mock.Of<ISnapcastService>(), Mock.Of<ILibrespotApiClient>(), Mock.Of<IHubContext<AudioHub, IAudioClient>>(), Mock.Of<ILogger<VolumeOrchestratorService>>());
-        var mockStateBuilder = new Mock<FullStateBuilder>(db, Mock.Of<ISnapcastService>(), null, null, null, null);
+        var mockStateBuilder = new Mock<FullStateBuilder>(db, Mock.Of<ISnapcastService>());
         mockStateBuilder.Setup(s => s.BuildAsync()).ReturnsAsync(new FullStateDto(new List<GroupDto>(), new List<RoomDto>(), new List<StreamDto>(), new List<SpotifySourceDto>(), new List<StreamDto>(), null, VolumeProfile.Linear));
 
         var mockClients = new Mock<IHubClients<IAudioClient>>();
@@ -375,7 +375,7 @@ public class HomeAssistantMqttTests
     {
         await using var db = new OrchestratorDbContext(_dbOptions);
         var mockVolume = new Mock<VolumeOrchestratorService>(db, Mock.Of<ISnapcastService>(), Mock.Of<ILibrespotApiClient>(), Mock.Of<IHubContext<AudioHub, IAudioClient>>(), Mock.Of<ILogger<VolumeOrchestratorService>>());
-        var mockStateBuilder = new Mock<FullStateBuilder>(db, Mock.Of<ISnapcastService>(), null, null, null, null);
+        var mockStateBuilder = new Mock<FullStateBuilder>(db, Mock.Of<ISnapcastService>());
         var mockHub = new Mock<IHubContext<AudioHub, IAudioClient>>();
         var mockMqtt = new Mock<IHomeAssistantMqttService>();
 
@@ -410,7 +410,7 @@ public class HomeAssistantMqttTests
     {
         await using var db = new OrchestratorDbContext(_dbOptions);
         var mockVolume = new Mock<VolumeOrchestratorService>(db, Mock.Of<ISnapcastService>(), Mock.Of<ILibrespotApiClient>(), Mock.Of<IHubContext<AudioHub, IAudioClient>>(), Mock.Of<ILogger<VolumeOrchestratorService>>());
-        var mockStateBuilder = new Mock<FullStateBuilder>(db, Mock.Of<ISnapcastService>(), null, null, null, null);
+        var mockStateBuilder = new Mock<FullStateBuilder>(db, Mock.Of<ISnapcastService>());
         var mockHub = new Mock<IHubContext<AudioHub, IAudioClient>>();
         var mockMqtt = new Mock<IHomeAssistantMqttService>();
 
@@ -451,7 +451,7 @@ public class HomeAssistantMqttTests
         await db.SaveChangesAsync();
 
         var mockVolume = new Mock<VolumeOrchestratorService>(db, Mock.Of<ISnapcastService>(), Mock.Of<ILibrespotApiClient>(), Mock.Of<IHubContext<AudioHub, IAudioClient>>(), Mock.Of<ILogger<VolumeOrchestratorService>>());
-        var mockStateBuilder = new Mock<FullStateBuilder>(db, Mock.Of<ISnapcastService>(), null, null, null, null);
+        var mockStateBuilder = new Mock<FullStateBuilder>(db, Mock.Of<ISnapcastService>());
         var mockHub = new Mock<IHubContext<AudioHub, IAudioClient>>();
         var mockMqtt = new Mock<IHomeAssistantMqttService>();
 
@@ -496,7 +496,7 @@ public class HomeAssistantMqttTests
         await db.SaveChangesAsync();
 
         var mockVolume = new Mock<VolumeOrchestratorService>(db, Mock.Of<ISnapcastService>(), Mock.Of<ILibrespotApiClient>(), Mock.Of<IHubContext<AudioHub, IAudioClient>>(), Mock.Of<ILogger<VolumeOrchestratorService>>());
-        var mockStateBuilder = new Mock<FullStateBuilder>(db, Mock.Of<ISnapcastService>(), null, null, null, null);
+        var mockStateBuilder = new Mock<FullStateBuilder>(db, Mock.Of<ISnapcastService>());
         var mockHub = new Mock<IHubContext<AudioHub, IAudioClient>>();
         var mockMqtt = new Mock<IHomeAssistantMqttService>();
 
@@ -521,7 +521,7 @@ public class HomeAssistantMqttTests
     {
         await using var db = new OrchestratorDbContext(_dbOptions);
         var mockVolume = new Mock<VolumeOrchestratorService>(db, Mock.Of<ISnapcastService>(), Mock.Of<ILibrespotApiClient>(), Mock.Of<IHubContext<AudioHub, IAudioClient>>(), Mock.Of<ILogger<VolumeOrchestratorService>>());
-        var mockStateBuilder = new Mock<FullStateBuilder>(db, Mock.Of<ISnapcastService>(), null, null, null, null);
+        var mockStateBuilder = new Mock<FullStateBuilder>(db, Mock.Of<ISnapcastService>());
         var mockHub = new Mock<IHubContext<AudioHub, IAudioClient>>();
         var mockMqtt = new Mock<IHomeAssistantMqttService>();
 
@@ -562,7 +562,7 @@ public class HomeAssistantMqttTests
         await db.SaveChangesAsync();
 
         var mockVolume = new Mock<VolumeOrchestratorService>(db, Mock.Of<ISnapcastService>(), Mock.Of<ILibrespotApiClient>(), Mock.Of<IHubContext<AudioHub, IAudioClient>>(), Mock.Of<ILogger<VolumeOrchestratorService>>());
-        var mockStateBuilder = new Mock<FullStateBuilder>(db, Mock.Of<ISnapcastService>(), null, null, null, null);
+        var mockStateBuilder = new Mock<FullStateBuilder>(db, Mock.Of<ISnapcastService>());
         var mockHub = new Mock<IHubContext<AudioHub, IAudioClient>>();
         var mockMqtt = new Mock<IHomeAssistantMqttService>();
 

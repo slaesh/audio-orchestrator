@@ -470,3 +470,29 @@ export type SpotifyEventDto = {
     recentContexts?: SpotifyRecentContextDto[];
 }
 
+/** Transpiled from AudioOrchestrator.Contracts.SystemStatus */
+export type SystemStatus = "healthy" | "degraded" | "unhealthy";
+
+/** Transpiled from AudioOrchestrator.Contracts.SystemInfoDto */
+export type SystemInfoDto = {
+    /** Transpiled from AudioOrchestrator.Contracts.SystemStatus */
+    status: SystemStatus;
+    /** Transpiled from string */
+    version: string;
+    /** Transpiled from string */
+    environment: string;
+    /** Transpiled from System.DateTime */
+    startTimeUtc: (Date | string);
+    /** Transpiled from double */
+    uptimeSeconds: number;
+    /** Transpiled from string */
+    uptimeFormatted: string;
+    /** Transpiled from bool */
+    snapserverConnected: boolean;
+    /** Transpiled from bool */
+    databaseConnected: boolean;
+    /** Transpiled from bool */
+    mqttConnected: boolean;
+}
+
+
