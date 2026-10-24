@@ -161,4 +161,42 @@ public class SystemControllerTests
         Assert.True(info.DatabaseConnected);
         Assert.False(info.MqttConnected);
     }
+
+    [Fact]
+    public async Task GetHealth_ShouldReturn503_WhenDatabaseSettingsQueryThrows()
+    {
+        // Arrange
+        await using var db = new ThrowingSettingsDbContext(_dbOptions);
+        var mockEnv = new Mock<IWebHostEnvironment>();
+        mockEnv.Setup(e => e.EnvironmentName).Returns("Production");
+
+        var mockSnapcast = new Mock<ISnapcastService>();
+        mockSnapcast.Setup(s => s.IsConnected).Returns(true);
+
+        var mockMqtt = new Mock<IHomeAssistantMqttService>();
+        mockMqtt.Setup(m => m.IsConnected).Returns(true);
+
+        var mockLogger = new Mock<ILogger<SystemController>>();
+
+        var controller = new SystemController(mockEnv.Object, mockSnapcast.Object, db, mockMqtt.Object, mockLogger.Object);
+
+        // Act
+        var result = await controller.GetHealth();
+
+        // Assert
+        var statusResult = Assert.IsType<ObjectResult>(result.Result);
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, statusResult.StatusCode);
+
+        var info = Assert.IsType<SystemInfoDto>(statusResult.Value);
+        Assert.Equal(SystemStatus.Unhealthy, info.Status);
+        Assert.False(info.DatabaseConnected);
+    }
+
+    private class ThrowingSettingsDbContext : OrchestratorDbContext
+    {
+        public ThrowingSettingsDbContext(DbContextOptions<OrchestratorDbContext> options) : base(options) { }
+
+        public override DbSet<Data.Entities.OrchestratorSettingsEntity> Settings =>
+            throw new InvalidOperationException("Simulated SQLite lock error");
+    }
 }

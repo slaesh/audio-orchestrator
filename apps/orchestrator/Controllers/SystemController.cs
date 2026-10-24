@@ -75,6 +75,7 @@ public class SystemController : ControllerBase
         }
         catch (Exception ex)
         {
+            dbConnected = false;
             _logger.LogWarning(ex, "Database connectivity check failed.");
         }
 
