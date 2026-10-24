@@ -211,7 +211,8 @@ public class ReconciliationService : IReconciliationService, IDisposable
         if (snapGroups == null) return;
 
         var broadcastService = _serviceProvider.GetService<IBroadcastService>();
-        var claimedSnapIds = new HashSet<string>();
+        var claimedSnapIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var concurrentlyModifiedGroupIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         bool dbChanged = false;
         
         // First pass: Match by SnapcastGroupId
@@ -267,7 +268,16 @@ public class ReconciliationService : IReconciliationService, IDisposable
 
                 if (!string.Equals(freshGroup.SnapcastGroupId, group.SnapcastGroupId, StringComparison.OrdinalIgnoreCase))
                 {
-                    // Mapping changed while acquiring gate; skip to avoid reconciling stale association
+                    // Mapping changed while acquiring gate; update in-memory entity and mark as concurrently modified
+                    // so it is excluded from orphan matching and final persistence overwrite.
+                    group.SnapcastGroupId = freshGroup.SnapcastGroupId;
+                    group.CurrentStreamId = freshGroup.CurrentStreamId;
+                    group.Name = freshGroup.Name;
+                    if (!string.IsNullOrEmpty(freshGroup.SnapcastGroupId))
+                    {
+                        claimedSnapIds.Add(freshGroup.SnapcastGroupId);
+                    }
+                    concurrentlyModifiedGroupIds.Add(group.Id);
                     continue;
                 }
 
@@ -308,7 +318,7 @@ public class ReconciliationService : IReconciliationService, IDisposable
         }
 
         // Second pass: Match orphaned DB groups by Name or Stream (Self-Healing)
-        foreach (var group in groups.Where(g => string.IsNullOrEmpty(g.SnapcastGroupId) || !claimedSnapIds.Contains(g.SnapcastGroupId!)))
+        foreach (var group in groups.Where(g => !concurrentlyModifiedGroupIds.Contains(g.Id) && (string.IsNullOrEmpty(g.SnapcastGroupId) || !claimedSnapIds.Contains(g.SnapcastGroupId!))))
         {
             if (broadcastService?.IsGroupActiveInBroadcast(group.Id, group.SnapcastGroupId) == true) continue;
 
@@ -411,6 +421,7 @@ public class ReconciliationService : IReconciliationService, IDisposable
         var dbGroups = await saveDb.Groups.Where(g => groupIds.Contains(g.Id)).ToListAsync();
         foreach (var g in groups)
         {
+            if (concurrentlyModifiedGroupIds.Contains(g.Id)) continue;
             var target = dbGroups.FirstOrDefault(x => x.Id == g.Id);
             if (target != null && target.SnapcastGroupId != g.SnapcastGroupId)
             {

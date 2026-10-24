@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -e
+set -eo pipefail
 
 BASE_URL="${ORCHESTRATOR_URL:-http://localhost:5000}"
 
