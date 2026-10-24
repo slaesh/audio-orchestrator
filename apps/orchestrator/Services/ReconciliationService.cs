@@ -238,25 +238,60 @@ public class ReconciliationService : IReconciliationService, IDisposable
 
             try
             {
-                var match = snapGroups.FirstOrDefault(sg => 
-                    sg?["id"]?.GetValue<string>() == group.SnapcastGroupId && 
-                    !claimedSnapIds.Contains(group.SnapcastGroupId!));
+                // Reload fresh group and live Snapcast status under gates
+                GroupEntity? freshGroup = null;
+                var scopeFactory = _serviceProvider.GetService<IServiceScopeFactory>();
+                if (scopeFactory != null)
+                {
+                    using var queryScope = scopeFactory.CreateScope();
+                    var queryDb = queryScope.ServiceProvider.GetService<OrchestratorDbContext>();
+                    if (queryDb != null)
+                    {
+                        freshGroup = await queryDb.Groups.AsNoTracking().FirstOrDefaultAsync(g => g.Id == group.Id);
+                    }
+                }
+                else
+                {
+                    var directDb = _serviceProvider.GetService<OrchestratorDbContext>();
+                    if (directDb != null)
+                    {
+                        freshGroup = await directDb.Groups.AsNoTracking().FirstOrDefaultAsync(g => g.Id == group.Id);
+                    }
+                }
+                freshGroup ??= group;
 
-                bool isBroadcasting = broadcastService?.IsGroupActiveInBroadcast(group.Id, group.SnapcastGroupId) == true;
+                if (string.IsNullOrEmpty(freshGroup.SnapcastGroupId))
+                {
+                    continue;
+                }
+
+                if (!string.Equals(freshGroup.SnapcastGroupId, group.SnapcastGroupId, StringComparison.OrdinalIgnoreCase))
+                {
+                    // Mapping changed while acquiring gate; skip to avoid reconciling stale association
+                    continue;
+                }
+
+                var freshStatus = await _snapcast.GetStatusAsync();
+                var freshSnapGroups = freshStatus?["server"]?["groups"]?.AsArray() ?? snapGroups;
+                var match = freshSnapGroups?.FirstOrDefault(sg => 
+                    sg?["id"]?.GetValue<string>() == freshGroup.SnapcastGroupId && 
+                    !claimedSnapIds.Contains(freshGroup.SnapcastGroupId!));
+
+                bool isBroadcasting = broadcastService?.IsGroupActiveInBroadcast(freshGroup.Id, freshGroup.SnapcastGroupId) == true;
                 if (isBroadcasting)
                 {
-                    if (match != null) claimedSnapIds.Add(group.SnapcastGroupId!);
+                    if (match != null) claimedSnapIds.Add(freshGroup.SnapcastGroupId!);
                     continue;
                 }
 
                 if (match != null) {
-                    claimedSnapIds.Add(group.SnapcastGroupId!);
+                    claimedSnapIds.Add(freshGroup.SnapcastGroupId!);
 
-                    if (match?["name"]?.GetValue<string>() != group.Name) {
-                        await _snapcast.SetGroupNameAsync(group.SnapcastGroupId!, group.Name);
+                    if (match?["name"]?.GetValue<string>() != freshGroup.Name) {
+                        await _snapcast.SetGroupNameAsync(freshGroup.SnapcastGroupId!, freshGroup.Name);
                     }
-                    if (!string.IsNullOrEmpty(group.CurrentStreamId) && match?["stream_id"]?.GetValue<string>() != group.CurrentStreamId) {
-                        try { await _snapcast.SetGroupStreamAsync(group.SnapcastGroupId!, group.CurrentStreamId); } catch {}
+                    if (!string.IsNullOrEmpty(freshGroup.CurrentStreamId) && match?["stream_id"]?.GetValue<string>() != freshGroup.CurrentStreamId) {
+                        try { await _snapcast.SetGroupStreamAsync(freshGroup.SnapcastGroupId!, freshGroup.CurrentStreamId); } catch {}
                     }
                 } else {
                     group.SnapcastGroupId = null;

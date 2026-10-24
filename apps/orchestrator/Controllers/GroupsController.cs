@@ -559,9 +559,8 @@ public class GroupsController : ControllerBase
         var gate = broadcastService?.GetGroupGate(group.Id);
         if (gate != null) await gate.WaitAsync();
 
-        bool shouldPushVolumeOutsideGate = false;
-        int? volumeToPush = null;
-        bool pushFromDocker = false;
+        bool shouldRecalculateOutsideGate = false;
+        bool syncToSpotify = false;
 
         try
         {
@@ -597,21 +596,21 @@ public class GroupsController : ControllerBase
                 }
                 else
                 {
-                    shouldPushVolumeOutsideGate = true;
-                    if (activeSibling != null)
+                    // Persist adopted volume under the original gate
+                    if (group.MasterVolume != targetVolume)
                     {
-                        volumeToPush = activeSibling.MasterVolume;
-                        pushFromDocker = true;
+                        group.MasterVolume = targetVolume;
+                        await _db.SaveChangesAsync();
+                        await _hub.Clients.All.OnGroupVolumeChanged(group.Id, group.MasterVolume, group.IsMuted);
                     }
-                    else if (source != null && source.IsActive)
+
+                    if (activeSibling == null && (source == null || !source.IsActive))
                     {
-                        volumeToPush = source.MasterVolume;
-                        pushFromDocker = true;
+                        syncToSpotify = true;
                     }
                     else
                     {
-                        volumeToPush = group.MasterVolume;
-                        pushFromDocker = false;
+                        shouldRecalculateOutsideGate = true;
                     }
                 }
             }
@@ -621,9 +620,13 @@ public class GroupsController : ControllerBase
             gate?.Release();
         }
 
-        if (shouldPushVolumeOutsideGate && volumeToPush.HasValue)
+        if (shouldRecalculateOutsideGate)
         {
-            await _volumeOrchestrator.SetGroupVolumeAsync(group.Id, volumeToPush.Value, group.IsMuted, fromDocker: pushFromDocker);
+            await _volumeOrchestrator.RecalculateAndPushGroupAsync(group.Id);
+        }
+        else if (syncToSpotify)
+        {
+            await _volumeOrchestrator.SyncSpotifySourceAndSiblingsAsync(group.Id, effectiveStreamId, group.MasterVolume);
         }
         
         await BroadcastStateAsync();

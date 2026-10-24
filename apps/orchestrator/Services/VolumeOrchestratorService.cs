@@ -452,7 +452,7 @@ public class VolumeOrchestratorService
         int finalVolume;
         try
         {
-            var originGroup = await _db.Groups.FindAsync(groupId);
+            var originGroup = await _db.Groups.AsNoTracking().FirstOrDefaultAsync(g => g.Id == groupId);
             if (originGroup == null || originGroup.CurrentStreamId != currentStreamId)
             {
                 return;

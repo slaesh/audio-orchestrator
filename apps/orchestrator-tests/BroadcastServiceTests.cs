@@ -919,20 +919,37 @@ public class BroadcastServiceTests
             .ReturnsAsync(CreateSnapcastStatus(("sg1", "radio_1", new[] { "c1" })));
 
         var setVolumes = new List<(string ClientId, int Volume, bool Muted)>();
-        mockSnapcast.Setup(s => s.SetClientVolumeAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<bool>()))
-            .Callback<string, int, bool>((cid, vol, muted) => setVolumes.Add((cid, vol, muted)))
+        bool streamRestored = false;
+        bool editTriggered = false;
+
+        mockSnapcast.Setup(s => s.SetGroupStreamAsync("sg1", "radio_1"))
+            .Callback<string, string>((_, _) => streamRestored = true)
             .Returns(Task.CompletedTask);
 
-        // When runner streams audio, simulate user editing group volume to 85% and mute=true via VolumeOrchestratorService
-        mockRunner.Setup(r => r.StreamToFifoAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<Stream?>(), It.IsAny<CancellationToken>()))
-            .Returns<string, string, Stream?, CancellationToken>(async (_, _, _, ct) =>
+        mockSnapcast.Setup(s => s.SetClientVolumeAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<bool>()))
+            .Callback<string, int, bool>((cid, vol, muted) =>
             {
-                await Task.Delay(50, ct);
-                using var scope = sp.CreateScope();
-                var volumeService = scope.ServiceProvider.GetRequiredService<VolumeOrchestratorService>();
-                await volumeService.SetGroupVolumeAsync("g1", 85, isMuted: true);
-                return new ProcessRunResult(0, "");
-            });
+                setVolumes.Add((cid, vol, muted));
+                if (streamRestored && !editTriggered && cid == "c1")
+                {
+                    editTriggered = true;
+                    using var scope = sp.CreateScope();
+                    var testDb = scope.ServiceProvider.GetRequiredService<OrchestratorDbContext>();
+                    var g = testDb.Groups.Find("g1");
+                    if (g != null)
+                    {
+                        g.MasterVolume = 85;
+                        g.IsMuted = true;
+                        testDb.SaveChanges();
+                    }
+                    var broadcast = scope.ServiceProvider.GetRequiredService<IBroadcastService>();
+                    broadcast.MarkDeferredVolumeUpdate("g1", "sg1");
+                }
+            })
+            .Returns(Task.CompletedTask);
+
+        mockRunner.Setup(r => r.StreamToFifoAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<Stream?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProcessRunResult(0, ""));
 
         var request = new BroadcastPlayRequest(
             AudioUrl: "http://example.com/chime.mp3",

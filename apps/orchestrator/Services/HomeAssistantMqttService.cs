@@ -1646,9 +1646,8 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         var gate = broadcastService?.GetGroupGate(group.Id);
         if (gate != null) await gate.WaitAsync();
 
-        bool shouldPushVolumeOutsideGate = false;
-        int? volumeToPush = null;
-        bool pushFromDocker = false;
+        bool shouldRecalculateOutsideGate = false;
+        bool syncToSpotify = false;
 
         try
         {
@@ -1688,21 +1687,25 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
                 }
                 else
                 {
-                    shouldPushVolumeOutsideGate = true;
-                    if (activeSibling != null)
+                    // Persist adopted volume under the original gate
+                    if (group.MasterVolume != targetVolume)
                     {
-                        volumeToPush = activeSibling.MasterVolume;
-                        pushFromDocker = true;
+                        group.MasterVolume = targetVolume;
+                        await db.SaveChangesAsync();
+                        var hubContext = _serviceProvider.GetService<Microsoft.AspNetCore.SignalR.IHubContext<AudioOrchestrator.Hubs.AudioHub, AudioOrchestrator.Contracts.IAudioClient>>();
+                        if (hubContext != null)
+                        {
+                            await hubContext.Clients.All.OnGroupVolumeChanged(group.Id, group.MasterVolume, group.IsMuted);
+                        }
                     }
-                    else if (source != null && source.IsActive)
+
+                    if (activeSibling == null && (source == null || !source.IsActive))
                     {
-                        volumeToPush = source.MasterVolume;
-                        pushFromDocker = true;
+                        syncToSpotify = true;
                     }
                     else
                     {
-                        volumeToPush = group.MasterVolume;
-                        pushFromDocker = false;
+                        shouldRecalculateOutsideGate = true;
                     }
                 }
             }
@@ -1712,9 +1715,13 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
             gate?.Release();
         }
 
-        if (shouldPushVolumeOutsideGate && volumeToPush.HasValue)
+        if (shouldRecalculateOutsideGate)
         {
-            await volumeOrchestrator.SetGroupVolumeAsync(group.Id, volumeToPush.Value, group.IsMuted, fromDocker: pushFromDocker);
+            await volumeOrchestrator.RecalculateAndPushGroupAsync(group.Id);
+        }
+        else if (syncToSpotify)
+        {
+            await volumeOrchestrator.SyncSpotifySourceAndSiblingsAsync(group.Id, effectiveStreamId, group.MasterVolume);
         }
     }
 
