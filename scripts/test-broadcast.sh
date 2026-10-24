@@ -77,6 +77,24 @@ poll_job_until_done() {
   done
 }
 
+handle_playback_response() {
+  local resp="$1"
+  echo "$resp" | jq .
+  local job_id
+  job_id=$(echo "$resp" | jq -r '.id // empty')
+  local status
+  status=$(echo "$resp" | jq -r '.status // empty')
+
+  if [ -n "$WAIT_PARAM" ]; then
+    if [ "$status" != "completed" ]; then
+      echo "✗ Synchronous playback did not complete (status: ${status:-unknown})" >&2
+      exit 1
+    fi
+  elif [ -n "$job_id" ] && [ "$ASYNC_MODE" -eq 0 ]; then
+    poll_job_until_done "$job_id"
+  fi
+}
+
 case "$1" in
   status)
     echo "Querying broadcast status:"
@@ -142,12 +160,7 @@ case "$1" in
       -H "Content-Type: application/json" \
       -d "$JSON_BODY")
     
-    echo "$RESP" | jq .
-    JOB_ID=$(echo "$RESP" | jq -r '.id // empty')
-
-    if [ -n "$JOB_ID" ] && [ -z "$WAIT_PARAM" ] && [ "$ASYNC_MODE" -eq 0 ]; then
-      poll_job_until_done "$JOB_ID"
-    fi
+    handle_playback_response "$RESP"
     ;;
 
   fading)
@@ -175,12 +188,7 @@ case "$1" in
       -H "Content-Type: application/json" \
       -d "$JSON_BODY")
     
-    echo "$RESP" | jq .
-    JOB_ID=$(echo "$RESP" | jq -r '.id // empty')
-
-    if [ -n "$JOB_ID" ] && [ -z "$WAIT_PARAM" ] && [ "$ASYNC_MODE" -eq 0 ]; then
-      poll_job_until_done "$JOB_ID"
-    fi
+    handle_playback_response "$RESP"
     ;;
 
   alarm)
@@ -202,12 +210,7 @@ case "$1" in
       -H "Content-Type: application/json" \
       -d "$JSON_BODY")
 
-    echo "$RESP" | jq .
-    JOB_ID=$(echo "$RESP" | jq -r '.id // empty')
-
-    if [ -n "$JOB_ID" ] && [ -z "$WAIT_PARAM" ] && [ "$ASYNC_MODE" -eq 0 ]; then
-      poll_job_until_done "$JOB_ID"
-    fi
+    handle_playback_response "$RESP"
     ;;
 
   upload)
@@ -231,12 +234,7 @@ case "$1" in
     if [ -n "$VOL" ]; then CURL_ARGS+=(-F "volume=$VOL"); fi
 
     RESP=$(curl "${CURL_ARGS[@]}")
-    echo "$RESP" | jq .
-    JOB_ID=$(echo "$RESP" | jq -r '.id // empty')
-
-    if [ -n "$JOB_ID" ] && [ -z "$WAIT_PARAM" ] && [ "$ASYNC_MODE" -eq 0 ]; then
-      poll_job_until_done "$JOB_ID"
-    fi
+    handle_playback_response "$RESP"
     ;;
 
   stop)

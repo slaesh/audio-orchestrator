@@ -310,6 +310,12 @@ public class BroadcastService : IHostedService, IBroadcastService
             throw new ArgumentException("AudioUrl darf nicht leer sein.", nameof(request));
         }
 
+        if (!Uri.TryCreate(request.AudioUrl, UriKind.Absolute, out var parsedUri)
+            || (parsedUri.Scheme != Uri.UriSchemeHttp && parsedUri.Scheme != Uri.UriSchemeHttps))
+        {
+            throw new ArgumentException("AudioUrl muss eine absolute HTTP- oder HTTPS-URL sein.", nameof(request));
+        }
+
         return await EnqueueJobInternalAsync(request, inputSource: request.AudioUrl, tempFilePath: null, sourceType: BroadcastSourceType.Url, ct);
     }
 
@@ -710,6 +716,7 @@ public class BroadcastService : IHostedService, IBroadcastService
             }
 
             // 2. Fade down current volume (if requested)
+            ct.ThrowIfCancellationRequested();
             var fadeMs = Math.Clamp(item.Request.FadeDurationMs ?? 0, 0, MaxFadeDurationMs);
             if (fadeMs > 0)
             {
@@ -717,10 +724,12 @@ public class BroadcastService : IHostedService, IBroadcastService
             }
 
             // 3. Optional pause of active Spotify playback (after the fade-down, so the fade is audible)
+            ct.ThrowIfCancellationRequested();
             if (item.Request.PausePlayback)
             {
                 foreach (var s in snapshots.Where(s => !s.IsNative && s.OriginalStreamId.StartsWith(OrchestratorConstants.SpotifyPrefix)))
                 {
+                    ct.ThrowIfCancellationRequested();
                     var sourceId = s.OriginalStreamId.Replace(OrchestratorConstants.SpotifyPrefix, "");
                     try
                     {
@@ -730,7 +739,7 @@ public class BroadcastService : IHostedService, IBroadcastService
                         await _librespotApi.SendCommandAsync(sourceId, "pause");
                         s.PausedSpotifySourceId = sourceId;
                     }
-                    catch (Exception ex)
+                    catch (Exception ex) when (ex is not OperationCanceledException)
                     {
                         _logger.LogWarning(ex, "Failed to pause Spotify source {SourceId}", sourceId);
                     }
@@ -740,22 +749,27 @@ public class BroadcastService : IHostedService, IBroadcastService
             // 4. Switch target groups to announcement stream.
             // Failures abort the job: otherwise the group would never hear the announcement
             // while the volume override still raises its original music.
+            ct.ThrowIfCancellationRequested();
             foreach (var s in snapshots)
             {
+                ct.ThrowIfCancellationRequested();
                 await _snapcast.SetGroupStreamAsync(s.SnapcastGroupId, OrchestratorConstants.AnnouncementStreamId);
             }
 
             // 5. Set announcement playback volume (group-isolated, never touches sibling groups / source volume)
+            ct.ThrowIfCancellationRequested();
             var settings = await db.Settings.FirstOrDefaultAsync();
             var profile = settings?.VolumeProfile ?? VolumeProfile.Cubic;
             var roomsFromDb = await db.Rooms.ToListAsync();
 
             foreach (var s in snapshots)
             {
+                ct.ThrowIfCancellationRequested();
                 if (s.IsNative)
                 {
                     foreach (var c in s.NativeClients)
                     {
+                        ct.ThrowIfCancellationRequested();
                         if (item.Request.Volume.HasValue)
                         {
                             var nativeOverrideVol = Math.Clamp(item.Request.Volume.Value, 0, 100);
@@ -779,6 +793,7 @@ public class BroadcastService : IHostedService, IBroadcastService
                 // Failures abort the job so un-configured or silent targets trigger restoration.
                 foreach (var c in s.SelectedClients)
                 {
+                    ct.ThrowIfCancellationRequested();
                     var roomEntity = roomsFromDb.FirstOrDefault(r => r.MacAddress == c.ClientId);
                     var mixVolume = roomEntity?.MixVolume ?? 100;
                     var announcementVol = VolumeOrchestratorService.CalculateSnapcastVolume(targetVol, mixVolume, profile);
@@ -789,15 +804,18 @@ public class BroadcastService : IHostedService, IBroadcastService
             // 6. Temporarily mute unselected rooms within target groups. Must happen after all group
             // volume pushes (they re-apply client mute state from the database). Failures abort the
             // job so excluded rooms never hear the announcement.
+            ct.ThrowIfCancellationRequested();
             foreach (var s in snapshots)
             {
                 foreach (var c in s.UnselectedClients)
                 {
+                    ct.ThrowIfCancellationRequested();
                     await _snapcast.SetClientVolumeAsync(c.ClientId, c.Volume, muted: true);
                 }
             }
 
             // 7. Stream audio into FIFO using ffmpeg process runner
+            ct.ThrowIfCancellationRequested();
             var runResult = await _processRunner.StreamToFifoAsync(
                 item.InputSource,
                 OrchestratorConstants.AnnouncementFifoPath,
@@ -1176,16 +1194,28 @@ public class BroadcastService : IHostedService, IBroadcastService
             }
         }
 
-        // 2. Switch back to the original stream
+        // 2. Switch back to the stream (respecting any user selection made during broadcast)
+        using var scope = _serviceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<OrchestratorDbContext>();
+
         foreach (var s in snapshots)
         {
             try
             {
-                await _snapcast.SetGroupStreamAsync(s.SnapcastGroupId, s.OriginalStreamId);
+                var targetStreamId = s.OriginalStreamId;
+                if (!s.IsNative)
+                {
+                    var currentGroup = await db.Groups.FindAsync(s.GroupId);
+                    if (currentGroup != null && !string.IsNullOrEmpty(currentGroup.CurrentStreamId))
+                    {
+                        targetStreamId = currentGroup.CurrentStreamId;
+                    }
+                }
+                await _snapcast.SetGroupStreamAsync(s.SnapcastGroupId, targetStreamId);
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed restoring stream {StreamId} on group {GroupId}", s.OriginalStreamId, s.SnapcastGroupId);
+                _logger.LogWarning(ex, "Failed restoring stream on group {GroupId}", s.SnapcastGroupId);
                 restorationErrors.Add($"Group {s.SnapcastGroupId} stream restore: {ex.Message}");
             }
         }
@@ -1220,7 +1250,7 @@ public class BroadcastService : IHostedService, IBroadcastService
         {
             try
             {
-                await volumeOrchestrator.SetGroupVolumeAsync(s.GroupId, s.OriginalVolume, isMuted: s.OriginalIsMuted, syncStreamSource: false);
+                await volumeOrchestrator.SetGroupVolumeAsync(s.GroupId, s.OriginalVolume, isMuted: s.OriginalIsMuted, syncStreamSource: false, force: true);
             }
             catch (Exception ex)
             {

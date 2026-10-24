@@ -95,6 +95,12 @@ public class RoomsController : ControllerBase
             room.MixVolume = req.Percent;
             await _db.SaveChangesAsync();
 
+            var broadcastService = HttpContext.RequestServices.GetService<IBroadcastService>();
+            if (snapGroupId != null && broadcastService?.IsGroupActiveInBroadcast(null, snapGroupId) == true)
+            {
+                return Ok();
+            }
+
             var settings = await _db.Settings.FirstOrDefaultAsync();
             var profile = settings?.VolumeProfile ?? AudioOrchestrator.Contracts.VolumeProfile.Cubic;
             int snapcastVolume = VolumeOrchestratorService.CalculateSnapcastVolume(req.Percent, 100, profile);

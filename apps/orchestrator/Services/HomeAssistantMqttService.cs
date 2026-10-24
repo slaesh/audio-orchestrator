@@ -1645,12 +1645,15 @@ public class HomeAssistantMqttService : BackgroundService, IHomeAssistantMqttSer
         group.CurrentStreamId = effectiveStreamId;
         await db.SaveChangesAsync();
 
-        if (!string.IsNullOrEmpty(group.SnapcastGroupId))
+        var broadcastService = _serviceProvider.GetService<IBroadcastService>();
+        bool isBroadcasting = broadcastService?.IsGroupActiveInBroadcast(group.Id, group.SnapcastGroupId) == true;
+
+        if (!string.IsNullOrEmpty(group.SnapcastGroupId) && !isBroadcasting)
         {
             await snapcast.SetGroupStreamAsync(group.SnapcastGroupId, effectiveStreamId);
         }
 
-        if (effectiveStreamId.StartsWith(OrchestratorConstants.SpotifyPrefix))
+        if (!isBroadcasting && effectiveStreamId.StartsWith(OrchestratorConstants.SpotifyPrefix))
         {
             var sourceId = effectiveStreamId.Replace(OrchestratorConstants.SpotifyPrefix, "");
             var source = await db.SpotifySources.FindAsync(sourceId);

@@ -319,12 +319,15 @@ public class GroupsController : ControllerBase
         group.CurrentStreamId = effectiveStreamId;
         await _db.SaveChangesAsync();
 
-        if (!string.IsNullOrEmpty(group.SnapcastGroupId)) {
+        var broadcastService = HttpContext.RequestServices.GetService<IBroadcastService>();
+        bool isBroadcasting = broadcastService?.IsGroupActiveInBroadcast(group.Id, group.SnapcastGroupId) == true;
+
+        if (!string.IsNullOrEmpty(group.SnapcastGroupId) && !isBroadcasting) {
             await _snapcast.SetGroupStreamAsync(group.SnapcastGroupId, effectiveStreamId);
         }
 
         // If we switched TO a Spotify stream, adopt existing volume if active or push current group volume
-        if (effectiveStreamId.StartsWith(OrchestratorConstants.SpotifyPrefix))
+        if (!isBroadcasting && effectiveStreamId.StartsWith(OrchestratorConstants.SpotifyPrefix))
         {
             var sourceId = effectiveStreamId.Replace(OrchestratorConstants.SpotifyPrefix, "");
             var source = await _db.SpotifySources.FindAsync(sourceId);

@@ -838,4 +838,18 @@ public class BroadcastServiceTests
 
         mockSnapcast.Verify(s => s.GetStatusAsync(), Times.Never);
     }
+
+    [Theory]
+    [InlineData("file:///etc/passwd")]
+    [InlineData("/tmp/malicious.mp3")]
+    [InlineData("ftp://example.com/audio.mp3")]
+    [InlineData("relative/path/sound.wav")]
+    public async Task EnqueuePlayUrlAsync_ShouldThrow_WhenUrlIsNotAbsoluteHttpOrHttps(string invalidUrl)
+    {
+        var (_, _, _, _, _, service) = CreateTestContext();
+        var req = new BroadcastPlayRequest(AudioUrl: invalidUrl);
+
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => service.EnqueuePlayUrlAsync(req));
+        Assert.Contains("absolute HTTP- oder HTTPS-URL", ex.Message);
+    }
 }

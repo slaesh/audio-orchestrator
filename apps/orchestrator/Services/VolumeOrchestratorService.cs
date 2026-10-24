@@ -44,7 +44,7 @@ public class VolumeOrchestratorService
         _logger = logger;
     }
 
-    public virtual async Task SetGroupVolumeAsync(string groupId, int masterVolume, bool? isMuted = null, bool fromDocker = false, bool syncStreamSource = true)
+    public virtual async Task SetGroupVolumeAsync(string groupId, int masterVolume, bool? isMuted = null, bool fromDocker = false, bool syncStreamSource = true, bool force = false)
     {
         var group = await _db.Groups.FindAsync(groupId);
         if (group == null) return;
@@ -87,7 +87,7 @@ public class VolumeOrchestratorService
                 {
                     sibling.MasterVolume = masterVolume;
                     await _hub.Clients.All.OnGroupVolumeChanged(sibling.Id, sibling.MasterVolume, sibling.IsMuted);
-                    await RecalculateAndPushGroupAsync(sibling.Id, force: !syncStreamSource);
+                    await RecalculateAndPushGroupAsync(sibling.Id, force: force);
                 }
             }
             await _db.SaveChangesAsync();
@@ -116,7 +116,7 @@ public class VolumeOrchestratorService
             }
         }
 
-        await RecalculateAndPushGroupAsync(group.Id, force: !syncStreamSource);
+        await RecalculateAndPushGroupAsync(group.Id, force: force);
     }
 
     public virtual async Task SetRoomMixVolumeAsync(string roomMac, int mixVolume)
@@ -147,6 +147,12 @@ public class VolumeOrchestratorService
             if (dbGroup != null)
             {
                 await RecalculateAndPushGroupAsync(dbGroup.Id);
+                return;
+            }
+
+            var broadcastService = _serviceProvider?.GetService<IBroadcastService>();
+            if (snapGroupId != null && broadcastService?.IsGroupActiveInBroadcast(null, snapGroupId) == true)
+            {
                 return;
             }
         }
@@ -209,11 +215,12 @@ public class VolumeOrchestratorService
 
         var orchestratedSnapIds = groups.Select(g => g.SnapcastGroupId).ToHashSet();
         var roomsFromDb = await _db.Rooms.ToListAsync();
+        var broadcastService = _serviceProvider?.GetService<IBroadcastService>();
 
         foreach (var sg in snapGroups)
         {
             var sid = sg?["id"]?.GetValue<string>();
-            if (sid != null && orchestratedSnapIds.Contains(sid)) continue;
+            if (sid != null && (orchestratedSnapIds.Contains(sid) || broadcastService?.IsGroupActiveInBroadcast(null, sid) == true)) continue;
 
             var clients = sg?["clients"]?.AsArray();
             if (clients == null) continue;

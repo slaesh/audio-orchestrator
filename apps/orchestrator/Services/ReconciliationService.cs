@@ -75,6 +75,12 @@ public class ReconciliationService : IReconciliationService, IDisposable
             var status = await _snapcast.GetStatusAsync();
             
             await ReconcileSnapcastAsync(groups, radios, spotifySources, status);
+
+            var volumeOrchestrator = scope.ServiceProvider.GetService<VolumeOrchestratorService>();
+            if (volumeOrchestrator != null)
+            {
+                await volumeOrchestrator.RecalculateAllAsync();
+            }
         }
         finally
         {
