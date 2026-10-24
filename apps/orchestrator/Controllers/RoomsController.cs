@@ -145,7 +145,7 @@ public class RoomsController : ControllerBase
             }
         }
 
-        return Ok();
+        return StatusCode(503, "Could not acquire stable group locks due to concurrent membership changes");
     }
 
     [HttpPut("{id}/mix")]

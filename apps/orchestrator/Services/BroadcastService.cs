@@ -967,6 +967,11 @@ public class BroadcastService : IHostedService, IBroadcastService
                         throw;
                     }
                 }
+
+                if (_currentSnapshots == null)
+                {
+                    throw new InvalidOperationException("Could not acquire stable target group locks due to concurrent membership changes.");
+                }
             }
             finally
             {

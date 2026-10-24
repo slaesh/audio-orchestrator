@@ -247,6 +247,8 @@ public class VolumeOrchestratorService
                 }
             }
         }
+
+        throw new InvalidOperationException($"Could not update mix volume for room {roomMac} due to concurrent membership changes.");
     }
 
     public static double CalculateAudioGain(double normalizedValue, VolumeProfile profile)
@@ -310,13 +312,23 @@ public class VolumeOrchestratorService
 
             try
             {
+                var freshStatus = await _snapcast.GetStatusAsync();
+                var freshSnapGroups = freshStatus?["server"]?["groups"]?.AsArray();
+                var freshGroup = freshSnapGroups?.FirstOrDefault(g => g?["id"]?.GetValue<string>() == sid);
+                if (freshGroup == null) continue;
+
+                var freshOrchestrated = await _db.Groups.Where(g => !string.IsNullOrEmpty(g.SnapcastGroupId))
+                    .Select(g => g.SnapcastGroupId!)
+                    .ToListAsync();
+                if (freshOrchestrated.Contains(sid)) continue;
+
                 if (broadcastService?.IsGroupActiveInBroadcast(null, sid) == true)
                 {
                     if (markDeferred) broadcastService.MarkDeferredVolumeUpdate(null, sid);
                     continue;
                 }
 
-                var clients = sg?["clients"]?.AsArray();
+                var clients = freshGroup?["clients"]?.AsArray();
                 if (clients == null) continue;
 
                 foreach (var client in clients)
@@ -388,6 +400,8 @@ public class VolumeOrchestratorService
                 }
             }
         }
+
+        throw new InvalidOperationException($"Could not recalculate group {groupId} due to concurrent Snapcast mapping changes.");
     }
 
     public virtual async Task ReplayGroupVolumeUnderGateAsync(GroupEntity group)

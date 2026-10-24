@@ -306,7 +306,7 @@ public class GroupsController : ControllerBase
                 }
             }
 
-            // 2. POST-PRUNING RESOLUTION: Re-resolve destination from post-pruning status
+            // 2. POST-PRUNING RESOLUTION: Re-resolve destination and sources from post-pruning status
             try {
                 status = await _snapcast.GetStatusAsync();
                 if (status != null) snapGroups = status["server"]?["groups"]?.AsArray();
@@ -316,49 +316,90 @@ public class GroupsController : ControllerBase
 
             if (snapGroups == null) return StatusCode(500, "Snapserver unreachable");
 
-            var postPruneDestId = ResolveSnapcastGroupId(group, snapGroups, clientIds[0], otherOrchestratedSnapIds);
-            if (string.IsNullOrEmpty(postPruneDestId))
-                return BadRequest("Could not resolve a Snapcast group for this assignment");
-
-            if (!involvedGateIds.Contains(postPruneDestId))
+            bool postPruneResolved = false;
+            for (int postPruneAttempt = 0; postPruneAttempt < 5; postPruneAttempt++)
             {
-                foreach (var g in acquiredGates) g.Release();
-                acquiredGates.Clear();
+                var postPruneDestId = ResolveSnapcastGroupId(group, snapGroups, clientIds[0], otherOrchestratedSnapIds);
+                if (string.IsNullOrEmpty(postPruneDestId))
+                    return BadRequest("Could not resolve a Snapcast group for this assignment");
 
-                involvedGateIds.Add(postPruneDestId);
-                var reacquireSorted = involvedGateIds.OrderBy(gid => gid, StringComparer.Ordinal).ToList();
-                if (broadcastService != null)
+                var currentSourceSnapGroupIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var cId in clientIds)
                 {
-                    foreach (var gid in reacquireSorted)
+                    var sourceSnapGroup = snapGroups.FirstOrDefault(sg => 
+                        sg?["clients"]?.AsArray()?.Any(c => c?["id"]?.GetValue<string>() == cId) == true);
+                    var sGroupId = sourceSnapGroup?["id"]?.GetValue<string>();
+                    if (!string.IsNullOrEmpty(sGroupId))
                     {
-                        var g = broadcastService.GetGroupGate(gid);
-                        if (g != null)
-                        {
-                            await g.WaitAsync();
-                            acquiredGates.Add(g);
-                        }
+                        currentSourceSnapGroupIds.Add(sGroupId);
                     }
                 }
 
-                status = await _snapcast.GetStatusAsync();
-                snapGroups = status?["server"]?["groups"]?.AsArray();
-                if (snapGroups == null) return StatusCode(500, "Snapserver unreachable");
+                var requiredGateIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { group.Id, postPruneDestId };
+                foreach (var s in currentSourceSnapGroupIds) requiredGateIds.Add(s);
+                if (!string.IsNullOrEmpty(group.SnapcastGroupId)) requiredGateIds.Add(group.SnapcastGroupId);
 
-                var recheckedId = ResolveSnapcastGroupId(group, snapGroups, clientIds[0], otherOrchestratedSnapIds);
-                if (string.IsNullOrEmpty(recheckedId) || !involvedGateIds.Contains(recheckedId))
+                var currentSourceDbGroups = await _db.Groups.Where(g => g.Id != group.Id && g.SnapcastGroupId != null && currentSourceSnapGroupIds.Contains(g.SnapcastGroupId)).ToListAsync();
+                foreach (var dbg in currentSourceDbGroups) requiredGateIds.Add(dbg.Id);
+
+                if (!requiredGateIds.IsSubsetOf(involvedGateIds))
                 {
-                    return BadRequest("Could not resolve a stable Snapcast group for this assignment");
+                    foreach (var g in acquiredGates) g.Release();
+                    acquiredGates.Clear();
+                    involvedGateIds = new HashSet<string>(requiredGateIds, StringComparer.OrdinalIgnoreCase);
+
+                    var reacquireSorted = involvedGateIds.OrderBy(gid => gid, StringComparer.Ordinal).ToList();
+                    if (broadcastService != null)
+                    {
+                        foreach (var gid in reacquireSorted)
+                        {
+                            var g = broadcastService.GetGroupGate(gid);
+                            if (g != null)
+                            {
+                                await g.WaitAsync();
+                                acquiredGates.Add(g);
+                            }
+                        }
+                    }
+
+                    status = await _snapcast.GetStatusAsync();
+                    snapGroups = status?["server"]?["groups"]?.AsArray();
+                    if (snapGroups == null) return StatusCode(500, "Snapserver unreachable");
+                    continue;
                 }
-                postPruneDestId = recheckedId;
+
+                if (broadcastService?.IsGroupActiveInBroadcast(group.Id, postPruneDestId) == true ||
+                    broadcastService?.IsGroupActiveInBroadcast(null, postPruneDestId) == true ||
+                    broadcastService?.IsGroupActiveInBroadcast(group.Id, group.SnapcastGroupId) == true)
+                {
+                    return Conflict("Membership changes cannot be performed while the resolved destination group is actively playing a broadcast.");
+                }
+
+                bool sourceBroadcasting = false;
+                foreach (var sgId in currentSourceSnapGroupIds)
+                {
+                    var matchingDb = currentSourceDbGroups.FirstOrDefault(g => g.SnapcastGroupId == sgId);
+                    if (broadcastService?.IsGroupActiveInBroadcast(matchingDb?.Id, sgId) == true ||
+                        broadcastService?.IsGroupActiveInBroadcast(null, sgId) == true)
+                    {
+                        sourceBroadcasting = true;
+                        break;
+                    }
+                }
+                if (sourceBroadcasting)
+                {
+                    return Conflict("Membership changes cannot be performed while a source group is actively playing a broadcast.");
+                }
+
+                snapcastGroupId = postPruneDestId;
+                postPruneResolved = true;
+                break;
             }
 
-            if (broadcastService?.IsGroupActiveInBroadcast(group.Id, postPruneDestId) == true ||
-                broadcastService?.IsGroupActiveInBroadcast(null, postPruneDestId) == true)
+            if (!postPruneResolved || string.IsNullOrEmpty(snapcastGroupId))
             {
-                return Conflict("Membership changes cannot be performed while the resolved destination group is actively playing a broadcast.");
+                return StatusCode(503, "Could not acquire stable group locks post-pruning due to concurrent membership changes");
             }
-
-            snapcastGroupId = postPruneDestId;
 
             // 3. Persist the resolved mapping if it changed
             if (group.SnapcastGroupId != snapcastGroupId)
