@@ -4,6 +4,7 @@ using AudioOrchestrator.Contracts;
 using AudioOrchestrator.Data;
 using AudioOrchestrator.Services;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace AudioOrchestrator.Controllers;
 
@@ -62,9 +63,15 @@ public class SystemController : ControllerBase
         if (uptime < TimeSpan.Zero) uptime = TimeSpan.Zero;
 
         bool dbConnected = false;
+        bool mqttEnabled = false;
         try
         {
             dbConnected = await _db.Database.CanConnectAsync();
+            if (dbConnected)
+            {
+                var settings = await _db.Settings.FirstOrDefaultAsync();
+                mqttEnabled = settings?.HomeAssistantEnabled == true;
+            }
         }
         catch (Exception ex)
         {
@@ -74,7 +81,7 @@ public class SystemController : ControllerBase
         bool snapConnected = _snapcast.IsConnected;
         bool mqttConnected = _mqttService.IsConnected;
 
-        var status = DetermineStatus(dbConnected, snapConnected, mqttConnected);
+        var status = DetermineStatus(dbConnected, snapConnected, mqttEnabled, mqttConnected);
 
         return new SystemInfoDto(
             Status: status,
@@ -89,11 +96,16 @@ public class SystemController : ControllerBase
         );
     }
 
-    private static SystemStatus DetermineStatus(bool dbConnected, bool snapConnected, bool mqttConnected)
+    private static SystemStatus DetermineStatus(bool dbConnected, bool snapConnected, bool mqttEnabled, bool mqttConnected)
     {
         if (!dbConnected || !snapConnected)
         {
             return SystemStatus.Unhealthy;
+        }
+
+        if (mqttEnabled && !mqttConnected)
+        {
+            return SystemStatus.Degraded;
         }
 
         return SystemStatus.Healthy;

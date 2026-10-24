@@ -87,4 +87,78 @@ public class SystemControllerTests
         Assert.Equal(SystemStatus.Unhealthy, info.Status);
         Assert.False(info.SnapserverConnected);
     }
+
+    [Fact]
+    public async Task GetHealth_ShouldReturn200WithDegradedStatus_WhenMqttEnabledButDisconnected()
+    {
+        // Arrange
+        await using var db = new OrchestratorDbContext(_dbOptions);
+        db.Settings.Add(new Data.Entities.OrchestratorSettingsEntity
+        {
+            HomeAssistantEnabled = true
+        });
+        await db.SaveChangesAsync();
+
+        var mockEnv = new Mock<IWebHostEnvironment>();
+        mockEnv.Setup(e => e.EnvironmentName).Returns("Production");
+
+        var mockSnapcast = new Mock<ISnapcastService>();
+        mockSnapcast.Setup(s => s.IsConnected).Returns(true);
+
+        var mockMqtt = new Mock<IHomeAssistantMqttService>();
+        mockMqtt.Setup(m => m.IsConnected).Returns(false); // Enabled in settings but broker disconnected
+
+        var mockLogger = new Mock<ILogger<SystemController>>();
+
+        var controller = new SystemController(mockEnv.Object, mockSnapcast.Object, db, mockMqtt.Object, mockLogger.Object);
+
+        // Act
+        var result = await controller.GetHealth();
+
+        // Assert
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        var info = Assert.IsType<SystemInfoDto>(okResult.Value);
+
+        Assert.Equal(SystemStatus.Degraded, info.Status);
+        Assert.True(info.SnapserverConnected);
+        Assert.True(info.DatabaseConnected);
+        Assert.False(info.MqttConnected);
+    }
+
+    [Fact]
+    public async Task GetHealth_ShouldReturn200WithHealthyStatus_WhenMqttDisabledAndDisconnected()
+    {
+        // Arrange
+        await using var db = new OrchestratorDbContext(_dbOptions);
+        db.Settings.Add(new Data.Entities.OrchestratorSettingsEntity
+        {
+            HomeAssistantEnabled = false
+        });
+        await db.SaveChangesAsync();
+
+        var mockEnv = new Mock<IWebHostEnvironment>();
+        mockEnv.Setup(e => e.EnvironmentName).Returns("Production");
+
+        var mockSnapcast = new Mock<ISnapcastService>();
+        mockSnapcast.Setup(s => s.IsConnected).Returns(true);
+
+        var mockMqtt = new Mock<IHomeAssistantMqttService>();
+        mockMqtt.Setup(m => m.IsConnected).Returns(false); // Disabled in settings, so disconnected is expected
+
+        var mockLogger = new Mock<ILogger<SystemController>>();
+
+        var controller = new SystemController(mockEnv.Object, mockSnapcast.Object, db, mockMqtt.Object, mockLogger.Object);
+
+        // Act
+        var result = await controller.GetHealth();
+
+        // Assert
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        var info = Assert.IsType<SystemInfoDto>(okResult.Value);
+
+        Assert.Equal(SystemStatus.Healthy, info.Status);
+        Assert.True(info.SnapserverConnected);
+        Assert.True(info.DatabaseConnected);
+        Assert.False(info.MqttConnected);
+    }
 }
