@@ -148,6 +148,9 @@ public class BroadcastService : IHostedService, IBroadcastService
     private string? _currentJobId;
     private readonly List<string> _activeTargetGroupIds = new();
     private readonly List<string> _activeTargetSnapcastGroupIds = new();
+    private readonly HashSet<string> _deferredVolumeGroupIds = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _deferredNativeSnapGroupIds = new(StringComparer.OrdinalIgnoreCase);
+    private List<GroupSnapshot>? _currentSnapshots;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _groupGates = new();
 
     public BroadcastService(
@@ -302,6 +305,21 @@ public class BroadcastService : IHostedService, IBroadcastService
             if (orchestratorGroupId != null && _activeTargetGroupIds.Contains(orchestratorGroupId)) return true;
             if (snapcastGroupId != null && _activeTargetSnapcastGroupIds.Contains(snapcastGroupId)) return true;
             return false;
+        }
+    }
+
+    public void MarkDeferredVolumeUpdate(string? orchestratorGroupId, string? snapcastGroupId = null)
+    {
+        lock (_activeTargetGroupIds)
+        {
+            if (!string.IsNullOrEmpty(orchestratorGroupId))
+            {
+                _deferredVolumeGroupIds.Add(orchestratorGroupId);
+            }
+            if (!string.IsNullOrEmpty(snapcastGroupId))
+            {
+                _deferredNativeSnapGroupIds.Add(snapcastGroupId);
+            }
         }
     }
 
@@ -604,45 +622,110 @@ public class BroadcastService : IHostedService, IBroadcastService
                 try
                 {
                     List<string> targetGroupIds;
+                    List<string> targetSnapcastGroupIds;
+                    List<string> deferredGroupIds;
+                    List<string> deferredNativeIds;
+                    List<GroupSnapshot>? snapshots;
                     lock (_activeTargetGroupIds)
                     {
-                        targetGroupIds = _activeTargetGroupIds.ToList();
+                        targetGroupIds = _activeTargetGroupIds.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                        targetSnapcastGroupIds = _activeTargetSnapcastGroupIds.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                        deferredGroupIds = _deferredVolumeGroupIds.ToList();
+                        deferredNativeIds = _deferredNativeSnapGroupIds.ToList();
+                        snapshots = _currentSnapshots;
                     }
 
-                    foreach (var gid in targetGroupIds)
+                    var allGateIds = new HashSet<string>(targetGroupIds, StringComparer.OrdinalIgnoreCase);
+                    foreach (var sid in targetSnapcastGroupIds)
+                    {
+                        allGateIds.Add(sid);
+                    }
+
+                    var sortedGateIds = allGateIds.OrderBy(x => x, StringComparer.Ordinal).ToList();
+                    foreach (var gid in sortedGateIds)
                     {
                         var gate = GetGroupGate(gid);
                         await gate.WaitAsync();
                         gates.Add(gate);
                     }
 
-                    // Replay any deferred stream selections saved to SQLite during restoration
-                    if (targetGroupIds.Count > 0)
+                    // Replay any deferred stream selections and volume/mute edits saved to SQLite during restoration
+                    try
                     {
-                        try
+                        using var scope = _serviceProvider.CreateScope();
+                        var db = scope.ServiceProvider.GetRequiredService<OrchestratorDbContext>();
+                        var volumeOrchestrator = scope.ServiceProvider.GetRequiredService<VolumeOrchestratorService>();
+
+                        var dbGroups = targetGroupIds.Count > 0 
+                            ? await db.Groups.Where(g => targetGroupIds.Contains(g.Id)).ToListAsync()
+                            : new List<GroupEntity>();
+                        var dbRooms = await db.Rooms.ToListAsync();
+
+                        foreach (var g in dbGroups)
                         {
-                            using var scope = _serviceProvider.CreateScope();
-                            var db = scope.ServiceProvider.GetRequiredService<OrchestratorDbContext>();
-                            var groups = await db.Groups.Where(g => targetGroupIds.Contains(g.Id)).ToListAsync();
-                            foreach (var g in groups)
+                            if (!string.IsNullOrEmpty(g.SnapcastGroupId) && !string.IsNullOrEmpty(g.CurrentStreamId))
                             {
-                                if (!string.IsNullOrEmpty(g.SnapcastGroupId) && !string.IsNullOrEmpty(g.CurrentStreamId))
+                                try
                                 {
-                                    try
-                                    {
-                                        await _snapcast.SetGroupStreamAsync(g.SnapcastGroupId, g.CurrentStreamId);
-                                    }
-                                    catch (Exception ex)
-                                    {
-                                        _logger.LogWarning(ex, "Failed applying deferred stream {StreamId} to group {GroupId}", g.CurrentStreamId, g.Id);
-                                    }
+                                    await _snapcast.SetGroupStreamAsync(g.SnapcastGroupId, g.CurrentStreamId);
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogWarning(ex, "Failed applying deferred stream {StreamId} to group {GroupId}", g.CurrentStreamId, g.Id);
+                                }
+                            }
+
+                            var snap = snapshots?.FirstOrDefault(s => s.GroupId == g.Id);
+                            bool groupEdited = snap != null && (g.MasterVolume != snap.InitialDbVolume || g.IsMuted != snap.InitialDbIsMuted);
+                            bool roomEdited = snap != null && snap.SelectedClients.Concat(snap.UnselectedClients).Any(c =>
+                            {
+                                var r = dbRooms.FirstOrDefault(room => room.MacAddress == c.ClientId);
+                                if (r == null) return false;
+                                return (c.InitialDbMixVolume.HasValue && r.MixVolume != c.InitialDbMixVolume.Value)
+                                    || (c.InitialDbIsMuted.HasValue && r.IsMuted != c.InitialDbIsMuted.Value);
+                            });
+
+                            if (groupEdited || roomEdited)
+                            {
+                                try
+                                {
+                                    await volumeOrchestrator.ReplayGroupVolumeUnderGateAsync(g);
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogWarning(ex, "Failed replaying deferred volume/mute for group {GroupId}", g.Id);
                                 }
                             }
                         }
-                        catch (Exception ex)
+
+                        // Replay native Snapcast groups (unassigned rooms) that had deferred edits
+                        var nativeSnapshots = snapshots?.Where(s => s.IsNative).ToList() ?? new List<GroupSnapshot>();
+                        foreach (var s in nativeSnapshots)
                         {
-                            _logger.LogWarning(ex, "Failed querying deferred stream changes on release");
+                            bool nativeRoomEdited = s.NativeClients.Any(c =>
+                            {
+                                var r = dbRooms.FirstOrDefault(room => room.MacAddress == c.ClientId);
+                                if (r == null) return false;
+                                return (c.InitialDbMixVolume.HasValue && r.MixVolume != c.InitialDbMixVolume.Value)
+                                    || (c.InitialDbIsMuted.HasValue && r.IsMuted != c.InitialDbIsMuted.Value);
+                            });
+
+                            if (nativeRoomEdited)
+                            {
+                                try
+                                {
+                                    await volumeOrchestrator.ReplayNativeSnapcastGroupVolumeUnderGateAsync(s.SnapcastGroupId);
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogWarning(ex, "Failed replaying deferred volume/mute for native Snapcast group {Sid}", s.SnapcastGroupId);
+                                }
+                            }
                         }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed querying deferred stream or volume changes on release");
                     }
 
                     lock (_activeTargetGroupIds)
@@ -650,6 +733,9 @@ public class BroadcastService : IHostedService, IBroadcastService
                         _currentJobId = null;
                         _activeTargetGroupIds.Clear();
                         _activeTargetSnapcastGroupIds.Clear();
+                        _deferredVolumeGroupIds.Clear();
+                        _deferredNativeSnapGroupIds.Clear();
+                        _currentSnapshots = null;
                     }
                 }
                 finally
@@ -801,6 +887,7 @@ public class BroadcastService : IHostedService, IBroadcastService
                 {
                     _activeTargetGroupIds.AddRange(snapshots.Where(s => !s.IsNative).Select(s => s.GroupId));
                     _activeTargetSnapcastGroupIds.AddRange(snapshots.Select(s => s.SnapcastGroupId));
+                    _currentSnapshots = snapshots;
                 }
             }
             finally
@@ -1567,8 +1654,8 @@ public class BroadcastService : IHostedService, IBroadcastService
                 var currentGroup = await db.Groups.FindAsync(s.GroupId);
                 var targetStreamId = currentGroup?.CurrentStreamId ?? s.OriginalStreamId;
 
-                int targetVolume = s.OriginalVolume;
-                bool targetMuted = s.OriginalIsMuted;
+                int targetVolume = currentGroup?.MasterVolume ?? s.OriginalVolume;
+                bool targetMuted = currentGroup?.IsMuted ?? s.OriginalIsMuted;
 
                 if (currentGroup != null)
                 {
@@ -1612,9 +1699,12 @@ public class BroadcastService : IHostedService, IBroadcastService
                 }
 
                 resolvedGroupStates[s.GroupId] = (targetVolume, targetMuted);
-                // force: false ensures DB persistence and SignalR notification occur without triggering
-                // an uncoordinated Snapcast bulk recalculation while broadcast ownership is active.
-                await volumeOrchestrator.SetGroupVolumeAsync(s.GroupId, targetVolume, isMuted: targetMuted, syncStreamSource: false, force: false);
+                if (currentGroup != null && (targetVolume != currentGroup.MasterVolume || targetMuted != currentGroup.IsMuted))
+                {
+                    // force: false ensures DB persistence and SignalR notification occur without triggering
+                    // an uncoordinated Snapcast bulk recalculation while broadcast ownership is active.
+                    await volumeOrchestrator.SetGroupVolumeAsync(s.GroupId, targetVolume, isMuted: targetMuted, syncStreamSource: false, force: false);
+                }
             }
             catch (Exception ex)
             {

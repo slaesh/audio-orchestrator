@@ -22,5 +22,6 @@ public interface IBroadcastService
     Task<bool> CancelJobAsync(string jobId, CancellationToken ct = default);
     BroadcastStatusDto GetStatus();
     bool IsGroupActiveInBroadcast(string? orchestratorGroupId, string? snapcastGroupId = null);
+    void MarkDeferredVolumeUpdate(string? orchestratorGroupId, string? snapcastGroupId = null);
     SemaphoreSlim GetGroupGate(string groupId);
 }

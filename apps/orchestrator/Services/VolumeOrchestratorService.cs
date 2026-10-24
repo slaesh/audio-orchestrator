@@ -188,6 +188,7 @@ public class VolumeOrchestratorService
 
             if (snapGroupId != null && broadcastService?.IsGroupActiveInBroadcast(null, snapGroupId) == true)
             {
+                broadcastService.MarkDeferredVolumeUpdate(null, snapGroupId);
                 return;
             }
 
@@ -314,12 +315,48 @@ public class VolumeOrchestratorService
         }
     }
 
+    public virtual async Task ReplayGroupVolumeUnderGateAsync(GroupEntity group)
+    {
+        var broadcastService = _serviceProvider?.GetService<IBroadcastService>();
+        await RecalculateAndPushGroupCoreAsync(group, force: true, broadcastService);
+    }
+
+    public virtual async Task ReplayNativeSnapcastGroupVolumeUnderGateAsync(string snapcastGroupId)
+    {
+        var status = await _snapcast.GetStatusAsync();
+        var snapGroups = status?["server"]?["groups"]?.AsArray();
+        var snapGroup = snapGroups?.FirstOrDefault(g => g?["id"]?.GetValue<string>() == snapcastGroupId);
+        if (snapGroup == null) return;
+
+        var clients = snapGroup["clients"]?.AsArray();
+        if (clients == null) return;
+
+        var settings = await _db.Settings.FirstOrDefaultAsync();
+        var profile = settings?.VolumeProfile ?? VolumeProfile.Cubic;
+        var roomsFromDb = await _db.Rooms.ToListAsync();
+
+        foreach (var client in clients)
+        {
+            var mac = client?["id"]?.GetValue<string>();
+            if (string.IsNullOrEmpty(mac)) continue;
+
+            var roomEntity = roomsFromDb.FirstOrDefault(r => r.MacAddress == mac);
+            var mixVolume = roomEntity?.MixVolume ?? 100;
+            var isRoomMuted = roomEntity?.IsMuted ?? false;
+
+            int snapcastVolume = CalculateSnapcastVolume(mixVolume, 100, profile);
+            await _snapcast.SetClientVolumeAsync(mac, snapcastVolume, isRoomMuted);
+            await _hub.Clients.All.OnRoomVolumeChanged(mac, snapcastVolume, isRoomMuted);
+        }
+    }
+
     private async Task RecalculateAndPushGroupCoreAsync(GroupEntity group, bool force, IBroadcastService? broadcastService)
     {
         if (string.IsNullOrEmpty(group.SnapcastGroupId)) return;
 
         if (!force && broadcastService?.IsGroupActiveInBroadcast(group.Id, group.SnapcastGroupId) == true)
         {
+            broadcastService.MarkDeferredVolumeUpdate(group.Id, group.SnapcastGroupId);
             return;
         }
 

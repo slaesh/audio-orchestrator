@@ -103,6 +103,7 @@ public class RoomsController : ControllerBase
 
                 if (snapGroupId != null && broadcastService?.IsGroupActiveInBroadcast(null, snapGroupId) == true)
                 {
+                    broadcastService?.MarkDeferredVolumeUpdate(null, snapGroupId);
                     return Ok();
                 }
 

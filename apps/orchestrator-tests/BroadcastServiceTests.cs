@@ -902,4 +902,95 @@ public class BroadcastServiceTests
 
         Assert.Same(gate1, gate2);
     }
+
+    [Fact]
+    public async Task PlayUrlAsync_ShouldReplayVolumeAndMuteEdits_MadeDuringRestorationFadeUp()
+    {
+        var (sp, db, mockSnapcast, mockLibrespot, mockRunner, service) = CreateTestContext();
+
+        var group = new GroupEntity { Id = "g1", Name = "Wohnzimmer", SnapcastGroupId = "sg1", CurrentStreamId = "radio_1", MasterVolume = 50, IsMuted = false };
+        var room = new RoomEntity { MacAddress = "c1", FriendlyName = "Speaker 1", MixVolume = 100, IsMuted = false };
+        db.Groups.Add(group);
+        db.Rooms.Add(room);
+        db.Settings.Add(new OrchestratorSettingsEntity { VolumeProfile = VolumeProfile.Linear });
+        await db.SaveChangesAsync();
+
+        mockSnapcast.Setup(s => s.GetStatusAsync())
+            .ReturnsAsync(CreateSnapcastStatus(("sg1", "radio_1", new[] { "c1" })));
+
+        var setVolumes = new List<(string ClientId, int Volume, bool Muted)>();
+        mockSnapcast.Setup(s => s.SetClientVolumeAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<bool>()))
+            .Callback<string, int, bool>((cid, vol, muted) => setVolumes.Add((cid, vol, muted)))
+            .Returns(Task.CompletedTask);
+
+        // When runner streams audio, simulate user editing group volume to 85% and mute=true via VolumeOrchestratorService
+        mockRunner.Setup(r => r.StreamToFifoAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<Stream?>(), It.IsAny<CancellationToken>()))
+            .Returns<string, string, Stream?, CancellationToken>(async (_, _, _, ct) =>
+            {
+                await Task.Delay(50, ct);
+                using var scope = sp.CreateScope();
+                var volumeService = scope.ServiceProvider.GetRequiredService<VolumeOrchestratorService>();
+                await volumeService.SetGroupVolumeAsync("g1", 85, isMuted: true);
+                return new ProcessRunResult(0, "");
+            });
+
+        var request = new BroadcastPlayRequest(
+            AudioUrl: "http://example.com/chime.mp3",
+            GroupIds: new List<string> { "g1" },
+            FadeDurationMs: 100
+        );
+
+        var result = await service.PlayUrlAsync(request, CancellationToken.None);
+        Assert.True(result.Success);
+
+        // The final volume push for c1 must reflect the edited 85% volume and muted = true
+        var lastCall = setVolumes.LastOrDefault(c => c.ClientId == "c1");
+        Assert.Equal(85, lastCall.Volume);
+        Assert.True(lastCall.Muted);
+    }
+
+    [Fact]
+    public async Task PlayUrlAsync_ShouldReplayNativeRoomVolumeAndMuteEdits_MadeDuringRestoration()
+    {
+        var (sp, db, mockSnapcast, mockLibrespot, mockRunner, service) = CreateTestContext();
+
+        var room = new RoomEntity { MacAddress = "c_unassigned", FriendlyName = "Kitchen Standalone", MixVolume = 40, IsMuted = false };
+        db.Rooms.Add(room);
+        db.Settings.Add(new OrchestratorSettingsEntity { VolumeProfile = VolumeProfile.Linear });
+        await db.SaveChangesAsync();
+
+        mockSnapcast.Setup(s => s.GetStatusAsync())
+            .ReturnsAsync(CreateSnapcastStatus(("native_group_1", "default", new[] { "c_unassigned" })));
+
+        var setVolumes = new List<(string ClientId, int Volume, bool Muted)>();
+        mockSnapcast.Setup(s => s.SetClientVolumeAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<bool>()))
+            .Callback<string, int, bool>((cid, vol, muted) => setVolumes.Add((cid, vol, muted)))
+            .Returns(Task.CompletedTask);
+
+        mockRunner.Setup(r => r.StreamToFifoAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<Stream?>(), It.IsAny<CancellationToken>()))
+            .Returns<string, string, Stream?, CancellationToken>(async (_, _, _, ct) =>
+            {
+                await Task.Delay(50, ct);
+                using var scope = sp.CreateScope();
+                var volumeService = scope.ServiceProvider.GetRequiredService<VolumeOrchestratorService>();
+                await volumeService.SetRoomMixVolumeAsync("c_unassigned", 75);
+                var testDb = scope.ServiceProvider.GetRequiredService<OrchestratorDbContext>();
+                var r = await testDb.Rooms.FindAsync("c_unassigned");
+                if (r != null) { r.IsMuted = true; await testDb.SaveChangesAsync(); }
+                return new ProcessRunResult(0, "");
+            });
+
+        var request = new BroadcastPlayRequest(
+            AudioUrl: "http://example.com/doorbell.wav",
+            RoomIds: new List<string> { "c_unassigned" },
+            FadeDurationMs: 50
+        );
+
+        var result = await service.PlayUrlAsync(request, CancellationToken.None);
+        Assert.True(result.Success);
+
+        var lastCall = setVolumes.LastOrDefault(c => c.ClientId == "c_unassigned");
+        Assert.Equal(75, lastCall.Volume);
+        Assert.True(lastCall.Muted);
+    }
 }
