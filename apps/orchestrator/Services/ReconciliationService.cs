@@ -223,11 +223,17 @@ public class ReconciliationService : IReconciliationService, IDisposable
 
             if (match != null) {
                 claimedSnapIds.Add(group.SnapcastGroupId!);
+
+                bool isBroadcasting = broadcastService?.IsGroupActiveInBroadcast(group.Id, group.SnapcastGroupId) == true;
+                if (isBroadcasting)
+                {
+                    continue;
+                }
+
                 if (match?["name"]?.GetValue<string>() != group.Name) {
                     await _snapcast.SetGroupNameAsync(group.SnapcastGroupId!, group.Name);
                 }
-                bool isBroadcasting = broadcastService?.IsGroupActiveInBroadcast(group.Id, group.SnapcastGroupId) == true;
-                if (!isBroadcasting && !string.IsNullOrEmpty(group.CurrentStreamId) && match?["stream_id"]?.GetValue<string>() != group.CurrentStreamId) {
+                if (!string.IsNullOrEmpty(group.CurrentStreamId) && match?["stream_id"]?.GetValue<string>() != group.CurrentStreamId) {
                     try { await _snapcast.SetGroupStreamAsync(group.SnapcastGroupId!, group.CurrentStreamId); } catch {}
                 }
             } else {
@@ -239,6 +245,8 @@ public class ReconciliationService : IReconciliationService, IDisposable
         // Second pass: Match orphaned DB groups by Name or Stream (Self-Healing)
         foreach (var group in groups.Where(g => string.IsNullOrEmpty(g.SnapcastGroupId) || !claimedSnapIds.Contains(g.SnapcastGroupId!)))
         {
+            if (broadcastService?.IsGroupActiveInBroadcast(group.Id, group.SnapcastGroupId) == true) continue;
+
             var matchingSnapGroup = snapGroups.FirstOrDefault(sg => {
                 var sid = sg?["id"]?.GetValue<string>();
                 if (sid == null || claimedSnapIds.Contains(sid)) return false;

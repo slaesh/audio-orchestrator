@@ -852,4 +852,36 @@ public class BroadcastServiceTests
         var ex = await Assert.ThrowsAsync<ArgumentException>(() => service.EnqueuePlayUrlAsync(req));
         Assert.Contains("absolute HTTP- oder HTTPS-URL", ex.Message);
     }
+
+    [Theory]
+    [InlineData("file:///tmp/chime.wav")]
+    [InlineData("/var/audio.mp3")]
+    [InlineData("ftp://example.com/sound.wav")]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task BroadcastController_Play_ShouldReturnBadRequest_WhenUrlIsInvalid(string invalidUrl)
+    {
+        var mockService = new Mock<IBroadcastService>();
+        var controller = new BroadcastController(mockService.Object, Mock.Of<ILogger<BroadcastController>>());
+        var req = new BroadcastPlayRequest(AudioUrl: invalidUrl);
+
+        var result = await controller.Play(req);
+
+        Assert.IsType<BadRequestObjectResult>(result.Result);
+    }
+
+    [Fact]
+    public async Task BroadcastController_Play_ShouldReturnBadRequest_WhenServiceThrowsArgumentException()
+    {
+        var mockService = new Mock<IBroadcastService>();
+        mockService.Setup(s => s.EnqueuePlayUrlAsync(It.IsAny<BroadcastPlayRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ArgumentException("Ungültige URL"));
+        var controller = new BroadcastController(mockService.Object, Mock.Of<ILogger<BroadcastController>>());
+        var req = new BroadcastPlayRequest(AudioUrl: "https://example.com/chime.mp3");
+
+        var result = await controller.Play(req);
+
+        var badReq = Assert.IsType<BadRequestObjectResult>(result.Result);
+        Assert.Equal("Ungültige URL", badReq.Value);
+    }
 }

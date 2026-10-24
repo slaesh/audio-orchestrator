@@ -900,6 +900,15 @@ public class BroadcastService : IHostedService, IBroadcastService
             : new BroadcastPlayResult(false, errorMessage ?? "Durchsage fehlgeschlagen.", duration, item.JobId);
     }
 
+    private sealed class ClientSnapshot
+    {
+        public string ClientId { get; init; } = string.Empty;
+        public int Volume { get; init; }
+        public bool Muted { get; init; }
+        public int? InitialDbMixVolume { get; init; }
+        public bool? InitialDbIsMuted { get; init; }
+    }
+
     private sealed class GroupSnapshot
     {
         public string GroupId { get; init; } = string.Empty;
@@ -907,13 +916,15 @@ public class BroadcastService : IHostedService, IBroadcastService
         public string OriginalStreamId { get; init; } = "default";
         public int OriginalVolume { get; init; } = 100;
         public bool OriginalIsMuted { get; init; }
+        public int InitialDbVolume { get; init; } = 100;
+        public bool InitialDbIsMuted { get; init; }
         public string? PausedSpotifySourceId { get; set; }
 
         /// <summary>True for native Snapcast groups without an orchestrator group (e.g. unassigned rooms).</summary>
         public bool IsNative { get; init; }
-        public List<(string ClientId, int Volume, bool Muted)> NativeClients { get; } = new();
-        public List<(string ClientId, int Volume, bool Muted)> SelectedClients { get; } = new();
-        public List<(string ClientId, int Volume, bool Muted)> UnselectedClients { get; } = new();
+        public List<ClientSnapshot> NativeClients { get; } = new();
+        public List<ClientSnapshot> SelectedClients { get; } = new();
+        public List<ClientSnapshot> UnselectedClients { get; } = new();
     }
 
     private async Task<List<GroupSnapshot>> ResolveTargetSnapshotsAsync(BroadcastPlayRequest request, OrchestratorDbContext db)
@@ -1017,8 +1028,8 @@ public class BroadcastService : IHostedService, IBroadcastService
             var clients = sgNode?["clients"]?.AsArray();
 
             bool isGroupExplicitlyTargeted = targetedGroupIds.Contains(group.Id);
-            var matchingClientsInGroup = new List<(string ClientId, int Volume, bool Muted)>();
-            var unselectedClientsInGroup = new List<(string ClientId, int Volume, bool Muted)>();
+            var matchingClientsInGroup = new List<ClientSnapshot>();
+            var unselectedClientsInGroup = new List<ClientSnapshot>();
 
             if (clients != null)
             {
@@ -1027,14 +1038,24 @@ public class BroadcastService : IHostedService, IBroadcastService
                     var cid = c?["id"]?.GetValue<string>() ?? string.Empty;
                     var cVol = c?["config"]?["volume"]?["percent"]?.GetValue<int>() ?? 100;
                     var cMuted = c?["config"]?["volume"]?["muted"]?.GetValue<bool>() ?? false;
+                    var roomEntity = allRooms.FirstOrDefault(r => string.Equals(r.MacAddress, cid, StringComparison.OrdinalIgnoreCase));
+
+                    var clientSnapshot = new ClientSnapshot
+                    {
+                        ClientId = cid,
+                        Volume = cVol,
+                        Muted = cMuted,
+                        InitialDbMixVolume = roomEntity?.MixVolume,
+                        InitialDbIsMuted = roomEntity?.IsMuted
+                    };
 
                     if (isGroupExplicitlyTargeted || targetedRoomMacs.Contains(cid))
                     {
-                        matchingClientsInGroup.Add((cid, cVol, cMuted));
+                        matchingClientsInGroup.Add(clientSnapshot);
                     }
                     else
                     {
-                        unselectedClientsInGroup.Add((cid, cVol, cMuted));
+                        unselectedClientsInGroup.Add(clientSnapshot);
                     }
                 }
             }
@@ -1047,7 +1068,9 @@ public class BroadcastService : IHostedService, IBroadcastService
                     SnapcastGroupId = snapGroupId,
                     OriginalStreamId = group.CurrentStreamId ?? "default",
                     OriginalVolume = group.MasterVolume,
-                    OriginalIsMuted = group.IsMuted
+                    OriginalIsMuted = group.IsMuted,
+                    InitialDbVolume = group.MasterVolume,
+                    InitialDbIsMuted = group.IsMuted
                 };
 
                 snapshot.SelectedClients.AddRange(matchingClientsInGroup);
@@ -1072,16 +1095,26 @@ public class BroadcastService : IHostedService, IBroadcastService
                 var sgClients = sg?["clients"]?.AsArray();
                 if (sgClients == null) continue;
 
-                var targeted = new List<(string ClientId, int Volume, bool Muted)>();
-                var others = new List<(string ClientId, int Volume, bool Muted)>();
+                var targeted = new List<ClientSnapshot>();
+                var others = new List<ClientSnapshot>();
                 foreach (var c in sgClients)
                 {
                     var cid = c?["id"]?.GetValue<string>() ?? string.Empty;
                     var cVol = c?["config"]?["volume"]?["percent"]?.GetValue<int>() ?? 100;
                     var cMuted = c?["config"]?["volume"]?["muted"]?.GetValue<bool>() ?? false;
+                    var roomEntity = allRooms.FirstOrDefault(r => string.Equals(r.MacAddress, cid, StringComparison.OrdinalIgnoreCase));
 
-                    if (targetedRoomMacs.Contains(cid)) targeted.Add((cid, cVol, cMuted));
-                    else others.Add((cid, cVol, cMuted));
+                    var clientSnapshot = new ClientSnapshot
+                    {
+                        ClientId = cid,
+                        Volume = cVol,
+                        Muted = cMuted,
+                        InitialDbMixVolume = roomEntity?.MixVolume,
+                        InitialDbIsMuted = roomEntity?.IsMuted
+                    };
+
+                    if (targetedRoomMacs.Contains(cid)) targeted.Add(clientSnapshot);
+                    else others.Add(clientSnapshot);
                 }
 
                 if (targeted.Count == 0) continue;
@@ -1198,32 +1231,68 @@ public class BroadcastService : IHostedService, IBroadcastService
         using var scope = _serviceProvider.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<OrchestratorDbContext>();
 
+        var successfullyRestoredSnapshots = new HashSet<string>();
+
         foreach (var s in snapshots)
         {
-            try
+            var targetStreamId = s.OriginalStreamId;
+            if (!s.IsNative)
             {
-                var targetStreamId = s.OriginalStreamId;
-                if (!s.IsNative)
+                var currentGroup = await db.Groups.FindAsync(s.GroupId);
+                if (currentGroup != null && !string.IsNullOrEmpty(currentGroup.CurrentStreamId))
                 {
-                    var currentGroup = await db.Groups.FindAsync(s.GroupId);
-                    if (currentGroup != null && !string.IsNullOrEmpty(currentGroup.CurrentStreamId))
+                    targetStreamId = currentGroup.CurrentStreamId;
+                }
+            }
+
+            bool streamRestored = false;
+            for (int retry = 0; retry < 3; retry++)
+            {
+                try
+                {
+                    await _snapcast.SetGroupStreamAsync(s.SnapcastGroupId, targetStreamId);
+                    streamRestored = true;
+                    successfullyRestoredSnapshots.Add(s.SnapcastGroupId);
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    if (retry == 2)
                     {
-                        targetStreamId = currentGroup.CurrentStreamId;
+                        _logger.LogWarning(ex, "Failed restoring stream on group {GroupId} after retries", s.SnapcastGroupId);
+                        restorationErrors.Add($"Group {s.SnapcastGroupId} stream restore: {ex.Message}");
+                    }
+                    else
+                    {
+                        await Task.Delay(100);
                     }
                 }
-                await _snapcast.SetGroupStreamAsync(s.SnapcastGroupId, targetStreamId);
             }
-            catch (Exception ex)
+
+            // If stream restoration failed, this group is still attached to the shared announcement stream.
+            // Mute all its clients immediately so it cannot hear subsequent announcements through the shared FIFO.
+            if (!streamRestored)
             {
-                _logger.LogWarning(ex, "Failed restoring stream on group {GroupId}", s.SnapcastGroupId);
-                restorationErrors.Add($"Group {s.SnapcastGroupId} stream restore: {ex.Message}");
+                foreach (var c in s.NativeClients.Concat(s.SelectedClients).Concat(s.UnselectedClients))
+                {
+                    try
+                    {
+                        await _snapcast.SetClientVolumeAsync(c.ClientId, c.Volume, muted: true);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed emergency muting client {ClientId} for group with failed stream restore", c.ClientId);
+                    }
+                }
             }
         }
+
+        var successfulSnapshots = snapshots.Where(s => successfullyRestoredSnapshots.Contains(s.SnapcastGroupId)).ToList();
 
         // 3. Resume Spotify at (near) zero volume, before fading back up
         if (resumePlayback)
         {
-            foreach (var s in snapshots)
+            foreach (var s in successfulSnapshots)
             {
                 if (string.IsNullOrEmpty(s.PausedSpotifySourceId)) continue;
 
@@ -1240,17 +1309,57 @@ public class BroadcastService : IHostedService, IBroadcastService
         }
 
         // 4. Fade back up
-        if (fadeMs > 0)
+        if (fadeMs > 0 && successfulSnapshots.Count > 0)
         {
-            await FadeGroupsVolumeAsync(snapshots, targetZero: false, fadeMs, CancellationToken.None);
+            await FadeGroupsVolumeAsync(successfulSnapshots, targetZero: false, fadeMs, CancellationToken.None);
         }
 
-        // 5. Final original group volume / mute state
-        foreach (var s in snapshots.Where(s => !s.IsNative))
+        // 5. Final original group volume / mute state (replaying Spotify volume reconciliation or respecting deferred DB edits)
+        var currentRooms = await db.Rooms.ToDictionaryAsync(r => r.MacAddress);
+        var settings = await db.Settings.FirstOrDefaultAsync();
+        var profile = settings?.VolumeProfile ?? VolumeProfile.Cubic;
+
+        foreach (var s in successfulSnapshots.Where(s => !s.IsNative))
         {
             try
             {
-                await volumeOrchestrator.SetGroupVolumeAsync(s.GroupId, s.OriginalVolume, isMuted: s.OriginalIsMuted, syncStreamSource: false, force: true);
+                var currentGroup = await db.Groups.FindAsync(s.GroupId);
+                var targetStreamId = currentGroup?.CurrentStreamId ?? s.OriginalStreamId;
+
+                int targetVolume = s.OriginalVolume;
+                bool targetMuted = s.OriginalIsMuted;
+
+                if (currentGroup != null)
+                {
+                    // Check if stream was changed to Spotify during announcement
+                    if (targetStreamId != s.OriginalStreamId && targetStreamId.StartsWith(OrchestratorConstants.SpotifyPrefix))
+                    {
+                        var sourceId = targetStreamId.Replace(OrchestratorConstants.SpotifyPrefix, "");
+                        var source = await db.SpotifySources.FindAsync(sourceId);
+                        var activeSibling = await db.Groups.FirstOrDefaultAsync(g => g.Id != currentGroup.Id && g.CurrentStreamId == targetStreamId);
+                        if (activeSibling != null)
+                        {
+                            currentGroup.MasterVolume = activeSibling.MasterVolume;
+                        }
+                        else if (source != null && source.IsActive)
+                        {
+                            currentGroup.MasterVolume = source.MasterVolume;
+                        }
+                        await db.SaveChangesAsync();
+                        targetVolume = currentGroup.MasterVolume;
+                    }
+                    else if (currentGroup.MasterVolume != s.InitialDbVolume)
+                    {
+                        targetVolume = currentGroup.MasterVolume;
+                    }
+
+                    if (currentGroup.IsMuted != s.InitialDbIsMuted)
+                    {
+                        targetMuted = currentGroup.IsMuted;
+                    }
+                }
+
+                await volumeOrchestrator.SetGroupVolumeAsync(s.GroupId, targetVolume, isMuted: targetMuted, syncStreamSource: false, force: true);
             }
             catch (Exception ex)
             {
@@ -1261,13 +1370,45 @@ public class BroadcastService : IHostedService, IBroadcastService
 
         // 6. Saved per-client states must be applied last: group volume updates recalculate
         // every client's volume/mute from the database and would overwrite them.
-        foreach (var s in snapshots)
+        foreach (var s in successfulSnapshots)
         {
             foreach (var c in s.NativeClients.Concat(s.SelectedClients).Concat(s.UnselectedClients))
             {
                 try
                 {
-                    await _snapcast.SetClientVolumeAsync(c.ClientId, c.Volume, c.Muted);
+                    int finalVol = c.Volume;
+                    bool finalMuted = c.Muted;
+
+                    if (currentRooms.TryGetValue(c.ClientId, out var currentRoom))
+                    {
+                        // If room settings were changed in DB during playback, apply the deferred settings
+                        bool roomMuteChanged = c.InitialDbIsMuted.HasValue
+                            ? currentRoom.IsMuted != c.InitialDbIsMuted.Value
+                            : true;
+                        if (roomMuteChanged)
+                        {
+                            finalMuted = currentRoom.IsMuted;
+                        }
+
+                        bool roomMixChanged = c.InitialDbMixVolume.HasValue
+                            ? currentRoom.MixVolume != c.InitialDbMixVolume.Value
+                            : true;
+                        if (roomMixChanged)
+                        {
+                            if (s.IsNative)
+                            {
+                                finalVol = VolumeOrchestratorService.CalculateSnapcastVolume(currentRoom.MixVolume, 100, profile);
+                            }
+                            else
+                            {
+                                var currentGroup = await db.Groups.FindAsync(s.GroupId);
+                                var groupVol = currentGroup?.MasterVolume ?? s.OriginalVolume;
+                                finalVol = VolumeOrchestratorService.CalculateSnapcastVolume(groupVol, currentRoom.MixVolume, profile);
+                            }
+                        }
+                    }
+
+                    await _snapcast.SetClientVolumeAsync(c.ClientId, finalVol, finalMuted);
                 }
                 catch (Exception ex)
                 {

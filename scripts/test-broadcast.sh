@@ -85,12 +85,17 @@ handle_playback_response() {
   local status
   status=$(echo "$resp" | jq -r '.status // empty')
 
+  if [ -z "$job_id" ]; then
+    echo "✗ Request failed or response did not contain a valid job ID" >&2
+    exit 1
+  fi
+
   if [ -n "$WAIT_PARAM" ]; then
     if [ "$status" != "completed" ]; then
       echo "✗ Synchronous playback did not complete (status: ${status:-unknown})" >&2
       exit 1
     fi
-  elif [ -n "$job_id" ] && [ "$ASYNC_MODE" -eq 0 ]; then
+  elif [ "$ASYNC_MODE" -eq 0 ]; then
     poll_job_until_done "$job_id"
   fi
 }

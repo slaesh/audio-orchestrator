@@ -70,7 +70,21 @@ public class BroadcastController : ControllerBase
             return BadRequest("Ungültige Anfrage oder leere AudioUrl.");
         }
 
-        var job = await _broadcastService.EnqueuePlayUrlAsync(request, HttpContext?.RequestAborted ?? default);
+        if (!Uri.TryCreate(request.AudioUrl, UriKind.Absolute, out var parsedUri)
+            || (parsedUri.Scheme != Uri.UriSchemeHttp && parsedUri.Scheme != Uri.UriSchemeHttps))
+        {
+            return BadRequest("AudioUrl muss eine absolute HTTP- oder HTTPS-URL sein.");
+        }
+
+        BroadcastJobDto job;
+        try
+        {
+            job = await _broadcastService.EnqueuePlayUrlAsync(request, HttpContext?.RequestAborted ?? default);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ex.Message);
+        }
 
         if (wait)
         {
@@ -130,7 +144,15 @@ public class BroadcastController : ControllerBase
 
         var ext = Path.GetExtension(file.FileName);
         using var stream = file.OpenReadStream();
-        var job = await _broadcastService.EnqueuePlayFileAsync(stream, ext, request, HttpContext?.RequestAborted ?? default);
+        BroadcastJobDto job;
+        try
+        {
+            job = await _broadcastService.EnqueuePlayFileAsync(stream, ext, request, HttpContext?.RequestAborted ?? default);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ex.Message);
+        }
 
         if (wait)
         {
