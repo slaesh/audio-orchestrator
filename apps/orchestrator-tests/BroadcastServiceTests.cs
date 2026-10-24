@@ -54,11 +54,19 @@ public class BroadcastServiceTests
         services.AddSingleton(mockRunner.Object);
         services.AddSingleton(mockHub.Object);
         services.AddSingleton(mockMqtt.Object);
-        services.AddScoped(p => new VolumeOrchestratorService(p.GetRequiredService<OrchestratorDbContext>(), mockSnapcast.Object, mockLibrespot.Object, mockHub.Object, Mock.Of<ILogger<VolumeOrchestratorService>>()));
+        BroadcastService? service = null;
+        services.AddSingleton<IBroadcastService>(_ => service!);
+        services.AddScoped(p => new VolumeOrchestratorService(
+            p.GetRequiredService<OrchestratorDbContext>(),
+            mockSnapcast.Object,
+            mockLibrespot.Object,
+            mockHub.Object,
+            p,
+            Mock.Of<ILogger<VolumeOrchestratorService>>()));
         services.AddScoped(p => new FullStateBuilder(p.GetRequiredService<OrchestratorDbContext>(), mockSnapcast.Object));
         var sp = services.BuildServiceProvider();
 
-        var service = new BroadcastService(
+        service = new BroadcastService(
             mockLogger.Object,
             sp,
             mockSnapcast.Object,
@@ -589,7 +597,7 @@ public class BroadcastServiceTests
         await db.SaveChangesAsync();
 
         mockSnapcast.Setup(s => s.GetStatusAsync())
-            .ReturnsAsync(CreateSnapcastStatus(("sg1", "spotify_1", new[] { "c1" })));
+            .ReturnsAsync(CreateSnapcastStatusWithClients(("sg1", "spotify_1", new[] { ("c1", 36, false) })));
 
         mockLibrespot.Setup(l => l.GetStatusAsync("1"))
             .ReturnsAsync(new NodeStatusResponse { Is_playing = true });
