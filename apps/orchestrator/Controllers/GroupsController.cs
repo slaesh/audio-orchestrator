@@ -299,18 +299,9 @@ public class GroupsController : ControllerBase
                     }
                 }
 
-                // 6. VOLUME PHASE: Recalculate and push group volume to the newly assigned clients
-                try {
-                    await _volumeOrchestrator.RecalculateAndPushGroupAsync(group.Id);
-                } catch (Exception ex) {
-                    _logger.LogWarning($"Failure recalculating group volume for {group.Id}: {ex.Message}");
-                }
             } catch (Exception ex) {
                 _logger.LogWarning($"Assignment confirmation check failed: {ex.Message}. The room likely moved successfully; background reconciliation will verify.");
             }
-
-            await BroadcastStateAsync();
-            return Ok();
         }
         finally
         {
@@ -319,6 +310,18 @@ public class GroupsController : ControllerBase
                 g.Release();
             }
         }
+
+        // 6. VOLUME PHASE: Recalculate and push group volume to the newly assigned clients
+        // Performed AFTER releasing acquired gates because RecalculateAndPushGroupAsync
+        // internally acquires the group gate (avoiding non-reentrant SemaphoreSlim deadlock).
+        try {
+            await _volumeOrchestrator.RecalculateAndPushGroupAsync(group.Id);
+        } catch (Exception ex) {
+            _logger.LogWarning($"Failure recalculating group volume for {group.Id}: {ex.Message}");
+        }
+
+        await BroadcastStateAsync();
+        return Ok();
     }
 
     /// <summary>

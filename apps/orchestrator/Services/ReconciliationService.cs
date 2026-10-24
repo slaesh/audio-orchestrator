@@ -267,6 +267,7 @@ public class ReconciliationService : IReconciliationService, IDisposable
                 var matchingSnapGroup = snapGroups.FirstOrDefault(sg => {
                     var sid = sg?["id"]?.GetValue<string>();
                     if (sid == null || claimedSnapIds.Contains(sid)) return false;
+                    if (broadcastService?.IsGroupActiveInBroadcast(null, sid) == true) return false;
                     if (!string.IsNullOrEmpty(group.Name) && sg?["name"]?.GetValue<string>() == group.Name) return true;
                     if (!string.IsNullOrEmpty(group.CurrentStreamId) && 
                         group.CurrentStreamId != "default" && 
