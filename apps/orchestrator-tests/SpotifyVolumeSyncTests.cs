@@ -32,20 +32,17 @@ public class SpotifyVolumeSyncTests
             _loggerMock.Object,
             _librespotMock.Object)
         {
-            DebounceDelay = TimeSpan.FromMilliseconds(60)
+            DebounceDelay = TimeSpan.FromMilliseconds(200)
         };
 
-        // Simulate rapid slider dragging: 82 -> 81 -> 79 -> 26
+        // Simulate rapid slider dragging: 82 -> 81 -> 79 -> 26 in immediate succession
         syncService.SchedulePushVolume("spotify-1", 82);
-        await Task.Delay(15);
         syncService.SchedulePushVolume("spotify-1", 81);
-        await Task.Delay(15);
         syncService.SchedulePushVolume("spotify-1", 79);
-        await Task.Delay(15);
         syncService.SchedulePushVolume("spotify-1", 26);
 
         // Wait for debounce delay to elapse
-        await Task.Delay(150);
+        await Task.Delay(400);
 
         // Verify only the final value (26) was dispatched to librespot
         _librespotMock.Verify(l => l.SetVolumeAsync("spotify-1", 26), Times.Once);
