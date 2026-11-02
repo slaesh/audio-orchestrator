@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.5.0](https://github.com/slaesh/audio-orchestrator/compare/v0.4.1...v0.5.0) (2026-10-24)
+
+
+### Features
+
+* **broadcast:** add audio broadcast and announcement endpoints with group and room targeting ([#10](https://github.com/slaesh/audio-orchestrator/issues/10)) ([638f41e](https://github.com/slaesh/audio-orchestrator/commit/638f41e13c8045df5b1dcae0a8658c4f351fe5d6))
+* **mqtt:** add home assistant mqtt integration with discovery and live controls ([#8](https://github.com/slaesh/audio-orchestrator/issues/8)) ([09773ad](https://github.com/slaesh/audio-orchestrator/commit/09773ad2d847a7ec3306c99f6d1522a21a402cf5))
+* **system:** add health and info endpoints, remove obsolete IDEAS.md, and clean up test warnings ([#11](https://github.com/slaesh/audio-orchestrator/issues/11)) ([83a590c](https://github.com/slaesh/audio-orchestrator/commit/83a590c19fba20d7485d70f651675a72e2c9efaa))
+
+
+### Bug Fixes
+
+* **tests:** resolve expected version dynamically in SystemControllerTests ([bf122fb](https://github.com/slaesh/audio-orchestrator/commit/bf122fb785c95596a237cb4295d83c79df1c6956))
+
 ## [0.4.1](https://github.com/slaesh/audio-orchestrator/compare/v0.4.0...v0.4.1) (2026-10-22)
 
 
