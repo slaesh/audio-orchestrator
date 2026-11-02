@@ -6,6 +6,7 @@ using AudioOrchestrator.Hubs;
 using AudioOrchestrator.Contracts;
 using AudioOrchestrator.Services.Generated;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace AudioOrchestrator.Services;
 
@@ -176,7 +177,15 @@ public class VolumeOrchestratorService
             _logger.LogInformation($"Pushing volume {masterVolume}% from Group {group.Name} to Spotify Source {spotifySourceIdToSync}");
             try
             {
-                await _librespotApi.SetVolumeAsync(spotifySourceIdToSync, masterVolume);
+                var spotifySync = _serviceProvider?.GetService<ISpotifyVolumeSyncService>();
+                if (spotifySync != null)
+                {
+                    spotifySync.SchedulePushVolume(spotifySourceIdToSync, masterVolume);
+                }
+                else
+                {
+                    await _librespotApi.SetVolumeAsync(spotifySourceIdToSync, masterVolume);
+                }
             }
             catch (Exception ex) when (ex is HttpRequestException || ex is ApiException)
             {
@@ -537,7 +546,15 @@ public class VolumeOrchestratorService
 
         try
         {
-            await _librespotApi.SetVolumeAsync(sourceId, finalVolume);
+            var spotifySync = _serviceProvider?.GetService<ISpotifyVolumeSyncService>();
+            if (spotifySync != null)
+            {
+                await spotifySync.PushVolumeImmediateAsync(sourceId, finalVolume);
+            }
+            else
+            {
+                await _librespotApi.SetVolumeAsync(sourceId, finalVolume);
+            }
         }
         catch (Exception ex) when (ex is HttpRequestException || ex is ApiException)
         {
