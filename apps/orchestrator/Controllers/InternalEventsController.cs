@@ -319,38 +319,41 @@ public class EventsController : ControllerBase
                     if (spotifySync != null && !spotifySync.ShouldAcceptIncomingVolume(payload.GroupId, percent, currentGroupVolumes))
                     {
                         _logger.LogInformation("[Sync] Suppressed echo/stale Spotify volume event ({Percent}%) for source {GroupId}", percent, payload.GroupId);
-                        return Ok();
+                        // Prevent suppressed volume echo from propagating to source entity, listening groups, and SignalR/MQTT clients
+                        payload.Volume = null;
                     }
-
-                    if (source != null) {
-                        source.MasterVolume = percent;
-                    }
-
-                    var groupIds = listeningGroups.Select(g => g.Id).ToList();
-                    var groupNames = listeningGroups.Select(g => g.Name).ToList();
-
-                    _ = Task.Run(async () => {
-                        try {
-                            using var scope = _scopeFactory.CreateScope();
-                            var bgVolume = scope.ServiceProvider.GetRequiredService<VolumeOrchestratorService>();
-                            var bgDb = scope.ServiceProvider.GetRequiredService<OrchestratorDbContext>();
-
-                            var bgBroadcast = scope.ServiceProvider.GetService<IBroadcastService>();
-
-                            for (int i = 0; i < groupIds.Count; i++)
-                            {
-                                var id = groupIds[i];
-                                var g = await bgDb.Groups.FindAsync(id);
-                                if (g == null) continue;
-                                if (g.MasterVolume == percent) continue;
-                                if (bgBroadcast?.IsGroupActiveInBroadcast(g.Id, g.SnapcastGroupId) == true) continue;
-                                await bgVolume.SetGroupVolumeAsync(g.Id, percent, g.IsMuted, fromDocker: true, syncStreamSource: false);
-                                _logger.LogInformation("[Broadcast-BG] Synced Spotify volume ({Percent}%) to listening Group {GroupName}", percent, groupNames[i]);
-                            }
-                        } catch (Exception ex) {
-                            _logger.LogError(ex, "Failed to sync volume in background for {Event}", payload.Event);
+                    else
+                    {
+                        if (source != null) {
+                            source.MasterVolume = percent;
                         }
-                    });
+
+                        var groupIds = listeningGroups.Select(g => g.Id).ToList();
+                        var groupNames = listeningGroups.Select(g => g.Name).ToList();
+
+                        _ = Task.Run(async () => {
+                            try {
+                                using var scope = _scopeFactory.CreateScope();
+                                var bgVolume = scope.ServiceProvider.GetRequiredService<VolumeOrchestratorService>();
+                                var bgDb = scope.ServiceProvider.GetRequiredService<OrchestratorDbContext>();
+
+                                var bgBroadcast = scope.ServiceProvider.GetService<IBroadcastService>();
+
+                                for (int i = 0; i < groupIds.Count; i++)
+                                {
+                                    var id = groupIds[i];
+                                    var g = await bgDb.Groups.FindAsync(id);
+                                    if (g == null) continue;
+                                    if (g.MasterVolume == percent) continue;
+                                    if (bgBroadcast?.IsGroupActiveInBroadcast(g.Id, g.SnapcastGroupId) == true) continue;
+                                    await bgVolume.SetGroupVolumeAsync(g.Id, percent, g.IsMuted, fromDocker: true, syncStreamSource: false);
+                                    _logger.LogInformation("[Broadcast-BG] Synced Spotify volume ({Percent}%) to listening Group {GroupName}", percent, groupNames[i]);
+                                }
+                            } catch (Exception ex) {
+                                _logger.LogError(ex, "Failed to sync volume in background for {Event}", payload.Event);
+                            }
+                        });
+                    }
                 }
             }
         }

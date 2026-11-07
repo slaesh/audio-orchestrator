@@ -19,9 +19,11 @@ public class SpotifyVolumeSyncService : ISpotifyVolumeSyncService, IDisposable
         public readonly object Lock = new();
         public int? PendingVolume { get; set; }
         public CancellationTokenSource? DebounceCts { get; set; }
-        public int? LastPushedVolume { get; set; }
         public DateTime LastLocalChangeTime { get; set; } = DateTime.MinValue;
         public readonly ConcurrentQueue<(int volume, DateTime timestamp)> RecentPushes = new();
+        public readonly SemaphoreSlim WriteGate = new(1, 1);
+        public long LatestVersion { get; set; }
+        public long LastWrittenVersion { get; set; }
     }
 
     private readonly IServiceScopeFactory _scopeFactory;
@@ -47,11 +49,13 @@ public class SpotifyVolumeSyncService : ISpotifyVolumeSyncService, IDisposable
     {
         var state = _states.GetOrAdd(sourceId, _ => new SourceSyncState());
         CancellationToken token;
+        long version;
 
         lock (state.Lock)
         {
             state.LastLocalChangeTime = DateTime.UtcNow;
             state.PendingVolume = percent;
+            version = ++state.LatestVersion;
 
             state.DebounceCts?.Cancel();
             state.DebounceCts?.Dispose();
@@ -72,19 +76,31 @@ public class SpotifyVolumeSyncService : ISpotifyVolumeSyncService, IDisposable
 
                 if (token.IsCancellationRequested) return;
 
-                int targetVolume;
-                lock (state.Lock)
+                await state.WriteGate.WaitAsync(token);
+                try
                 {
-                    if (token.IsCancellationRequested || !state.PendingVolume.HasValue) return;
-                    targetVolume = state.PendingVolume.Value;
-                    state.PendingVolume = null;
-                    state.LastPushedVolume = targetVolume;
-                    state.RecentPushes.Enqueue((targetVolume, DateTime.UtcNow));
-                    PruneRecentPushes(state);
-                }
+                    int targetVolume;
+                    lock (state.Lock)
+                    {
+                        if (token.IsCancellationRequested || !state.PendingVolume.HasValue || version < state.LatestVersion)
+                        {
+                            return;
+                        }
 
-                await ExecuteSetVolumeAsync(sourceId, targetVolume);
-                _logger.LogInformation("[SpotifySync] Debounced pushed volume {Percent}% to Spotify source {SourceId}", targetVolume, sourceId);
+                        targetVolume = state.PendingVolume.Value;
+                        state.PendingVolume = null;
+                        state.LastWrittenVersion = version;
+                        state.RecentPushes.Enqueue((targetVolume, DateTime.UtcNow));
+                        PruneRecentPushes(state);
+                    }
+
+                    await ExecuteSetVolumeAsync(sourceId, targetVolume);
+                    _logger.LogInformation("[SpotifySync] Debounced pushed volume {Percent}% to Spotify source {SourceId}", targetVolume, sourceId);
+                }
+                finally
+                {
+                    state.WriteGate.Release();
+                }
             }
             catch (OperationCanceledException)
             {
@@ -104,6 +120,7 @@ public class SpotifyVolumeSyncService : ISpotifyVolumeSyncService, IDisposable
     public async Task PushVolumeImmediateAsync(string sourceId, int percent)
     {
         var state = _states.GetOrAdd(sourceId, _ => new SourceSyncState());
+        long version;
         lock (state.Lock)
         {
             state.DebounceCts?.Cancel();
@@ -111,19 +128,34 @@ public class SpotifyVolumeSyncService : ISpotifyVolumeSyncService, IDisposable
             state.DebounceCts = null;
             state.PendingVolume = null;
             state.LastLocalChangeTime = DateTime.UtcNow;
-            state.LastPushedVolume = percent;
+            version = ++state.LatestVersion;
             state.RecentPushes.Enqueue((percent, DateTime.UtcNow));
             PruneRecentPushes(state);
         }
 
+        await state.WriteGate.WaitAsync();
         try
         {
+            lock (state.Lock)
+            {
+                if (version < state.LatestVersion)
+                {
+                    // A newer write was already requested while waiting for the gate
+                    return;
+                }
+                state.LastWrittenVersion = version;
+            }
+
             await ExecuteSetVolumeAsync(sourceId, percent);
             _logger.LogInformation("[SpotifySync] Immediately pushed volume {Percent}% to Spotify source {SourceId}", percent, sourceId);
         }
         catch (Exception ex) when (ex is HttpRequestException || ex is ApiException)
         {
             _logger.LogWarning("Could not push immediate volume to Spotify source {SourceId}: {Message}", sourceId, ex.Message);
+        }
+        finally
+        {
+            state.WriteGate.Release();
         }
     }
 
@@ -152,19 +184,13 @@ public class SpotifyVolumeSyncService : ISpotifyVolumeSyncService, IDisposable
                 return false;
             }
 
-            // 3. If it matches the last volume we pushed, ignore (it is our own echo/ACK)
-            if (state.LastPushedVolume.HasValue && state.LastPushedVolume.Value == incomingPercent)
-            {
-                return false;
-            }
-
-            // 4. If it matches any volume we pushed recently within the history window, ignore (stale echo)
+            // 3. If it matches any volume we pushed recently within the history window, ignore (stale echo)
             if (state.RecentPushes.Any(p => p.volume == incomingPercent))
             {
                 return false;
             }
 
-            // 5. If local volume was changed within CooldownWindow, ignore (local user is actively controlling)
+            // 4. If local volume was changed within CooldownWindow, ignore (local user is actively controlling)
             if ((DateTime.UtcNow - state.LastLocalChangeTime) < CooldownWindow)
             {
                 return false;
@@ -206,6 +232,7 @@ public class SpotifyVolumeSyncService : ISpotifyVolumeSyncService, IDisposable
                 kvp.Value.DebounceCts?.Dispose();
                 kvp.Value.DebounceCts = null;
             }
+            kvp.Value.WriteGate.Dispose();
         }
         _states.Clear();
     }

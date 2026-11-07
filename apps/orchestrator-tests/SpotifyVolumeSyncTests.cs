@@ -213,9 +213,92 @@ public class SpotifyVolumeSyncTests
         var freshGroup = await db.Groups.FindAsync("grp-1");
         Assert.Equal(26, freshGroup!.MasterVolume);
 
+        // Source master volume remains 26, but pre-emptive connection flag is persisted
+        var freshSource = await db.SpotifySources.FindAsync("spotify-1");
+        Assert.Equal(26, freshSource!.MasterVolume);
+        Assert.True(freshSource.IsConnected);
+
         // Volume orchestrator was NOT called with 82
         volumeOrchestratorMock.Verify(
             v => v.SetGroupVolumeAsync("grp-1", 82, It.IsAny<bool?>(), true, false, false),
             Times.Never);
+    }
+
+    [Fact]
+    public async Task ShouldAcceptIncomingVolume_AcceptsExternalVolume_AfterHistoryWindowExpires()
+    {
+        using var syncService = new SpotifyVolumeSyncService(
+            null!,
+            _loggerMock.Object,
+            _librespotMock.Object)
+        {
+            HistoryWindow = TimeSpan.FromMilliseconds(50),
+            CooldownWindow = TimeSpan.FromMilliseconds(50)
+        };
+
+        // Service pushed 70
+        await syncService.PushVolumeImmediateAsync("spotify-1", 70);
+
+        // Immediately after, 70 is rejected as echo
+        Assert.False(syncService.ShouldAcceptIncomingVolume("spotify-1", 70, new[] { 50 }));
+
+        // Wait for HistoryWindow and CooldownWindow to elapse
+        await Task.Delay(100);
+
+        // Later, external Spotify app changes volume back to 70 when groups are at 50
+        bool accepted = syncService.ShouldAcceptIncomingVolume("spotify-1", 70, new[] { 50 });
+
+        Assert.True(accepted);
+    }
+
+    [Fact]
+    public async Task SchedulePushVolume_SerializesConcurrentWrites_AndPreservesLatestVolume()
+    {
+        var firstCallGate = new TaskCompletionSource<bool>();
+        var secondCallStarted = new TaskCompletionSource<bool>();
+        var calls = new List<int>();
+
+        _librespotMock
+            .Setup(l => l.SetVolumeAsync("spotify-1", It.IsAny<int>()))
+            .Returns<string, int>(async (id, vol) =>
+            {
+                lock (calls) calls.Add(vol);
+                if (vol == 30)
+                {
+                    // Block the first call in flight
+                    await firstCallGate.Task;
+                }
+            });
+
+        using var syncService = new SpotifyVolumeSyncService(
+            null!,
+            _loggerMock.Object,
+            _librespotMock.Object)
+        {
+            DebounceDelay = TimeSpan.FromMilliseconds(20)
+        };
+
+        // Push 30
+        syncService.SchedulePushVolume("spotify-1", 30);
+        await Task.Delay(50); // let debounce fire and enter SetVolumeAsync(30)
+
+        // While SetVolumeAsync(30) is in flight, push 80 immediately
+        var pushTask = Task.Run(async () =>
+        {
+            secondCallStarted.SetResult(true);
+            await syncService.PushVolumeImmediateAsync("spotify-1", 80);
+        });
+
+        await secondCallStarted.Task;
+        // Release the first call now
+        firstCallGate.SetResult(true);
+
+        await pushTask;
+
+        // Verify SetVolumeAsync was called with 30, then with 80 (serialized, never concurrent or reversed)
+        lock (calls)
+        {
+            Assert.Equal(new[] { 30, 80 }, calls);
+        }
     }
 }

@@ -101,6 +101,13 @@ public class VolumeOrchestratorService
                 if (!fromDocker)
                 {
                     spotifySourceIdToSync = sourceId;
+                    var spotifySync = _serviceProvider?.GetService<ISpotifyVolumeSyncService>();
+                    if (spotifySync != null)
+                    {
+                        _logger.LogInformation("Scheduling volume {MasterVolume}% from Group {GroupName} to Spotify Source {SourceId}", masterVolume, group.Name, sourceId);
+                        spotifySync.SchedulePushVolume(sourceId, masterVolume);
+                        spotifySourceIdToSync = null;
+                    }
                 }
             }
 
@@ -538,12 +545,6 @@ public class VolumeOrchestratorService
             gate?.Release();
         }
 
-        foreach (var grp in siblingGroups)
-        {
-            await _hub.Clients.All.OnGroupVolumeChanged(grp.Id, grp.MasterVolume, grp.IsMuted);
-            await RecalculateAndPushGroupAsync(grp.Id);
-        }
-
         try
         {
             var spotifySync = _serviceProvider?.GetService<ISpotifyVolumeSyncService>();
@@ -559,6 +560,12 @@ public class VolumeOrchestratorService
         catch (Exception ex) when (ex is HttpRequestException || ex is ApiException)
         {
             _logger.LogWarning("Could not push volume to Spotify source {SourceId}: {Message}", sourceId, ex.Message);
+        }
+
+        foreach (var grp in siblingGroups)
+        {
+            await _hub.Clients.All.OnGroupVolumeChanged(grp.Id, grp.MasterVolume, grp.IsMuted);
+            await RecalculateAndPushGroupAsync(grp.Id);
         }
     }
 
