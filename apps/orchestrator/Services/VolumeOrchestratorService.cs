@@ -190,7 +190,7 @@ public class VolumeOrchestratorService
         var room = await _db.Rooms.FindAsync(roomMac);
         if (room == null)
         {
-            room = new RoomEntity { MacAddress = roomMac, FriendlyName = roomMac, MixVolume = mixVolume };
+            room = new RoomEntity { MacAddress = roomMac, FriendlyName = string.Empty, MixVolume = mixVolume };
             _db.Rooms.Add(room);
         }
         else

@@ -47,19 +47,23 @@ public class RoomsController : ControllerBase
     public async Task<IActionResult> RenameRoom(string id, [FromBody] RenameRoomRequest req)
     {
         var room = await _db.Rooms.FindAsync(id);
+        var newFriendlyName = string.IsNullOrWhiteSpace(req.Name) || string.Equals(req.Name, id, StringComparison.OrdinalIgnoreCase)
+            ? string.Empty
+            : req.Name.Trim();
+
         if (room == null)
         {
-            room = new RoomEntity { MacAddress = id, FriendlyName = req.Name };
+            room = new RoomEntity { MacAddress = id, FriendlyName = newFriendlyName };
             _db.Rooms.Add(room);
         }
         else
         {
-            room.FriendlyName = req.Name;
+            room.FriendlyName = newFriendlyName;
         }
 
         await _db.SaveChangesAsync();
         try {
-            await _snapcast.SetClientNameAsync(id, req.Name);
+            await _snapcast.SetClientNameAsync(id, newFriendlyName);
         } catch {} 
         await _hub.Clients.All.OnFullStateUpdate(await _stateBuilder.BuildAsync());
         return Ok(room);
@@ -71,7 +75,7 @@ public class RoomsController : ControllerBase
         var room = await _db.Rooms.FindAsync(id);
         if (room == null)
         {
-            room = new RoomEntity { MacAddress = id, FriendlyName = id, MixVolume = req.Percent, IsMuted = req.Muted };
+            room = new RoomEntity { MacAddress = id, FriendlyName = string.Empty, MixVolume = req.Percent, IsMuted = req.Muted };
             _db.Rooms.Add(room);
         }
         else
