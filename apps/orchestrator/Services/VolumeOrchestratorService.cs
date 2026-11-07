@@ -83,6 +83,20 @@ public class VolumeOrchestratorService
             {
                 var sourceId = group.CurrentStreamId.Replace(OrchestratorConstants.SpotifyPrefix, "");
                 targetStreamId = group.CurrentStreamId;
+
+                if (!fromDocker)
+                {
+                    var spotifySync = _serviceProvider?.GetService<ISpotifyVolumeSyncService>();
+                    if (spotifySync != null)
+                    {
+                        _logger.LogInformation("Scheduling volume {MasterVolume}% from Group {GroupName} to Spotify Source {SourceId}", masterVolume, group.Name, sourceId);
+                        spotifySync.SchedulePushVolume(sourceId, masterVolume);
+                    }
+                    else
+                    {
+                        spotifySourceIdToSync = sourceId;
+                    }
+                }
                 
                 // Sync Spotify Source master volume in DB
                 var source = await _db.SpotifySources.FindAsync(sourceId);
@@ -97,18 +111,6 @@ public class VolumeOrchestratorService
                     .Where(g => g.Id != group.Id && g.CurrentStreamId == group.CurrentStreamId)
                     .Select(g => g.Id)
                     .ToListAsync();
-
-                if (!fromDocker)
-                {
-                    spotifySourceIdToSync = sourceId;
-                    var spotifySync = _serviceProvider?.GetService<ISpotifyVolumeSyncService>();
-                    if (spotifySync != null)
-                    {
-                        _logger.LogInformation("Scheduling volume {MasterVolume}% from Group {GroupName} to Spotify Source {SourceId}", masterVolume, group.Name, sourceId);
-                        spotifySync.SchedulePushVolume(sourceId, masterVolume);
-                        spotifySourceIdToSync = null;
-                    }
-                }
             }
 
             if (_serviceProvider != null)
@@ -178,21 +180,13 @@ public class VolumeOrchestratorService
             }
         }
 
-        // Sync back to Spotify (LibreSpot) outside the group gate
+        // Sync back to Spotify (LibreSpot) outside the group gate when sync service is not configured
         if (spotifySourceIdToSync != null)
         {
             _logger.LogInformation($"Pushing volume {masterVolume}% from Group {group.Name} to Spotify Source {spotifySourceIdToSync}");
             try
             {
-                var spotifySync = _serviceProvider?.GetService<ISpotifyVolumeSyncService>();
-                if (spotifySync != null)
-                {
-                    spotifySync.SchedulePushVolume(spotifySourceIdToSync, masterVolume);
-                }
-                else
-                {
-                    await _librespotApi.SetVolumeAsync(spotifySourceIdToSync, masterVolume);
-                }
+                await _librespotApi.SetVolumeAsync(spotifySourceIdToSync, masterVolume);
             }
             catch (Exception ex) when (ex is HttpRequestException || ex is ApiException)
             {

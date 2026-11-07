@@ -23,7 +23,6 @@ public class SpotifyVolumeSyncService : ISpotifyVolumeSyncService, IDisposable
         public readonly ConcurrentQueue<(int volume, DateTime timestamp)> RecentPushes = new();
         public readonly SemaphoreSlim WriteGate = new(1, 1);
         public long LatestVersion { get; set; }
-        public long LastWrittenVersion { get; set; }
     }
 
     private readonly IServiceScopeFactory _scopeFactory;
@@ -48,7 +47,8 @@ public class SpotifyVolumeSyncService : ISpotifyVolumeSyncService, IDisposable
     public void SchedulePushVolume(string sourceId, int percent, TimeSpan? delay = null)
     {
         var state = _states.GetOrAdd(sourceId, _ => new SourceSyncState());
-        CancellationToken token;
+        var cts = new CancellationTokenSource();
+        var token = cts.Token;
         long version;
 
         lock (state.Lock)
@@ -58,9 +58,7 @@ public class SpotifyVolumeSyncService : ISpotifyVolumeSyncService, IDisposable
             version = ++state.LatestVersion;
 
             state.DebounceCts?.Cancel();
-            state.DebounceCts?.Dispose();
-            state.DebounceCts = new CancellationTokenSource();
-            token = state.DebounceCts.Token;
+            state.DebounceCts = cts;
         }
 
         var effectiveDelay = delay ?? DebounceDelay;
@@ -89,7 +87,7 @@ public class SpotifyVolumeSyncService : ISpotifyVolumeSyncService, IDisposable
 
                         targetVolume = state.PendingVolume.Value;
                         state.PendingVolume = null;
-                        state.LastWrittenVersion = version;
+                        state.LastLocalChangeTime = DateTime.UtcNow;
                         state.RecentPushes.Enqueue((targetVolume, DateTime.UtcNow));
                         PruneRecentPushes(state);
                     }
@@ -114,6 +112,17 @@ public class SpotifyVolumeSyncService : ISpotifyVolumeSyncService, IDisposable
             {
                 _logger.LogError(ex, "Unexpected error pushing debounced volume to Spotify source {SourceId}", sourceId);
             }
+            finally
+            {
+                lock (state.Lock)
+                {
+                    if (ReferenceEquals(state.DebounceCts, cts))
+                    {
+                        state.DebounceCts = null;
+                    }
+                }
+                cts.Dispose();
+            }
         });
     }
 
@@ -124,13 +133,10 @@ public class SpotifyVolumeSyncService : ISpotifyVolumeSyncService, IDisposable
         lock (state.Lock)
         {
             state.DebounceCts?.Cancel();
-            state.DebounceCts?.Dispose();
             state.DebounceCts = null;
-            state.PendingVolume = null;
+            state.PendingVolume = percent;
             state.LastLocalChangeTime = DateTime.UtcNow;
             version = ++state.LatestVersion;
-            state.RecentPushes.Enqueue((percent, DateTime.UtcNow));
-            PruneRecentPushes(state);
         }
 
         await state.WriteGate.WaitAsync();
@@ -143,7 +149,11 @@ public class SpotifyVolumeSyncService : ISpotifyVolumeSyncService, IDisposable
                     // A newer write was already requested while waiting for the gate
                     return;
                 }
-                state.LastWrittenVersion = version;
+
+                state.PendingVolume = null;
+                state.LastLocalChangeTime = DateTime.UtcNow;
+                state.RecentPushes.Enqueue((percent, DateTime.UtcNow));
+                PruneRecentPushes(state);
             }
 
             await ExecuteSetVolumeAsync(sourceId, percent);
@@ -229,10 +239,8 @@ public class SpotifyVolumeSyncService : ISpotifyVolumeSyncService, IDisposable
             lock (kvp.Value.Lock)
             {
                 kvp.Value.DebounceCts?.Cancel();
-                kvp.Value.DebounceCts?.Dispose();
                 kvp.Value.DebounceCts = null;
             }
-            kvp.Value.WriteGate.Dispose();
         }
         _states.Clear();
     }

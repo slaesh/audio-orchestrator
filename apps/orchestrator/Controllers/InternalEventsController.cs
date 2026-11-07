@@ -338,6 +338,7 @@ public class EventsController : ControllerBase
                                 var bgDb = scope.ServiceProvider.GetRequiredService<OrchestratorDbContext>();
 
                                 var bgBroadcast = scope.ServiceProvider.GetService<IBroadcastService>();
+                                var bgSpotifySync = scope.ServiceProvider.GetService<ISpotifyVolumeSyncService>() ?? spotifySync;
 
                                 for (int i = 0; i < groupIds.Count; i++)
                                 {
@@ -345,6 +346,7 @@ public class EventsController : ControllerBase
                                     var g = await bgDb.Groups.FindAsync(id);
                                     if (g == null) continue;
                                     if (g.MasterVolume == percent) continue;
+                                    if (bgSpotifySync != null && !bgSpotifySync.ShouldAcceptIncomingVolume(payload.GroupId, percent, new[] { g.MasterVolume })) continue;
                                     if (bgBroadcast?.IsGroupActiveInBroadcast(g.Id, g.SnapcastGroupId) == true) continue;
                                     await bgVolume.SetGroupVolumeAsync(g.Id, percent, g.IsMuted, fromDocker: true, syncStreamSource: false);
                                     _logger.LogInformation("[Broadcast-BG] Synced Spotify volume ({Percent}%) to listening Group {GroupName}", percent, groupNames[i]);
