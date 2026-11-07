@@ -18,19 +18,20 @@ public class FullStateBuilder
     private readonly ISpotifyNodeReleaseService? _spotifyReleaseService;
     private readonly IDockerClient? _dockerClient;
     private readonly IConfiguration? _configuration;
+    private readonly TimeProvider _timeProvider;
 
     public FullStateBuilder(OrchestratorDbContext db, ISnapcastService snapcast)
-        : this(db, snapcast, null, null, null, null)
+        : this(db, snapcast, null, null, null, null, null)
     {
     }
 
     public FullStateBuilder(OrchestratorDbContext db, ISnapcastService snapcast, ISpotifyNodeReleaseService? releaseService)
-        : this(db, snapcast, releaseService as INodeReleaseService, releaseService, null, null)
+        : this(db, snapcast, releaseService as INodeReleaseService, releaseService, null, null, null)
     {
     }
 
     public FullStateBuilder(OrchestratorDbContext db, ISnapcastService snapcast, INodeReleaseService? nodeReleaseService)
-        : this(db, snapcast, nodeReleaseService, nodeReleaseService as ISpotifyNodeReleaseService, null, null)
+        : this(db, snapcast, nodeReleaseService, nodeReleaseService as ISpotifyNodeReleaseService, null, null, null)
     {
     }
 
@@ -40,7 +41,8 @@ public class FullStateBuilder
         INodeReleaseService? nodeReleaseService, 
         ISpotifyNodeReleaseService? spotifyReleaseService,
         IDockerClient? dockerClient = null,
-        IConfiguration? configuration = null)
+        IConfiguration? configuration = null,
+        TimeProvider? timeProvider = null)
     {
         _db = db;
         _snapcast = snapcast;
@@ -48,6 +50,7 @@ public class FullStateBuilder
         _spotifyReleaseService = spotifyReleaseService ?? (_nodeReleaseService as ISpotifyNodeReleaseService);
         _dockerClient = dockerClient;
         _configuration = configuration;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     public virtual async Task<FullStateDto> BuildAsync()
@@ -300,15 +303,33 @@ public class FullStateBuilder
 
         var roomEntity = rooms.FirstOrDefault(n => n.MacAddress == id);
         
-        // Fix: Ensure we don't return an empty string as name. Fallback to host name, then ID.
-        var friendlyName = roomEntity?.FriendlyName;
+        // Ensure we don't treat the MAC/ID or hostname as a friendly name if it was defaulted or saved as such.
+        var rawFriendlyName = roomEntity?.FriendlyName;
         var hostName = clientNode["host"]?["name"]?.GetValue<string>();
 
-        var name = string.IsNullOrWhiteSpace(friendlyName) 
+        var isFriendlyNameSet = !string.IsNullOrWhiteSpace(rawFriendlyName) 
+            && !string.Equals(rawFriendlyName, id, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(rawFriendlyName, hostName, StringComparison.OrdinalIgnoreCase);
+
+        var friendlyName = isFriendlyNameSet ? rawFriendlyName : null;
+
+        var name = friendlyName == null
             ? (string.IsNullOrWhiteSpace(hostName) ? id : hostName)
             : $"{friendlyName} ({hostName ?? id})";
 
         var connected = clientNode["connected"]?.GetValue<bool>() ?? false;
+        var secNode = clientNode["lastSeen"]?["sec"];
+        if (connected && secNode != null && long.TryParse(secNode.ToString(), out var lastSeenSec))
+        {
+            var nowSec = _timeProvider.GetUtcNow().ToUnixTimeSeconds();
+            // Snapcast clients continuously exchange TimeSync messages every 1-2s even when idle or muted.
+            // If lastSeen is more than 30 seconds in the past, the TCP socket is half-open (ghost connection).
+            if (nowSec - lastSeenSec > 30)
+            {
+                connected = false;
+            }
+        }
+
         var volumePercent = clientNode["config"]?["volume"]?["percent"]?.GetValue<int>() ?? 0;
         var volumeMuted = (roomEntity?.IsMuted ?? false) || (clientNode["config"]?["volume"]?["muted"]?.GetValue<bool>() ?? false);
         var mixVolume = roomEntity?.MixVolume ?? 100;
