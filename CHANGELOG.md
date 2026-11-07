@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.1](https://github.com/slaesh/audio-orchestrator/compare/v0.5.0...v0.5.1) (2026-11-07)
+
+
+### Bug Fixes
+
+* **rooms:** fallback to hostname when friendly name is not set and filter stale ghost clients ([#13](https://github.com/slaesh/audio-orchestrator/issues/13)) ([e78e051](https://github.com/slaesh/audio-orchestrator/commit/e78e051e68ca9039c536eddece266dc1b4e615ed))
+* **volume:** suppress spotify volume echoes and debounce slider sync ([#12](https://github.com/slaesh/audio-orchestrator/issues/12)) ([e84e38c](https://github.com/slaesh/audio-orchestrator/commit/e84e38c2db45711da0ff64a2506193b8d605be7f))
+
 ## [0.5.0](https://github.com/slaesh/audio-orchestrator/compare/v0.4.1...v0.5.0) (2026-10-24)
 
 
