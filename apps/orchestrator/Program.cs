@@ -82,6 +82,7 @@ builder.Services.AddScoped<AudioOrchestrator.Services.ISpotifyNodeReleaseService
 builder.Services.AddSingleton<AudioOrchestrator.Services.IReconciliationService, AudioOrchestrator.Services.ReconciliationService>();
 builder.Services.AddSingleton<AudioOrchestrator.Services.SnapcastConnectionService>();
 builder.Services.AddSingleton<AudioOrchestrator.Services.ISnapcastService, AudioOrchestrator.Services.SnapcastService>();
+builder.Services.AddSingleton<AudioOrchestrator.Services.ISpotifyVolumeSyncService, AudioOrchestrator.Services.SpotifyVolumeSyncService>();
 builder.Services.AddScoped<AudioOrchestrator.Services.VolumeOrchestratorService>();
 builder.Services.AddScoped<AudioOrchestrator.Services.FullStateBuilder>();
 
