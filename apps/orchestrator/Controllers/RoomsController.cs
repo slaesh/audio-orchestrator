@@ -47,9 +47,27 @@ public class RoomsController : ControllerBase
     public async Task<IActionResult> RenameRoom(string id, [FromBody] RenameRoomRequest req)
     {
         var room = await _db.Rooms.FindAsync(id);
-        var newFriendlyName = string.IsNullOrWhiteSpace(req.Name) || string.Equals(req.Name, id, StringComparison.OrdinalIgnoreCase)
-            ? string.Empty
-            : req.Name.Trim();
+
+        string? hostName = null;
+        try
+        {
+            var status = await _snapcast.GetStatusAsync();
+            var clientNode = status?["server"]?["groups"]?
+                .AsArray()
+                .SelectMany(g => g?["clients"]?.AsArray() ?? new System.Text.Json.Nodes.JsonArray())
+                .FirstOrDefault(c => string.Equals(c?["id"]?.GetValue<string>(), id, StringComparison.OrdinalIgnoreCase));
+            hostName = clientNode?["host"]?["name"]?.GetValue<string>();
+        }
+        catch
+        {
+            // Ignore snapcast query error and proceed with rename
+        }
+
+        var isMatch = string.IsNullOrWhiteSpace(req.Name)
+            || string.Equals(req.Name, id, StringComparison.OrdinalIgnoreCase)
+            || (!string.IsNullOrEmpty(hostName) && string.Equals(req.Name, hostName, StringComparison.OrdinalIgnoreCase));
+
+        var newFriendlyName = isMatch ? string.Empty : req.Name.Trim();
 
         if (room == null)
         {

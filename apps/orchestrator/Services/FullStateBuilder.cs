@@ -303,12 +303,13 @@ public class FullStateBuilder
 
         var roomEntity = rooms.FirstOrDefault(n => n.MacAddress == id);
         
-        // Ensure we don't treat the MAC/ID as a friendly name if it was defaulted or saved as such.
+        // Ensure we don't treat the MAC/ID or hostname as a friendly name if it was defaulted or saved as such.
         var rawFriendlyName = roomEntity?.FriendlyName;
         var hostName = clientNode["host"]?["name"]?.GetValue<string>();
 
         var isFriendlyNameSet = !string.IsNullOrWhiteSpace(rawFriendlyName) 
-            && !string.Equals(rawFriendlyName, id, StringComparison.OrdinalIgnoreCase);
+            && !string.Equals(rawFriendlyName, id, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(rawFriendlyName, hostName, StringComparison.OrdinalIgnoreCase);
 
         var friendlyName = isFriendlyNameSet ? rawFriendlyName : null;
 

@@ -375,4 +375,84 @@ public class FullStateBuilderTests
         Assert.NotNull(entity);
         Assert.Equal(string.Empty, entity.FriendlyName);
     }
+
+    [Fact]
+    public async Task BuildAsync_RoomWithDefaultedFriendlyNameMatchingHostName_FallsBackToHostName()
+    {
+        await using var db = new OrchestratorDbContext(_dbOptions);
+        await SeedGroupAsync(db);
+
+        db.Rooms.Add(new RoomEntity
+        {
+            MacAddress = "E8:F6:0A:E7:FB:6D",
+            FriendlyName = "ESP32-P4-Caster",
+            MixVolume = 80
+        });
+        await db.SaveChangesAsync();
+
+        var mockSnapcast = new Mock<ISnapcastService>();
+
+        var client = new JsonObject
+        {
+            ["id"] = "E8:F6:0A:E7:FB:6D",
+            ["connected"] = true,
+            ["host"] = new JsonObject { ["name"] = "ESP32-P4-Caster" },
+            ["config"] = new JsonObject { ["volume"] = new JsonObject { ["percent"] = 50, ["muted"] = false } },
+            ["lastSeen"] = new JsonObject { ["sec"] = 1700000000, ["usec"] = 0 }
+        };
+
+        mockSnapcast.Setup(s => s.GetStatusAsync())
+            .ReturnsAsync(CreateSnapcastStatus(new JsonArray { client }));
+
+        var timeProvider = new CustomTimeProvider(DateTimeOffset.FromUnixTimeSeconds(1700000005));
+        var builder = new FullStateBuilder(db, mockSnapcast.Object, null, null, null, null, timeProvider);
+
+        var state = await builder.BuildAsync();
+
+        var room = Assert.Single(state.Groups[0].Rooms);
+        Assert.Null(room.FriendlyName);
+        Assert.Equal("ESP32-P4-Caster", room.HostName);
+        Assert.Equal("ESP32-P4-Caster", room.Name);
+    }
+
+    [Fact]
+    public async Task RoomsController_RenameRoom_HostName_ResetsFriendlyName()
+    {
+        await using var db = new OrchestratorDbContext(_dbOptions);
+        db.Rooms.Add(new RoomEntity
+        {
+            MacAddress = "E8:F6:0A:E7:FB:6D",
+            FriendlyName = "OldName",
+            MixVolume = 50
+        });
+        await db.SaveChangesAsync();
+
+        var client = new JsonObject
+        {
+            ["id"] = "E8:F6:0A:E7:FB:6D",
+            ["host"] = new JsonObject { ["name"] = "ESP32-P4-Caster" }
+        };
+
+        var mockSnapcast = new Mock<ISnapcastService>();
+        mockSnapcast.Setup(s => s.GetStatusAsync())
+            .ReturnsAsync(CreateSnapcastStatus(new JsonArray { client }));
+
+        var mockHub = new Mock<IHubContext<AudioHub, IAudioClient>>();
+        var mockClients = new Mock<IHubClients<IAudioClient>>();
+        mockClients.Setup(c => c.All).Returns(Mock.Of<IAudioClient>());
+        mockHub.Setup(h => h.Clients).Returns(mockClients.Object);
+
+        var mockBuilder = new Mock<FullStateBuilder>(db, mockSnapcast.Object);
+        mockBuilder.Setup(b => b.BuildAsync()).ReturnsAsync(new FullStateDto([], [], [], [], [], [], VolumeProfile.Cubic));
+        var mockVolume = new Mock<VolumeOrchestratorService>(db, mockSnapcast.Object, Mock.Of<ILibrespotApiClient>(), mockHub.Object, Mock.Of<ILogger<VolumeOrchestratorService>>());
+
+        var controller = new RoomsController(mockSnapcast.Object, db, mockHub.Object, mockBuilder.Object, mockVolume.Object);
+
+        // Renaming to the device hostname should clear it to empty string
+        await controller.RenameRoom("E8:F6:0A:E7:FB:6D", new RenameRoomRequest { Name = "ESP32-P4-Caster" });
+
+        var entity = await db.Rooms.FindAsync("E8:F6:0A:E7:FB:6D");
+        Assert.NotNull(entity);
+        Assert.Equal(string.Empty, entity.FriendlyName);
+    }
 }
