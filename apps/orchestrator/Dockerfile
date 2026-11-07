@@ -1,5 +1,5 @@
 # Stage 1: Build Angular Frontend
-FROM node:22-alpine AS node-build
+FROM node:24-alpine AS node-build
 WORKDIR /src/ClientApp
 # Copy package files first to cache npm install
 COPY ClientApp/package*.json ./
