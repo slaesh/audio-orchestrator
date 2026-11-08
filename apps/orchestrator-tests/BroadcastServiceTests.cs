@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json.Nodes;
 using AudioOrchestrator.Controllers;
 using AudioOrchestrator.Contracts;
@@ -73,7 +74,10 @@ public class BroadcastServiceTests
             mockFifo.Object,
             mockLibrespot.Object,
             mockRunner.Object
-        );
+        )
+        {
+            BaseClientBufferMs = 10
+        };
 
         return (sp, db, mockSnapcast, mockLibrespot, mockRunner, service);
     }
@@ -1205,15 +1209,15 @@ public class BroadcastServiceTests
 
         mockSnapcast.Setup(s => s.GetStatusAsync()).ReturnsAsync(snapStatus);
 
-        DateTime? streamSwitchedAt = null;
-        DateTime? volumeSetAt = null;
+        long? streamSwitchedTimestamp = null;
+        long? volumeSetTimestamp = null;
 
         mockSnapcast.Setup(s => s.SetGroupStreamAsync("sg1", "announcement"))
-            .Callback<string, string>((_, _) => streamSwitchedAt = DateTime.UtcNow)
+            .Callback<string, string>((_, _) => streamSwitchedTimestamp = Stopwatch.GetTimestamp())
             .Returns(Task.CompletedTask);
 
         mockSnapcast.Setup(s => s.SetClientVolumeAsync("c1", 81, false))
-            .Callback<string, int, bool>((_, _, _) => volumeSetAt = DateTime.UtcNow)
+            .Callback<string, int, bool>((_, _, _) => volumeSetTimestamp = Stopwatch.GetTimestamp())
             .Returns(Task.CompletedTask);
 
         var req = new BroadcastPlayRequest(
@@ -1227,11 +1231,61 @@ public class BroadcastServiceTests
         var result = await service.PlayUrlAsync(req);
         Assert.True(result.Success);
 
-        Assert.NotNull(streamSwitchedAt);
-        Assert.NotNull(volumeSetAt);
+        Assert.NotNull(streamSwitchedTimestamp);
+        Assert.NotNull(volumeSetTimestamp);
 
-        var elapsedMs = (volumeSetAt.Value - streamSwitchedAt.Value).TotalMilliseconds;
+        var elapsedMs = Stopwatch.GetElapsedTime(streamSwitchedTimestamp.Value, volumeSetTimestamp.Value).TotalMilliseconds;
         // Expected buffer drain wait is BaseClientBufferMs (40) + ClientLatency (100) = 140ms
         Assert.True(elapsedMs >= 110, $"Expected at least 110ms elapsed between stream switch and announcement volume, got {elapsedMs}ms");
+    }
+
+    [Fact]
+    public async Task PlayUrlAsync_WithPartialRoomTarget_ShouldMuteUnselectedClientsBeforeStreamSwitch_AndSilenceBeforeRestore()
+    {
+        var (sp, db, mockSnapcast, mockLibrespot, mockRunner, service) = CreateTestContext();
+        service.BaseClientBufferMs = 20;
+
+        db.Groups.Add(new GroupEntity { Id = "g1", Name = "Etage", SnapcastGroupId = "sg1", CurrentStreamId = "spotify_1", MasterVolume = 80 });
+        db.Rooms.AddRange(
+            new RoomEntity { MacAddress = "c_selected", FriendlyName = "Küche" },
+            new RoomEntity { MacAddress = "c_unselected", FriendlyName = "Schlafzimmer" }
+        );
+        await db.SaveChangesAsync();
+
+        mockSnapcast.Setup(s => s.GetStatusAsync())
+            .ReturnsAsync(CreateSnapcastStatusWithClients(("sg1", "spotify_1", new[] { ("c_selected", 64, false), ("c_unselected", 64, false) })));
+
+        var events = new List<string>();
+        mockSnapcast.Setup(s => s.SetClientVolumeAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<bool>()))
+            .Callback<string, int, bool>((cid, vol, muted) => events.Add($"vol:{cid}:{vol}:muted:{muted}"))
+            .Returns(Task.CompletedTask);
+
+        mockSnapcast.Setup(s => s.SetGroupStreamAsync("sg1", It.IsAny<string>()))
+            .Callback<string, string>((_, stream) => events.Add($"stream:{stream}"))
+            .Returns(Task.CompletedTask);
+
+        var req = new BroadcastPlayRequest(
+            AudioUrl: "http://example.com/test.mp3",
+            RoomIds: new List<string> { "Küche" },
+            Volume: 40,
+            FadeDurationMs: 0,
+            PausePlayback: false
+        );
+
+        var result = await service.PlayUrlAsync(req);
+        Assert.True(result.Success);
+
+        var muteUnselectedIdx = events.IndexOf("vol:c_unselected:64:muted:True");
+        var switchAnnouncementIdx = events.IndexOf("stream:announcement");
+        var switchBackIdx = events.IndexOf("stream:spotify_1");
+        var restoreSilenceIdx = events.LastIndexOf("vol:c_selected:0:muted:False");
+        var restoreFinalVolIdx = events.LastIndexOf("vol:c_selected:64:muted:False");
+
+        Assert.True(muteUnselectedIdx >= 0 && muteUnselectedIdx < switchAnnouncementIdx,
+            $"Expected unselected client to be muted before stream switch, got: {string.Join(", ", events)}");
+        Assert.True(restoreSilenceIdx > switchAnnouncementIdx && restoreSilenceIdx < switchBackIdx,
+            $"Expected selected client to be silenced to 0 before restoring stream, got: {string.Join(", ", events)}");
+        Assert.True(switchBackIdx < restoreFinalVolIdx,
+            $"Expected final restored volume after switching back to original stream, got: {string.Join(", ", events)}");
     }
 }
