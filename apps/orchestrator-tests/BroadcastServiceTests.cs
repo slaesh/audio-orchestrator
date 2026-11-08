@@ -1071,4 +1071,167 @@ public class BroadcastServiceTests
         var lastCall = setVolumes.LastOrDefault(c => c.ClientId == "c_living");
         Assert.Equal(80, lastCall.Volume);
     }
+
+    [Fact]
+    public async Task PlayUrlAsync_WithFading_ShouldDrainBufferAtZeroVolume_BeforeApplyingAnnouncementVolume()
+    {
+        var (sp, db, mockSnapcast, mockLibrespot, mockRunner, service) = CreateTestContext();
+        service.BaseClientBufferMs = 50;
+
+        db.Groups.Add(new GroupEntity { Id = "g1", Name = "Wohnzimmer", SnapcastGroupId = "sg1", CurrentStreamId = "spotify_1", MasterVolume = 60 });
+        await db.SaveChangesAsync();
+
+        mockSnapcast.Setup(s => s.GetStatusAsync())
+            .ReturnsAsync(CreateSnapcastStatusWithClients(("sg1", "spotify_1", new[] { ("c1", 36, false) })));
+
+        var events = new List<string>();
+        mockSnapcast.Setup(s => s.SetClientVolumeAsync("c1", It.IsAny<int>(), It.IsAny<bool>()))
+            .Callback<string, int, bool>((_, vol, muted) => events.Add($"vol:{vol}:muted:{muted}"))
+            .Returns(Task.CompletedTask);
+
+        mockSnapcast.Setup(s => s.SetGroupStreamAsync("sg1", It.IsAny<string>()))
+            .Callback<string, string>((_, stream) => events.Add($"stream:{stream}"))
+            .Returns(Task.CompletedTask);
+
+        mockRunner.Setup(r => r.StreamToFifoAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<Stream?>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, Stream?, CancellationToken>((_, _, _, _) => events.Add("ffmpeg:start"))
+            .ReturnsAsync(new ProcessRunResult(0, ""));
+
+        var req = new BroadcastPlayRequest(
+            AudioUrl: "http://example.com/test.mp3",
+            GroupIds: new List<string> { "g1" },
+            Volume: 90,
+            FadeDurationMs: 100,
+            PausePlayback: false
+        );
+
+        var result = await service.PlayUrlAsync(req);
+        Assert.True(result.Success);
+
+        var firstZeroIdx = events.IndexOf("vol:0:muted:False");
+        var switchAnnouncementIdx = events.IndexOf("stream:announcement");
+        var announcementVolIdx = events.IndexOf("vol:81:muted:False");
+        var ffmpegIdx = events.IndexOf("ffmpeg:start");
+
+        Assert.True(firstZeroIdx >= 0, $"Expected fade down to 0, got: {string.Join(", ", events)}");
+        Assert.True(firstZeroIdx < switchAnnouncementIdx, $"Expected fade to 0 before switching stream, got: {string.Join(", ", events)}");
+        Assert.True(switchAnnouncementIdx < announcementVolIdx, $"Expected stream switch before announcement volume, got: {string.Join(", ", events)}");
+        Assert.True(announcementVolIdx < ffmpegIdx, $"Expected announcement volume set before ffmpeg starts, got: {string.Join(", ", events)}");
+    }
+
+    [Fact]
+    public async Task PlayUrlAsync_WithZeroFade_ShouldSilenceClientsBeforeStreamSwitch_AndDrainBufferBeforeSettingAnnouncementVolume()
+    {
+        var (sp, db, mockSnapcast, mockLibrespot, mockRunner, service) = CreateTestContext();
+        service.BaseClientBufferMs = 50;
+
+        db.Groups.Add(new GroupEntity { Id = "g1", Name = "Wohnzimmer", SnapcastGroupId = "sg1", CurrentStreamId = "spotify_1", MasterVolume = 60 });
+        await db.SaveChangesAsync();
+
+        mockSnapcast.Setup(s => s.GetStatusAsync())
+            .ReturnsAsync(CreateSnapcastStatusWithClients(("sg1", "spotify_1", new[] { ("c1", 36, false) })));
+
+        var events = new List<string>();
+        mockSnapcast.Setup(s => s.SetClientVolumeAsync("c1", It.IsAny<int>(), It.IsAny<bool>()))
+            .Callback<string, int, bool>((_, vol, muted) => events.Add($"vol:{vol}:muted:{muted}"))
+            .Returns(Task.CompletedTask);
+
+        mockSnapcast.Setup(s => s.SetGroupStreamAsync("sg1", It.IsAny<string>()))
+            .Callback<string, string>((_, stream) => events.Add($"stream:{stream}"))
+            .Returns(Task.CompletedTask);
+
+        mockRunner.Setup(r => r.StreamToFifoAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<Stream?>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, Stream?, CancellationToken>((_, _, _, _) => events.Add("ffmpeg:start"))
+            .ReturnsAsync(new ProcessRunResult(0, ""));
+
+        var req = new BroadcastPlayRequest(
+            AudioUrl: "http://example.com/test.mp3",
+            GroupIds: new List<string> { "g1" },
+            Volume: 90,
+            FadeDurationMs: 0,
+            PausePlayback: false
+        );
+
+        var result = await service.PlayUrlAsync(req);
+        Assert.True(result.Success);
+
+        var silenceIdx = events.IndexOf("vol:0:muted:False");
+        var switchAnnouncementIdx = events.IndexOf("stream:announcement");
+        var announcementVolIdx = events.IndexOf("vol:81:muted:False");
+        var ffmpegIdx = events.IndexOf("ffmpeg:start");
+
+        Assert.True(silenceIdx >= 0, $"Expected volume 0 before stream switch, got: {string.Join(", ", events)}");
+        Assert.True(silenceIdx < switchAnnouncementIdx, $"Expected volume 0 to precede stream switch, got: {string.Join(", ", events)}");
+        Assert.True(switchAnnouncementIdx < announcementVolIdx, $"Expected stream switch before announcement volume, got: {string.Join(", ", events)}");
+        Assert.True(announcementVolIdx < ffmpegIdx, $"Expected announcement volume set before ffmpeg starts, got: {string.Join(", ", events)}");
+    }
+
+    [Fact]
+    public async Task PlayUrlAsync_ShouldIncorporateMaxClientLatency_IntoBufferDrainWait()
+    {
+        var (sp, db, mockSnapcast, mockLibrespot, mockRunner, service) = CreateTestContext();
+        service.BaseClientBufferMs = 40;
+
+        db.Groups.Add(new GroupEntity { Id = "g1", Name = "Wohnzimmer", SnapcastGroupId = "sg1", CurrentStreamId = "spotify_1", MasterVolume = 60 });
+        await db.SaveChangesAsync();
+
+        var snapStatus = new JsonObject
+        {
+            ["server"] = new JsonObject
+            {
+                ["groups"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["id"] = "sg1",
+                        ["name"] = "sg1",
+                        ["stream_id"] = "spotify_1",
+                        ["clients"] = new JsonArray
+                        {
+                            new JsonObject
+                            {
+                                ["id"] = "c1",
+                                ["config"] = new JsonObject
+                                {
+                                    ["volume"] = new JsonObject { ["percent"] = 36, ["muted"] = false },
+                                    ["latency"] = 100
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        mockSnapcast.Setup(s => s.GetStatusAsync()).ReturnsAsync(snapStatus);
+
+        DateTime? streamSwitchedAt = null;
+        DateTime? volumeSetAt = null;
+
+        mockSnapcast.Setup(s => s.SetGroupStreamAsync("sg1", "announcement"))
+            .Callback<string, string>((_, _) => streamSwitchedAt = DateTime.UtcNow)
+            .Returns(Task.CompletedTask);
+
+        mockSnapcast.Setup(s => s.SetClientVolumeAsync("c1", 81, false))
+            .Callback<string, int, bool>((_, _, _) => volumeSetAt = DateTime.UtcNow)
+            .Returns(Task.CompletedTask);
+
+        var req = new BroadcastPlayRequest(
+            AudioUrl: "http://example.com/test.mp3",
+            GroupIds: new List<string> { "g1" },
+            Volume: 90,
+            FadeDurationMs: 0,
+            PausePlayback: false
+        );
+
+        var result = await service.PlayUrlAsync(req);
+        Assert.True(result.Success);
+
+        Assert.NotNull(streamSwitchedAt);
+        Assert.NotNull(volumeSetAt);
+
+        var elapsedMs = (volumeSetAt.Value - streamSwitchedAt.Value).TotalMilliseconds;
+        // Expected buffer drain wait is BaseClientBufferMs (40) + ClientLatency (100) = 140ms
+        Assert.True(elapsedMs >= 110, $"Expected at least 110ms elapsed between stream switch and announcement volume, got {elapsedMs}ms");
+    }
 }
