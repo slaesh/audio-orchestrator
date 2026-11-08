@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading.Channels;
 using AudioOrchestrator.Contracts;
 using AudioOrchestrator.Data;
@@ -134,6 +135,8 @@ public class BroadcastService : IHostedService, IBroadcastService
     });
 
     private const int MaxFadeDurationMs = 5000;
+    public const int DefaultClientBufferMs = 500;
+    public int BaseClientBufferMs { get; set; } = DefaultClientBufferMs;
 
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _activeCtsMap = new();
     private readonly ConcurrentDictionary<string, TaskCompletionSource<BroadcastPlayResult>> _waiters = new();
@@ -1016,14 +1019,59 @@ public class BroadcastService : IHostedService, IBroadcastService
                 }
             }
 
-            // 4. Switch target groups to announcement stream.
-            // Failures abort the job: otherwise the group would never hear the announcement
-            // while the volume override still raises its original music.
+            int clientBufferMs = CalculateClientBufferMs(snapshots);
+
+            // 4. Prepare client volumes, mute unselected rooms, and switch target groups to announcement stream.
+            // Failures during stream switch or unselected room muting abort the job so excluded rooms
+            // never hear the announcement and failed groups never blast their original music.
             ct.ThrowIfCancellationRequested();
+
+            // If fadeMs was 0, silence targeted clients to volume 0 before the stream switch so the old
+            // stream's audio does not abruptly blare or bleed through at the announcement volume.
+            if (fadeMs == 0)
+            {
+                foreach (var s in snapshots)
+                {
+                    foreach (var c in s.NativeClients.Concat(s.SelectedClients))
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        try
+                        {
+                            await _snapcast.SetClientVolumeAsync(c.ClientId, 0, c.Muted);
+                        }
+                        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                        {
+                            throw;
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Failed preparing client {ClientId} volume before announcement switch", c.ClientId);
+                        }
+                    }
+                }
+            }
+
+            // Temporarily mute unselected rooms within target groups before switching the group stream.
+            // Failures abort the job so excluded rooms never hear the announcement.
+            foreach (var s in snapshots)
+            {
+                foreach (var c in s.UnselectedClients)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    await _snapcast.SetClientVolumeAsync(c.ClientId, c.Volume, muted: true);
+                }
+            }
+
             foreach (var s in snapshots)
             {
                 ct.ThrowIfCancellationRequested();
                 await _snapcast.SetGroupStreamAsync(s.SnapcastGroupId, OrchestratorConstants.AnnouncementStreamId);
+            }
+
+            // Wait for any remaining old audio packets in the client playback buffer to completely drain in silence
+            if (clientBufferMs > 0)
+            {
+                await Task.Delay(clientBufferMs, ct);
             }
 
             // 5. Set announcement playback volume (group-isolated, never touches sibling groups / source volume)
@@ -1071,20 +1119,7 @@ public class BroadcastService : IHostedService, IBroadcastService
                 }
             }
 
-            // 6. Temporarily mute unselected rooms within target groups. Must happen after all group
-            // volume pushes (they re-apply client mute state from the database). Failures abort the
-            // job so excluded rooms never hear the announcement.
-            ct.ThrowIfCancellationRequested();
-            foreach (var s in snapshots)
-            {
-                foreach (var c in s.UnselectedClients)
-                {
-                    ct.ThrowIfCancellationRequested();
-                    await _snapcast.SetClientVolumeAsync(c.ClientId, c.Volume, muted: true);
-                }
-            }
-
-            // 7. Stream audio into FIFO using ffmpeg process runner
+            // 6. Stream audio into FIFO using ffmpeg process runner
             ct.ThrowIfCancellationRequested();
             var runResult = await _processRunner.StreamToFifoAsync(
                 item.InputSource,
@@ -1093,8 +1128,8 @@ public class BroadcastService : IHostedService, IBroadcastService
                 ct
             );
 
-            // 8. Wait for FIFO to drain and client playback buffer (~500ms) to finish
-            await WaitForFifoAndBufferDrainAsync(OrchestratorConstants.AnnouncementFifoPath, clientBufferMs: 500, ct);
+            // 8. Wait for FIFO to drain and client playback buffer to finish
+            await WaitForFifoAndBufferDrainAsync(OrchestratorConstants.AnnouncementFifoPath, clientBufferMs, ct);
 
             await _jobStateLock.WaitAsync(CancellationToken.None);
             try
@@ -1175,6 +1210,7 @@ public class BroadcastService : IHostedService, IBroadcastService
         public string ClientId { get; init; } = string.Empty;
         public int Volume { get; init; }
         public bool Muted { get; init; }
+        public int Latency { get; init; }
         public int? InitialDbMixVolume { get; init; }
         public bool? InitialDbIsMuted { get; init; }
     }
@@ -1405,21 +1441,9 @@ public class BroadcastService : IHostedService, IBroadcastService
             {
                 foreach (var c in clients)
                 {
-                    var cid = c?["id"]?.GetValue<string>() ?? string.Empty;
-                    var cVol = c?["config"]?["volume"]?["percent"]?.GetValue<int>() ?? 100;
-                    var cMuted = c?["config"]?["volume"]?["muted"]?.GetValue<bool>() ?? false;
-                    var roomEntity = allRooms.FirstOrDefault(r => string.Equals(r.MacAddress, cid, StringComparison.OrdinalIgnoreCase));
+                    var clientSnapshot = CreateClientSnapshot(c, allRooms);
 
-                    var clientSnapshot = new ClientSnapshot
-                    {
-                        ClientId = cid,
-                        Volume = cVol,
-                        Muted = cMuted,
-                        InitialDbMixVolume = roomEntity?.MixVolume,
-                        InitialDbIsMuted = roomEntity?.IsMuted
-                    };
-
-                    if (isGroupExplicitlyTargeted || targetedRoomMacs.Contains(cid))
+                    if (isGroupExplicitlyTargeted || targetedRoomMacs.Contains(clientSnapshot.ClientId))
                     {
                         matchingClientsInGroup.Add(clientSnapshot);
                     }
@@ -1470,21 +1494,9 @@ public class BroadcastService : IHostedService, IBroadcastService
                 var others = new List<ClientSnapshot>();
                 foreach (var c in sgClients)
                 {
-                    var cid = c?["id"]?.GetValue<string>() ?? string.Empty;
-                    var cVol = c?["config"]?["volume"]?["percent"]?.GetValue<int>() ?? 100;
-                    var cMuted = c?["config"]?["volume"]?["muted"]?.GetValue<bool>() ?? false;
-                    var roomEntity = allRooms.FirstOrDefault(r => string.Equals(r.MacAddress, cid, StringComparison.OrdinalIgnoreCase));
+                    var clientSnapshot = CreateClientSnapshot(c, allRooms);
 
-                    var clientSnapshot = new ClientSnapshot
-                    {
-                        ClientId = cid,
-                        Volume = cVol,
-                        Muted = cMuted,
-                        InitialDbMixVolume = roomEntity?.MixVolume,
-                        InitialDbIsMuted = roomEntity?.IsMuted
-                    };
-
-                    if (targetedRoomMacs.Contains(cid)) targeted.Add(clientSnapshot);
+                    if (targetedRoomMacs.Contains(clientSnapshot.ClientId)) targeted.Add(clientSnapshot);
                     else others.Add(clientSnapshot);
                 }
 
@@ -1516,6 +1528,35 @@ public class BroadcastService : IHostedService, IBroadcastService
         }
 
         return snapshots;
+    }
+
+    private int CalculateClientBufferMs(IEnumerable<GroupSnapshot> snapshots)
+    {
+        int maxClientLatency = snapshots
+            .SelectMany(s => s.NativeClients.Concat(s.SelectedClients))
+            .Select(c => c.Latency)
+            .DefaultIfEmpty(0)
+            .Max();
+        return Math.Max(BaseClientBufferMs, BaseClientBufferMs + maxClientLatency);
+    }
+
+    private static ClientSnapshot CreateClientSnapshot(JsonNode? clientNode, List<RoomEntity> allRooms)
+    {
+        var cid = clientNode?["id"]?.GetValue<string>() ?? string.Empty;
+        var cVol = clientNode?["config"]?["volume"]?["percent"]?.GetValue<int>() ?? 100;
+        var cMuted = clientNode?["config"]?["volume"]?["muted"]?.GetValue<bool>() ?? false;
+        var cLatency = clientNode?["config"]?["latency"]?.GetValue<int>() ?? 0;
+        var roomEntity = allRooms.FirstOrDefault(r => string.Equals(r.MacAddress, cid, StringComparison.OrdinalIgnoreCase));
+
+        return new ClientSnapshot
+        {
+            ClientId = cid,
+            Volume = cVol,
+            Muted = cMuted,
+            Latency = cLatency,
+            InitialDbMixVolume = roomEntity?.MixVolume,
+            InitialDbIsMuted = roomEntity?.IsMuted
+        };
     }
 
     private async Task FadeGroupsVolumeAsync(
@@ -1603,15 +1644,15 @@ public class BroadcastService : IHostedService, IBroadcastService
         var restorationErrors = new List<string>();
         var fadeMs = Math.Clamp(fadeDurationMs, 0, MaxFadeDurationMs);
 
-        // 1. Establish a safe volume before switching back so the original stream never
-        // briefly plays at the announcement volume.
+        // 1. Silence targeted clients to volume 0 before switching back so neither the original stream
+        // briefly plays at the announcement volume nor a cancelled announcement blasts at a higher music volume.
         foreach (var s in snapshots)
         {
             foreach (var c in s.NativeClients.Concat(s.SelectedClients))
             {
                 try
                 {
-                    await _snapcast.SetClientVolumeAsync(c.ClientId, fadeMs > 0 ? 0 : c.Volume, c.Muted);
+                    await _snapcast.SetClientVolumeAsync(c.ClientId, 0, c.Muted);
                 }
                 catch (Exception ex)
                 {
@@ -1721,6 +1762,17 @@ public class BroadcastService : IHostedService, IBroadcastService
                     _logger.LogWarning(ex, "Failed resuming Spotify source {SourceId}", s.PausedSpotifySourceId);
                     restorationErrors.Add($"Spotify source {s.PausedSpotifySourceId} resume: {ex.Message}");
                 }
+            }
+        }
+
+        // Wait for the client playback buffer to drain any leftover announcement packets and
+        // transition to the restored stream before fading up or restoring final client volumes.
+        if (successfulSnapshots.Count > 0)
+        {
+            int clientBufferMs = CalculateClientBufferMs(successfulSnapshots);
+            if (clientBufferMs > 0)
+            {
+                await Task.Delay(clientBufferMs);
             }
         }
 
