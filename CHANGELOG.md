@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.2](https://github.com/slaesh/audio-orchestrator/compare/v0.5.1...v0.5.2) (2026-11-08)
+
+
+### Bug Fixes
+
+* **broadcast:** drain client buffer before applying announcement volume ([#16](https://github.com/slaesh/audio-orchestrator/issues/16)) ([b5286d5](https://github.com/slaesh/audio-orchestrator/commit/b5286d53fd010ea188c63beb064648fb06ab5a12))
+
 ## [0.5.1](https://github.com/slaesh/audio-orchestrator/compare/v0.5.0...v0.5.1) (2026-11-07)
 
 
